@@ -29,7 +29,7 @@ On top of all that, bettercap only supports 2 attack types (deauth and PMKID), w
 
 ## What I Did About It
 
-I reverse-engineered the BCM43436B0 firmware — mapped the ROM, found the crash handlers, traced the SDIO bus failures back to their root causes. I built a 6-layer firmware patch:
+I reverse-engineered the BCM43436B0 firmware — mapped the ROM, found the crash handlers, traced the SDIO bus failures back to their root causes. I built a 7-layer firmware patch:
 
 1. **PSM watchdog threshold** — raised from 5 to 255, preventing premature power-save panics
 2. **DPC watchdog threshold** — same treatment, stops the deferred procedure handler from killing the radio
@@ -48,11 +48,11 @@ Then I integrated [AngryOxide](https://github.com/Ragnt/AngryOxide) — a Rust-b
 
 | Metric | Stock Pwnagotchi | Oxigotchi (AO mode) | Oxigotchi (PWN mode) |
 |--------|-----------------|--------------------|--------------------|
-| **WiFi crashes** | Every 2-5 minutes | Zero (27,982 frames tested) | Zero (same firmware patch) |
+| **WiFi crashes** | Every 2-5 minutes | Zero (v6 firmware, 27,982 frames tested) | Zero (same firmware patch) |
 | **Attack types** | 2 (deauth, PMKID) | 6 (+ CSA, disassoc, anon reassoc, rogue M2) | 2 (stock bettercap, but stable) |
 | **Memory usage** | ~80 MB (bettercap) | ~15 MB (AO) | ~80 MB (bettercap) |
 | **Capture quality** | Raw pcaps, often incomplete | Validated .pcapng + .22000 hashcat-ready | Raw pcaps (stock behavior) |
-| **Boot time** | 2-3 min (parses full log) | ~90 sec (session cache) | ~90 sec (session cache) |
+| **Boot time** | 2-3 min (parses full log) | ~60 sec (fast boot, session cache) | ~60 sec (fast boot, session cache) |
 | **Channel strategy** | Fixed hop | Smart autohunt with dwell | Fixed hop |
 | **Language** | Go | Rust | Go |
 | **Web dashboard** | Basic status page | Full control panel (15 cards, 22 API endpoints) | Basic status page |
@@ -76,13 +76,13 @@ The pwnagotchi is a pet. The Oxigotchi is a workbull.
 
 - **No dongles needed** — Most people give up on the built-in WiFi and buy a $15 Alfa dongle. Oxigotchi patches the Pi Zero 2W's BCM43436B0 chip for full monitor mode and TX injection. No external adapters, no USB hubs, no extra bulk. Plug in a battery, put it in your pocket, done.
 - **6 attack types** — Deauth, PMKID, CSA, disassociation, anonymous reassociation, and rogue M2. Captures handshakes that bettercap simply cannot get.
-- **Stable firmware** — 6-layer patch, stress-tested with 27,982 injected frames and zero crashes. Works for both AO and bettercap modes.
+- **Stable firmware** — 7-layer patch (v6), stress-tested with 27,982 injected frames and zero crashes. Works for both AO and bettercap modes.
 - **Validated captures** — AO validates every capture before saving. No junk pcaps. Every `.pcapng` has a matching `.22000` hashcat-ready file. No need for cleanup tools like `hashie-clean` or `pcap-convert-to-hashcat`.
-- **Web dashboard** — Full control from your phone. 15 cards: attack toggles, AP list with target/whitelist buttons, capture downloads, cracked passwords, system health, BT visibility control, config editor, log viewer.
+- **Web dashboard** — Full control from your phone. 15 cards: attack toggles, AP list with target/whitelist buttons, capture downloads, cracked passwords, system health, BT visibility control, shutdown/restart buttons, config editor, log viewer.
 - **28 bull faces** — Custom 1-bit e-ink art for every mood and system state. Each face is a diagnostic indicator, not decoration.
-- **Auto-crack integration** — Captures automatically upload to wpa-sec. Cracked passwords appear in the dashboard.
+- **Auto-crack integration** — Captures automatically upload to wpa-sec for cloud cracking. Cracked passwords appear in the dashboard. Whitelisted networks are never uploaded — your home WiFi stays private.
 - **Smart Skip** — Auto-whitelists APs with existing captures, focusing on new targets.
-- **Fast boot** — Session data cached, skips the 30-60 second log parsing phase that slows stock pwnagotchi.
+- **Fast boot** — Session data cached, fix_services disabled, skips the 30-60 second log parsing phase that slows stock pwnagotchi.
 - **Backwards compatible** — All existing plugins work. Switch to PWN mode anytime for stock bettercap (now stable with our firmware patch). Your handshakes, config, and plugins are untouched.
 - **Firmware rollback** — One command to restore original firmware.
 - **Safe updates** — `apt upgrade` works without breaking anything. Kernel and firmware packages are held, apt hooks protect the patched firmware.
@@ -123,22 +123,22 @@ The pwnagotchi is a pet. The Oxigotchi is a workbull.
 ### Option 2: Install on Existing Pwnagotchi (Advanced)
 
 ```bash
-git clone https://github.com/YOURNAME/Oxigotchi.git /home/pi/Oxigotchi
+git clone https://github.com/CoderFX/oxigotchi.git /home/pi/Oxigotchi
 cd /home/pi/Oxigotchi/tools
 sudo python3 deploy_pwnoxide.py
 ```
 
-The deployer is a 13-step automated installer. It backs up your existing firmware before making changes.
+The deployer is an 18-step automated installer. It backs up your existing firmware before making changes.
 
 ## First Boot
 
 1. **0:00** — Power LED lights up. Boot splash shows the bull on e-ink.
-2. **0:30** — Linux finishes booting. Non-essential plugins are delayed for faster startup.
-3. **0:40** — Session data loads from cache (stock pwnagotchi spends 30-60s here parsing logs — Oxigotchi skips this).
-4. **1:27** — Pwnagotchi initializes. Bull face changes to "awake."
-5. **1:29** — AngryOxide launches and starts scanning immediately.
-6. **1:30+** — Attacks begin automatically. Delayed plugins restore in the background.
-7. **2:00** — All plugins active. Full functionality.
+2. **0:30** — Linux finishes booting.
+3. **0:40** — Session data loads from cache (stock pwnagotchi spends 30-60s here parsing logs).
+4. **1:00** — Pwnagotchi initializes. Bull face changes to "awake."
+5. **1:30** — AngryOxide launches.
+6. **2:00** — Scanning begins. Bull looks left and right. APs appear in dashboard.
+7. **2:00+** — Attacks begin automatically.
 
 > First boot after flashing takes ~30s extra (no session cache yet). Every boot after is faster.
 
@@ -148,7 +148,7 @@ The deployer is a 13-step automated installer. It backs up your existing firmwar
 http://10.0.0.2:8080/plugins/angryoxide/
 ```
 
-15 dashboard cards: system health, live e-ink preview, nearby networks with target/whitelist buttons, attack toggles, smart skip, rate control, channel config, targets, whitelist table, controls (mode switch + BT visibility + actions + Discord), captures with type badges and download links, cracked passwords, log viewer, settings editor, installed plugins list.
+15 dashboard cards: system health, live e-ink preview, nearby networks with target/whitelist buttons, attack toggles, smart skip, rate control, channel config, targets, whitelist table, controls (mode switch + BT visibility + shutdown/restart + Discord), captures with type badges and download links, cracked passwords, log viewer, settings editor, installed plugins list.
 
 Auto-refreshes every 5-30 seconds. Dark theme, mobile-friendly.
 
@@ -161,7 +161,7 @@ sudo pwnoxide-mode status   # Show current mode
 sudo pwnoxide-mode rollback-fw  # Restore original firmware
 ```
 
-Your mode persists across reboots. Switching takes ~90 seconds.
+Your mode persists across reboots. Switching takes ~30 seconds.
 
 **Both modes benefit from the firmware patch.** PWN mode gives you a stock pwnagotchi experience that's actually stable — no more constant WiFi crashes.
 
@@ -230,9 +230,6 @@ No. The firmware patches are for the BCM43436B0 chip in the Pi Zero 2W only. Oth
 **Can I use my existing pwnagotchi plugins?**
 Yes. All standard plugins work. AO captures trigger the standard `on_handshake` event for downstream plugins (wpa-sec, wigle, exp, etc.).
 
-**Do I need hashie, hashie-clean, or pcap-convert-to-hashcat?**
-No. Those tools exist to fix bettercap's broken capture files — bettercap saves raw pcaps that are often incomplete or missing frames needed for cracking. AngryOxide validates every capture before saving and outputs hashcat-ready `.22000` files directly. Installing hashie in AO mode is pointless — it'll find nothing to fix because there's nothing broken. Save yourself the plugin overhead.
-
 **Can I switch back to stock pwnagotchi?**
 Yes. `sudo pwnoxide-mode pwn` returns to bettercap with Korean faces. The firmware patch stays active, so bettercap is stable too. To fully remove the firmware patch: `sudo pwnoxide-mode rollback-fw`.
 
@@ -262,7 +259,7 @@ With PiSugar 3 (1200mAh): 3-4 hours active. The bull face warns at 20% and 15%.
 
 ## Maintenance & Support
 
-This project is provided **as-is**. It's stable, tested (197 unit tests, overnight soak test, 28,000-frame injection stress test), and production-ready.
+This project is provided **as-is**. It's stable, tested (262 unit tests, overnight soak test, 28,000-frame injection stress test), and production-ready.
 
 **I will not be maintaining this project actively.** No issue tracking, no PR reviews. The code is GPL-3.0 — fork it, modify it, make it yours.
 
