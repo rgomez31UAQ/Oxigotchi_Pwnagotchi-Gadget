@@ -206,7 +206,37 @@ Every mood has its own bull. Here are all 28:
 - **Restart rate limiting** — Pwnagotchi capped at 3 restarts per 5 minutes.
 - **USB lifeline** — SSH always available at `10.0.0.2`, even when WiFi is dead.
 - **Mode escape hatch** — `pwnoxide-mode pwn` returns to stock pwnagotchi instantly.
-- **Safe apt upgrades** — Kernel and firmware packages held, apt hooks auto-protect the patched firmware binary.
+- **Safe apt upgrades** — See below.
+
+## Linux Updates — Fixed
+
+Stock pwnagotchi **blocks 100% of system updates**. Every package is either held or the system is configured to never run `apt upgrade`. This means no security patches, no bug fixes, no library updates — ever. The reasoning was that any update could break nexmon, bettercap, or the Python venv.
+
+**Oxigotchi makes Linux updatable again.** Here's how:
+
+**What's held (will NOT upgrade):**
+| Package | Why |
+|---------|-----|
+| `linux-image-*` | Kernel change would break the nexmon driver (compiled against specific kernel) |
+| `firmware-brcm80211` | Would overwrite our patched WiFi firmware with stock |
+| `firmware-nexmon` | Would overwrite the nexmon driver |
+| `brcmfmac-nexmon-dkms` | Related nexmon packages |
+| `firmware-misc-nonfree` | Contains Broadcom firmware files |
+| `libpcap-dev`, `libpcap0.8-dev` | Bettercap depends on specific version |
+| `firmware-atheros`, `firmware-libertas`, `firmware-realtek` | Held by stock pwnagotchi (kept for safety) |
+
+**What's safe to upgrade (and does upgrade):**
+Everything else — security patches, libraries (libssl, libgnutls, libpng), system tools (bash, sudo, openssh), Python packages, raspi-utils, and more. On this image, 72 packages were upgraded successfully with zero breakage.
+
+**How it's protected:**
+- `apt-mark hold` on kernel and firmware packages
+- An apt hook (`/etc/apt/apt.conf.d/99-protect-firmware`) that automatically backs up the patched firmware before any package install and restores it after — even if a firmware package somehow gets through
+- A verification script (`verify-oxigotchi`) you can run anytime to confirm nothing broke
+
+```bash
+sudo apt update && sudo apt upgrade -y   # safe on Oxigotchi
+sudo verify-oxigotchi                      # confirm everything's intact
+```
 
 ## Bluetooth Tether — Easy but Read This
 
