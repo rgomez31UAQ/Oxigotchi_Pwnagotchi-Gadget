@@ -118,7 +118,9 @@ The pwnagotchi is a pet. The Oxigotchi is a workbull.
 > - SSH: `pi` / `raspberry`
 > - Web UI: `changeme` / `changeme`
 >
-> To SSH in: `ssh pi@10.0.0.2`
+> To SSH in: `ssh pi@pwnagotchi.local` or `ssh pi@10.0.0.2`
+>
+> The hostname is `pwnagotchi` for backwards compatibility — all your existing scripts, bookmarks, and muscle memory work unchanged. The display name shows "oxigotchi" but the network address stays `pwnagotchi.local`.
 
 ### Option 2: Install on Existing Pwnagotchi (Advanced)
 
