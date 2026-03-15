@@ -96,7 +96,7 @@ The pwnagotchi is a pet. The Oxigotchi is a workbull.
 | Component | Required? | Notes |
 |---|---|---|
 | **Raspberry Pi Zero 2W** | **YES** | Must be the Zero **2** W (not the original Zero W). |
-| **microSD card (16GB+)** | **YES** | Class 10 or faster. 32GB recommended. |
+| **microSD card (16GB+)** | **YES** | The image is ~13GB, so 16GB minimum. 32GB recommended. Class 10 or faster. |
 | **Micro USB cable** | **YES** | For power and data (USB tethering). |
 | **Waveshare 2.13" V4 e-ink display** | Recommended | Shows the bull faces. The "V4" matters — other versions have different drivers. |
 | **PiSugar 3 battery** | Optional | Makes it portable. Battery level shows on dashboard and triggers low-battery faces. |
