@@ -74,7 +74,7 @@ The pwnagotchi is a pet. The Oxigotchi is a workbull.
 
 ## Features
 
-- **No dongles needed** — The Pi Zero 2W's built-in WiFi chip is patched for full monitor mode and TX injection. Plug in a battery, put it in your pocket, done.
+- **No dongles needed** — Most people give up on the built-in WiFi and buy a $15 Alfa dongle. Oxigotchi patches the Pi Zero 2W's BCM43436B0 chip for full monitor mode and TX injection. No external adapters, no USB hubs, no extra bulk. Plug in a battery, put it in your pocket, done.
 - **6 attack types** — Deauth, PMKID, CSA, disassociation, anonymous reassociation, and rogue M2. Captures handshakes that bettercap simply cannot get.
 - **Stable firmware** — 6-layer patch, stress-tested with 27,982 injected frames and zero crashes. Works for both AO and bettercap modes.
 - **Validated captures** — AO validates every capture before saving. No junk pcaps. Every `.pcapng` has a matching `.22000` hashcat-ready file. No need for cleanup tools like `hashie-clean` or `pcap-convert-to-hashcat`.
@@ -133,12 +133,12 @@ The deployer is a 13-step automated installer. It backs up your existing firmwar
 ## First Boot
 
 1. **0:00** — Power LED lights up. Boot splash shows the bull on e-ink.
-2. **0:30** — Linux finishes booting.
-3. **0:40** — Session data loads from cache (stock pwnagotchi spends 30-60s here parsing logs).
-4. **1:00** — Pwnagotchi initializes. Bull face changes to "awake."
-5. **1:30** — AngryOxide launches.
-6. **2:00** — Scanning begins. Bull looks left and right. APs appear in dashboard.
-7. **2:00+** — Attacks begin automatically.
+2. **0:30** — Linux finishes booting. Non-essential plugins are delayed for faster startup.
+3. **0:40** — Session data loads from cache (stock pwnagotchi spends 30-60s here parsing logs — Oxigotchi skips this).
+4. **1:27** — Pwnagotchi initializes. Bull face changes to "awake."
+5. **1:29** — AngryOxide launches and starts scanning immediately.
+6. **1:30+** — Attacks begin automatically. Delayed plugins restore in the background.
+7. **2:00** — All plugins active. Full functionality.
 
 > First boot after flashing takes ~30s extra (no session cache yet). Every boot after is faster.
 
@@ -230,6 +230,9 @@ No. The firmware patches are for the BCM43436B0 chip in the Pi Zero 2W only. Oth
 **Can I use my existing pwnagotchi plugins?**
 Yes. All standard plugins work. AO captures trigger the standard `on_handshake` event for downstream plugins (wpa-sec, wigle, exp, etc.).
 
+**Do I need hashie, hashie-clean, or pcap-convert-to-hashcat?**
+No. Those tools exist to fix bettercap's broken capture files — bettercap saves raw pcaps that are often incomplete or missing frames needed for cracking. AngryOxide validates every capture before saving and outputs hashcat-ready `.22000` files directly. Installing hashie in AO mode is pointless — it'll find nothing to fix because there's nothing broken. Save yourself the plugin overhead.
+
 **Can I switch back to stock pwnagotchi?**
 Yes. `sudo pwnoxide-mode pwn` returns to bettercap with Korean faces. The firmware patch stays active, so bettercap is stable too. To fully remove the firmware patch: `sudo pwnoxide-mode rollback-fw`.
 
@@ -244,6 +247,15 @@ Get a free API key from [wpa-sec.stanev.org](https://wpa-sec.stanev.org), add it
 
 **The e-ink display is blank or garbled.**
 Make sure you have the **Waveshare 2.13" V4** (not V1/V2/V3). Check `ui.display.type = "waveshare_4"` in config.
+
+**How does XP and leveling work?**
+Oxigotchi uses the EXP plugin to track your progress. You earn XP for every handshake captured (3 XP), every association sent (1 XP), and every deauth sent (2 XP). In AO mode, every capture triggers the standard `on_handshake` event, so AO captures earn XP just like bettercap captures. The level formula is `XP needed = level³ / 2` — so early levels are fast but higher levels take more captures.
+
+**Does Smart Skip affect my XP?**
+Yes — with Smart Skip ON, AO won't re-attack networks you already captured, so you won't earn duplicate XP from the same networks. Turn Smart Skip OFF if you want to maximize XP by farming the same APs repeatedly. Turn it ON if you want to focus on capturing new unique networks. You can toggle it anytime from the dashboard.
+
+**Can I change the attack rate?**
+The dashboard lets you set rate 1 (Quiet), 2 (Normal), or 3 (Aggressive). **Rate 1 is recommended.** Rate 2 works well at home or in low-density areas, but in busy environments (walking through a city, near many APs) the heavy TX load can overwhelm the BCM43436B0 firmware — WiFi freezes and needs a reboot. This isn't a hard hardware limit — it's a firmware timing issue under high AP density + rapid channel hopping + movement. Rate 1 still uses all 6 attack types, just sends fewer frames per second. Rate 3 is experimental and will likely crash in most environments. If you plug in an external WiFi dongle (Alfa, RT5370, etc.) and configure AO to use it instead of the built-in chip, rate 2 and 3 work perfectly — the limitation is specific to the BCM43436B0.
 
 **How long does the battery last?**
 With PiSugar 3 (1200mAh): 3-4 hours active. The bull face warns at 20% and 15%.
