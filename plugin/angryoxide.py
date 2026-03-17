@@ -106,9 +106,17 @@ class AngryOxide(plugins.Plugin):
 
     def _face(self, name):
         """Return face path for PNG mode, or fall back to text faces."""
-        png_path = os.path.join(self._face_dir, '%s.png' % name)
-        if os.path.isfile(png_path):
-            return png_path
+        # Only use PNG paths if the display is configured for PNG mode
+        png_enabled = False
+        if self._agent:
+            try:
+                png_enabled = self._agent._config.get('ui', {}).get('faces', {}).get('png', False)
+            except Exception:
+                pass
+        if png_enabled:
+            png_path = os.path.join(self._face_dir, '%s.png' % name)
+            if os.path.isfile(png_path):
+                return png_path
         # Fallback to stock text faces
         fallback = {
             'wifi_down': faces.BROKEN, 'fw_crash': faces.BROKEN,
@@ -237,10 +245,17 @@ class AngryOxide(plugins.Plugin):
             logging.debug("[angryoxide] could not restore delayed plugins: %s", e)
 
     def _is_ao_mode(self):
-        """Check if we are currently in AO mode (vs PWN mode)."""
+        """Check if we are currently in AO mode (vs PWN mode). Cached for 30s."""
+        now = time.time()
+        if self._mode_cache and now - self._mode_cache_time < 30:
+            return self._mode_cache.get('mode') == 'ao'
         try:
             r = subprocess.run(['pwnoxide-mode', 'status'], capture_output=True, text=True, timeout=5)
-            return 'AngryOxide' in r.stdout
+            is_ao = 'AngryOxide' in r.stdout
+            mode = 'ao' if is_ao else 'pwn'
+            self._mode_cache = {'mode': mode, 'details': r.stdout.strip()}
+            self._mode_cache_time = now
+            return is_ao
         except Exception:
             return True  # default to AO mode if status check fails
 
@@ -264,6 +279,13 @@ class AngryOxide(plugins.Plugin):
             # Apply saved PWN attack settings
             agent._config['personality']['deauth'] = self._pwn_deauth
             agent._config['personality']['associate'] = self._pwn_associate
+            # Restore stock face position (below "pwnagotchi>" name)
+            try:
+                pos_x = agent._config['ui']['faces'].get('position_x', 0)
+                agent._config['ui']['faces']['position_y'] = 34
+                agent._view._state._state['face'].xy = (pos_x, 34)
+            except Exception:
+                pass
             logging.info("[angryoxide] PWN mode: deauth=%s associate=%s",
                          self._pwn_deauth, self._pwn_associate)
 
@@ -919,27 +941,32 @@ class AngryOxide(plugins.Plugin):
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
-            # Hide "pwnagotchi>" name to give bull face more vertical space
-            try:
-                ui.set('name', '')
-            except Exception:
-                pass
+            # Name hiding is handled in on_ui_update based on mode
+            # Don't hide here — mode may not be known yet at setup time
 
     def on_ui_update(self, ui):
         with ui._lock:
+            # In PWN mode, don't show any AO indicators — let bettercap plugins
+            # manage their own UI elements (walkby, blitz, etc.)
+            if not self._is_ao_mode():
+                try:
+                    ui.set('angryoxide', '')
+                except Exception:
+                    pass
+                return
+
+            # AO mode: always hide name and bettercap elements
+            for elem in ('name', 'walkby', 'blitz', 'walkby_status'):
+                try:
+                    ui.set(elem, '')
+                except Exception:
+                    pass
+
             if self._stopped_permanently:
                 ui.set('angryoxide', 'AO: ERR')
             elif self._running:
                 uptime = self._format_uptime()
                 ui.set('angryoxide', 'AO: %d | %s' % (self._captures, uptime))
-                # Only hide elements that AO replaces (walkby attacks are redundant with AO)
-                for elem in ('name', 'walkby', 'blitz', 'walkby_status'):
-                    try:
-                        ui.set(elem, '')
-                    except Exception:
-                        pass
-                # Leave display-password and ip_display alone — those plugins
-                # manage their own content at their own positions.
                 # Override status text that bt-tether/other plugins write
                 try:
                     cur_status = ui.get('status')

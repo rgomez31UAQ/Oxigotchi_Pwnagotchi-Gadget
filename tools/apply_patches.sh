@@ -250,6 +250,332 @@ PYEOF
     fi
 }
 
+# ─── Patch 6: __init__.py — skip bettercap restart when disabled ───
+patch_init() {
+    local f="$SITE_PKG/__init__.py"
+    [ -f "$f" ] || { log "SKIP __init__.py: $f not found"; SKIPPED=$((SKIPPED+1)); return; }
+
+    if grep -q 'bettercap.*disabled' "$f" 2>/dev/null; then
+        log "OK   __init__.py: already patched"
+        SKIPPED=$((SKIPPED+1))
+    else
+        python3 - "$f" <<'PYEOF'
+import sys
+f = sys.argv[1]
+with open(f) as fh:
+    code = fh.read()
+if 'bettercap' in code and 'disabled' in code:
+    sys.exit(0)
+old = '''    os.system("service bettercap restart")
+    time.sleep(1)
+    os.system("service pwnagotchi restart")'''
+new = '''    if not (config or {}).get('bettercap', {}).get('disabled', False):
+        os.system("service bettercap restart")
+        time.sleep(1)
+    os.system("service pwnagotchi restart")'''
+code = code.replace(old, new, 1)
+with open(f, 'w') as fh:
+    fh.write(code)
+PYEOF
+        if [ $? -eq 0 ]; then
+            log "DONE __init__.py: skip bettercap restart when disabled"
+            PATCHED=$((PATCHED+1))
+        else
+            log "FAIL __init__.py: python patch failed"
+            FAILED=$((FAILED+1))
+        fi
+    fi
+}
+
+# ─── Patch 7: agent.py — AO mode, StubClient, frame padding, synthetic blind epoch fix ───
+patch_agent() {
+    local f="$SITE_PKG/agent.py"
+    [ -f "$f" ] || { log "SKIP agent.py: $f not found"; SKIPPED=$((SKIPPED+1)); return; }
+
+    if grep -q '_ao_mode' "$f" 2>/dev/null; then
+        log "OK   agent.py: already patched"
+        SKIPPED=$((SKIPPED+1))
+    else
+        python3 - "$f" <<'PYEOF'
+import sys
+f = sys.argv[1]
+with open(f) as fh:
+    code = fh.read()
+if '_ao_mode' in code:
+    sys.exit(0)
+
+# Add imports after existing imports
+code = code.replace(
+    "from pwnagotchi.bettercap import Client",
+    "from pwnagotchi.bettercap import Client\nfrom pwnagotchi.stub_client import StubClient\nfrom pwnagotchi.frame_padding import send_padded_deauth, send_padded_assoc",
+    1
+)
+
+# Replace Client.__init__ block with AO mode detection
+old_init = '''    def __init__(self, view, config, keypair):
+        Client.__init__(self,
+                        "127.0.0.1" if "hostname" not in config['bettercap'] else config['bettercap']['hostname'],
+                        "http" if "scheme" not in config['bettercap'] else config['bettercap']['scheme'],
+                        8081 if "port" not in config['bettercap'] else config['bettercap']['port'],
+                        "pwnagotchi" if "username" not in config['bettercap'] else config['bettercap']['username'],
+                        "pwnagotchi" if "password" not in config['bettercap'] else config['bettercap']['password'])'''
+new_init = '''    def __init__(self, view, config, keypair):
+        self._ao_mode = config.get('bettercap', {}).get('disabled', False)
+
+        _bc = config['bettercap']
+        _host = _bc.get('hostname', '127.0.0.1')
+        _scheme = _bc.get('scheme', 'http')
+        _port = _bc.get('port', 8081)
+        _user = _bc.get('username', 'pwnagotchi')
+        _pass = _bc.get('password', 'pwnagotchi')
+
+        if self._ao_mode:
+            self._stub = StubClient(_host, _scheme, _port, _user, _pass)
+            Client.__init__(self, _host, _scheme, _port, _user, _pass)
+            self.run = self._stub.run
+            self.session = self._stub.session
+            self.start_websocket = self._stub.start_websocket
+            self.set_stub_aps = self._stub.set_stub_aps
+            logging.info("[ao_mode] bettercap disabled — using StubClient")
+        else:
+            Client.__init__(self, _host, _scheme, _port, _user, _pass)'''
+if old_init in code:
+    code = code.replace(old_init, new_init, 1)
+
+# Patch start() for AO mode
+old_start = '''    def start(self):
+        self._wait_bettercap()
+        self.setup_events()
+        self.set_starting()
+        self.start_monitor_mode()
+        self.start_event_polling()'''
+new_start = '''    def _start_monitor_mode_direct(self):
+        """Start monitor mode via subprocess (no bettercap needed)."""
+        import subprocess as _sp
+        mon_iface = self._config['main']['iface']
+        mon_start_cmd = self._config['main'].get('mon_start_cmd', '')
+        if os.path.exists('/sys/class/net/%s' % mon_iface):
+            logging.info("[ao_mode] monitor interface %s already exists", mon_iface)
+            self.start_advertising()
+            return
+        if mon_start_cmd:
+            logging.info("[ao_mode] starting monitor interface via: %s", mon_start_cmd)
+            try:
+                _sp.run(mon_start_cmd, shell=True, timeout=15, check=False)
+            except _sp.TimeoutExpired:
+                logging.error("[ao_mode] mon_start_cmd timed out")
+        for i in range(15):
+            if os.path.exists('/sys/class/net/%s' % mon_iface):
+                logging.info("[ao_mode] monitor interface %s is up", mon_iface)
+                break
+            time.sleep(1)
+        else:
+            logging.error("[ao_mode] monitor interface %s did not appear after 15s", mon_iface)
+        logging.info("supported channels: %s", self._supported_channels)
+        logging.info("handshakes will be collected inside %s", self._config['bettercap']['handshakes'])
+        self.start_advertising()
+
+    def start(self):
+        if not self._ao_mode:
+            self._wait_bettercap()
+            self.setup_events()
+        self.set_starting()
+        if self._ao_mode:
+            self._start_monitor_mode_direct()
+        else:
+            self.start_monitor_mode()
+        if not self._ao_mode:
+            self.start_event_polling()
+        else:
+            self._load_recovery_data()'''
+if old_start in code:
+    code = code.replace(old_start, new_start, 1)
+
+# Patch get_access_points for synthetic blind epoch fix
+old_gap = '''        aps.sort(key=lambda ap: ap['channel'])
+        return self.set_access_points(aps)'''
+new_gap = '''        # AO mode: if monitor interface is up, inject a synthetic AP so
+        # epoch.observe() sees activity and blind_for resets. Without this,
+        # pwnagotchi thinks the interface is dead and restarts.
+        if self._ao_mode and not aps:
+            mon_iface = self._config['main']['iface']
+            if os.path.exists('/sys/class/net/%s' % mon_iface):
+                aps.append({
+                    'hostname': '[ao_active]',
+                    'mac': '00:00:00:00:00:00',
+                    'encryption': 'WPA2',
+                    'channel': 0,
+                    'rssi': 0,
+                    'vendor': '',
+                    'clients': [],
+                })
+
+        aps.sort(key=lambda ap: ap['channel'])
+        return self.set_access_points(aps)'''
+if old_gap in code:
+    code = code.replace(old_gap, new_gap, 1)
+
+with open(f, 'w') as fh:
+    fh.write(code)
+PYEOF
+        if [ $? -eq 0 ]; then
+            log "DONE agent.py: AO mode + StubClient + frame padding + blind epoch fix"
+            PATCHED=$((PATCHED+1))
+        else
+            log "FAIL agent.py: python patch failed"
+            FAILED=$((FAILED+1))
+        fi
+    fi
+}
+
+# ─── Patch 8: view.py — AO mode hides name, face near top ───
+patch_view() {
+    local f="$SITE_PKG/ui/view.py"
+    [ -f "$f" ] || { log "SKIP view.py: $f not found"; SKIPPED=$((SKIPPED+1)); return; }
+
+    if grep -q '_ao_mode' "$f" 2>/dev/null; then
+        log "OK   view.py: already patched"
+        SKIPPED=$((SKIPPED+1))
+    else
+        python3 - "$f" <<'PYEOF'
+import sys
+f = sys.argv[1]
+with open(f) as fh:
+    code = fh.read()
+if '_ao_mode' in code:
+    sys.exit(0)
+
+# Add ao_mode detection after config assignment
+code = code.replace(
+    "self._canvas = None",
+    "self._ao_mode = config.get('bettercap', {}).get('disabled', False)\n        self._canvas = None",
+    1
+)
+
+# Replace face/name initialization with mode-aware version
+old_face = """            'face': Text(value=faces.SLEEP,
+                         position=(config['ui']['faces']['position_x'], config['ui']['faces']['position_y']),
+                         color=BLACK, font=fonts.Huge, png=config['ui']['faces']['png']),"""
+new_face = """            'face': Text(value=faces.SLEEP,
+                         position=(config['ui']['faces']['position_x'],
+                                   self._layout['line1'][1] + 2 if self._ao_mode else config['ui']['faces']['position_y']),
+                         color=BLACK, font=fonts.Huge, png=config['ui']['faces']['png']),"""
+if old_face in code:
+    code = code.replace(old_face, new_face, 1)
+
+# Replace name with mode-aware version
+old_name = """            'name': Text(value='%s>' % 'pwnagotchi', position=self._layout['name'], color=BLACK, font=fonts.Bold),"""
+new_name = """            'name': Text(value='' if self._ao_mode else '%s>' % 'pwnagotchi', position=self._layout['name'], color=BLACK, font=fonts.Bold),"""
+if old_name in code:
+    code = code.replace(old_name, new_name, 1)
+
+# Disable cursor blink in AO mode
+old_cursor = "                if self._config['ui'].get('cursor', True) == True:"
+new_cursor = "                if not self._ao_mode and self._config['ui'].get('cursor', True) == True:"
+if old_cursor in code:
+    code = code.replace(old_cursor, new_cursor, 1)
+
+with open(f, 'w') as fh:
+    fh.write(code)
+PYEOF
+        if [ $? -eq 0 ]; then
+            log "DONE view.py: AO mode hides name, face near top, no cursor blink"
+            PATCHED=$((PATCHED+1))
+        else
+            log "FAIL view.py: python patch failed"
+            FAILED=$((FAILED+1))
+        fi
+    fi
+}
+
+# ─── Patch 9: cli.py — empty name in AO mode ───
+patch_cli() {
+    local f="$SITE_PKG/cli.py"
+    [ -f "$f" ] || { log "SKIP cli.py: $f not found"; SKIPPED=$((SKIPPED+1)); return; }
+
+    if grep -q 'ao_mode' "$f" 2>/dev/null; then
+        log "OK   cli.py: already patched"
+        SKIPPED=$((SKIPPED+1))
+    else
+        if sed -i "s/display = Display(config=config, state={'name': '%s>' % pwnagotchi.name()})/ao_mode = config.get('bettercap', {}).get('disabled', False)\n    display = Display(config=config, state={'name': '' if ao_mode else '%s>' % pwnagotchi.name()})/" "$f"; then
+            log "DONE cli.py: empty name in AO mode"
+            PATCHED=$((PATCHED+1))
+        else
+            log "FAIL cli.py: sed failed"
+            FAILED=$((FAILED+1))
+        fi
+    fi
+}
+
+# ─── Patch 10: components.py — PNG face with text fallback ───
+patch_components() {
+    local f="$SITE_PKG/ui/components.py"
+    [ -f "$f" ] || { log "SKIP components.py: $f not found"; SKIPPED=$((SKIPPED+1)); return; }
+
+    if grep -q 'os.path.sep' "$f" 2>/dev/null; then
+        log "OK   components.py: already patched"
+        SKIPPED=$((SKIPPED+1))
+    else
+        python3 - "$f" <<'PYEOF'
+import sys
+f = sys.argv[1]
+with open(f) as fh:
+    code = fh.read()
+if 'os.path.sep' in code:
+    sys.exit(0)
+
+# Add import os at the top if not present
+if 'import os' not in code:
+    code = code.replace('from PIL import', 'import os\nfrom PIL import', 1)
+
+# Wrap the PNG loading block in try/except with text fallback
+old_png = """                self.image = Image.open(self.value)
+                self.image = self.image.convert('RGBA')
+                self.pixels = self.image.load()
+                for y in range(self.image.size[1]):
+                    for x in range(self.image.size[0]):
+                        if self.pixels[x,y][3] < 255:    # check alpha
+                            self.pixels[x,y] = (255, 255, 255, 255)
+                if self.color == 255:
+                    self._image = ImageOps.colorize(self.image.convert('L'), black = "white", white = "black")
+                else:
+                    self._image = self.image
+                self.image = self._image.convert('1')
+                canvas.paste(self.image, self.xy)"""
+new_png = """                try:
+                    self.image = Image.open(self.value)
+                    self.image = self.image.convert('RGBA')
+                    self.pixels = self.image.load()
+                    for y in range(self.image.size[1]):
+                        for x in range(self.image.size[0]):
+                            if self.pixels[x,y][3] < 255:    # check alpha
+                                self.pixels[x,y] = (255, 255, 255, 255)
+                    if self.color == 255:
+                        self._image = ImageOps.colorize(self.image.convert('L'), black = "white", white = "black")
+                    else:
+                        self._image = self.image
+                    self.image = self._image.convert('1')
+                    canvas.paste(self.image, self.xy)
+                except Exception:
+                    # PNG load failed (value is a text face, not a file path) — render as text
+                    if isinstance(self.value, str) and not os.path.sep in self.value:
+                        drawer.text(self.xy, self.value, font=self.font, fill=self.color)"""
+if old_png in code:
+    code = code.replace(old_png, new_png, 1)
+
+with open(f, 'w') as fh:
+    fh.write(code)
+PYEOF
+        if [ $? -eq 0 ]; then
+            log "DONE components.py: PNG face with text fallback"
+            PATCHED=$((PATCHED+1))
+        else
+            log "FAIL components.py: python patch failed"
+            FAILED=$((FAILED+1))
+        fi
+    fi
+}
+
 # ─── Main ───
 main() {
     log "=== Oxigotchi patch check starting ==="
@@ -264,6 +590,11 @@ main() {
     patch_handler
     patch_server
     patch_log
+    patch_init
+    patch_agent
+    patch_view
+    patch_cli
+    patch_components
 
     log "=== Done: $PATCHED applied, $SKIPPED already ok, $FAILED failed ==="
 
