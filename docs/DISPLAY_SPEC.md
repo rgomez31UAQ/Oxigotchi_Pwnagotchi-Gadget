@@ -293,6 +293,38 @@ All faces are Korean Unicode text rendered with Huge 35pt font:
 
 ## Rules & Constraints
 
+### Boot Display Order — No Raw Paths or Garbage on Screen
+
+During boot, the display must NEVER show raw file paths (e.g., `/etc/pwnagot...`),
+config text, error tracebacks, or any non-face content in the face area. The user
+should only ever see clean faces and status text.
+
+**Required boot order:**
+
+1. **Splash service renders first** — `oxigotchi-splash.service` runs `Before=pwnagotchi.service`
+   and uses a full EPD refresh to write the bull face to both RAM banks.
+2. **Pwnagotchi delay** — `pwnagotchi-splash-delay.conf` adds `ExecStartPre=/bin/sleep 3` so
+   the splash face is visible for at least 3 seconds before pwnagotchi starts.
+3. **Pwnagotchi init** — when pwnagotchi starts, it calls `epd.Clear()` + `displayPartBaseImage()`
+   which clears the splash. The very first partial refresh must show a valid face (SLEEP),
+   not a file path string.
+
+**What can go wrong:**
+- If `ui.faces.png = true` but the PNG file doesn't exist or fails to load, the Text widget
+  falls back to rendering the face *value* as text — which is a file path like
+  `/etc/pwnagotchi/custom-plugins/faces/awake.png`. This MUST NOT appear on screen.
+- The fallback in `components.py` checks `os.path.sep in self.value` — if the value contains
+  a path separator, it does NOT render it as text (prevents path strings on display).
+- If the face value is a valid Korean text string (no path separator), it renders as text
+  (correct fallback for PWN mode).
+
+**Rules:**
+- Splash service must complete and write sentinel file before pwnagotchi starts
+- Pwnagotchi's first face set must be a valid face (SLEEP on starting), never a path
+- PNG face paths must only exist in the overlay config — never in defaults.toml
+- The Text widget must silently suppress any value containing `/` rather than rendering it
+- If a PNG face file is missing, the display should show nothing (blank) rather than the path
+
 ### No Overlap Rule
 - **AO mode:** No name rendered. Face at Y=16. Status at (125, 20). No conflict.
 - **PWN mode:** Name at Y=20 (ends ~Y=32). Face at Y=34. 2px gap. No overlap.
