@@ -434,6 +434,16 @@ new_deauth = '''    def deauth(self, ap, sta, throttle=-1):
 if old_deauth in code and 'AO handles attacks' not in code.split('def deauth')[1] if 'def deauth' in code else True:
     code = code.replace(old_deauth, new_deauth, 1)
 
+# Hide [hostname] from PWND counter in AO mode
+old_pwnd = '''        if self._last_pwnd is not None:
+            txt += ' [%s]' % self._last_pwnd'''
+new_pwnd = '''        # In AO mode, don't show last captured AP name — AO indicator handles that.
+        # In PWN mode, show [hostname] of last captured AP.
+        if not self._ao_mode and self._last_pwnd is not None:
+            txt += ' [%s]' % self._last_pwnd'''
+if old_pwnd in code and 'not self._ao_mode and self._last_pwnd' not in code:
+    code = code.replace(old_pwnd, new_pwnd, 1)
+
 with open(f, 'w') as fh:
     fh.write(code)
 PYEOF

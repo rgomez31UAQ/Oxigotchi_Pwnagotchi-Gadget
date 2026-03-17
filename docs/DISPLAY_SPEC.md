@@ -45,7 +45,7 @@ Both modes share the same hardware layout grid:
 | Friend face | `friend_face` | (0, 92) | Bold 10pt | Peer's face text | Both (hidden if no peer) |
 | Friend name | `friend_name` | (40, 94) | BoldSmall 9pt | "▌▌▌│ buddy 3 (15) of 4" | Both (hidden if no peer) |
 | Line 2 | — | (0, 108) → (250, 108) | — | Horizontal divider, 1px | Both |
-| Handshakes | `shakes` | (0, 109) | Bold 10pt label + Medium 10pt value | "PWND 0 (00)" | Both |
+| Handshakes | `shakes` | (0, 109) | Bold 10pt label + Medium 10pt value | AO: "PWND 1 (294)" / PWN: "PWND 1 (294) [AP_NAME]" | Both (format differs) |
 | Mode | `mode` | (225, 109) | Bold 10pt | "AUTO" or "MANU" | Both |
 
 ### Font Sizes (Waveshare V4 override)
@@ -352,11 +352,22 @@ voice messages still fire though. To suppress them in AO mode, the angryoxide pl
 the status text on `on_ui_update()` when it detects bettercap-style attack messages. Currently the
 plugin only overrides BT-tether status bleeds — it should also suppress assoc/deauth messages.
 
-**TODO:** Suppress `on_assoc()` and `on_deauth()` status text in AO mode. Either:
-1. Have the angryoxide plugin override status on every `on_ui_update()` with AO-relevant text
-2. Or patch agent.py to skip `associate()` and `deauth()` calls entirely when `_ao_mode=True`
+**IMPLEMENTED:** `associate()` and `deauth()` in agent.py early-return when `_ao_mode=True`.
+No attack messages, no bettercap commands, no misleading status text.
 
-Option 2 is cleaner — if AO handles attacks, pwnagotchi shouldn't attempt them at all.
+### PWND Counter Format — Mode-Dependent
+
+The handshake counter (`shakes` element) format differs by mode:
+
+- **AO mode:** `"N (total)"` — just session count and total unique handshakes.
+  No `[hostname]` suffix. The last captured AP name is irrelevant in AO mode because
+  AO handles captures internally and the AO indicator already shows capture details.
+- **PWN mode:** `"N (total) [hostname]"` — includes the hostname of the last AP
+  that yielded a handshake. Shows `[unknown]` if the AP had no broadcast name.
+
+**WalkBy/Blitz plugin** is PWN mode only — it uses bettercap `wifi.assoc`/`wifi.deauth`
+commands. Disabled in AO config overlay (`[main.plugins.walkby] enabled = false`).
+AO handles its own concurrent attacks natively.
 
 ### No Overlap Rule
 - **AO mode:** No name rendered. Face at Y=16. Status at (125, 20). No conflict.
