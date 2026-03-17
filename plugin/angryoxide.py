@@ -974,8 +974,8 @@ class AngryOxide(plugins.Plugin):
             try:
                 ch_elem = ui._state._state.get('channel')
                 if ch_elem:
-                    ch_elem.label = 'FW'
-                    ch_elem.value = str(self._fw_crash_count) + ('!' if self._fw_crash_count > 0 else '')
+                    ch_elem.label = None
+                    ch_elem.value = 'CRASH:%d' % self._fw_crash_count
             except Exception:
                 pass
             # Hide AP slot (AO channels shown in AO indicator instead)

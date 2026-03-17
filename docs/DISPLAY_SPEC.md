@@ -485,16 +485,16 @@ isn't scanning — AO handles it. These elements are repurposed:
 
 | Position | PWN mode | AO mode | Data source |
 |----------|----------|---------|-------------|
-| (0, 109) | `CH 06` (current channel) | `FW 0` or `FW 3!` (firmware crash count) | `self._fw_crash_count` — climbs when firmware faults detected |
+| (0, 109) | `CH 06` (current channel) | `CRASH:0` (firmware crash count) | `self._fw_crash_count` — climbs when firmware faults detected |
 | (40, 109) | `AP 5 (18)` (AP count) | **hidden** (channels moved to AO indicator in top bar) | — |
 | (85, 109) | conn status | conn status (unchanged) | bt-tether plugin |
 | (120, 109) | `BT-` / `BT C` | unchanged | bt-tether plugin |
 | (155, 109) | `CHG100%` | unchanged | pisugarx plugin |
 | (220, 109) | `AUTO` | unchanged | core |
 
-**FW crash counter:**
-- Shows `FW 0` when stable (no crashes)
-- Shows `FW 3!` with `!` suffix when crashes detected — user should check web dashboard
+**Crash counter:**
+- Shows `CRASH:0` when stable (no firmware crashes)
+- Shows `CRASH:3` when crashes detected — user should check web dashboard
 - Resets when AO plugin resets crash state
 
 **AO channels:** Moved to AO indicator in top bar as `CH:1,6,11` or `CH:AH` (autohunt).
