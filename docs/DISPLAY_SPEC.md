@@ -557,33 +557,15 @@ fps = 0.0    # 0 = manual updates only, >0 = continuous refresh
 - **>0 (e.g., 1.0):** `_refresh_handler` thread runs at this rate. Enables cursor blink on name. Uptime updates live. More e-ink wear.
 - Recommended: `0.0` for AO mode (no cursor needed), `1.0` for PWN mode (cursor blink)
 
-### tweak_view.json (Position Overrides)
+### tweak_view.json (NOT ACTIVE — Future Enhancement)
 
-Deployed to `/etc/pwnagotchi/custom-plugins/tweak_view.json`. Overrides default element positions for the Waveshare V4 layout. Used by the VSS (Volts/Sats/Status) plugin framework.
+The file `/etc/pwnagotchi/custom-plugins/tweak_view.json` exists on the Pi with VSS-style
+position overrides, but **no VSS plugin is loaded** so these overrides have no effect.
+All element positions are determined by the hardcoded `waveshare2in13_V4.py` layout.
 
-Current overrides on the Pi:
-
-```json
-{
-    "VSS.shakes.xy": "0,0",
-    "VSS.uptime.xy": "187,0",
-    "VSS.channel.xy": "0,109",
-    "VSS.channel.label_font": "Small",
-    "VSS.aps.xy": "40,109",
-    "VSS.aps.label": "AP",
-    "VSS.aps.label_font": "Small",
-    "VSS.connection_status.xy": "85,109",
-    "VSS.bluetooth.xy": "120,109",
-    "VSS.bluetooth.label": "BT",
-    "VSS.bat.xy": "155,109",
-    "VSS.bat.label": "",
-    "VSS.mode.xy": "220,109"
-}
-```
-
-**Effect:** Moves PWND to top-left (0,0), pushes CH/AP/BT/BAT/MODE to the bottom bar (Y=109) with Small fonts. This frees up more vertical space in the middle zone for the face and status text.
-
-**Note:** tweak_view.json positions take priority over hardcoded layout positions. If a plugin reads from `self._layout`, it gets the hardware default. The VSS framework applies JSON overrides on top.
+If a VSS plugin is added in the future, it would move elements to a denser layout
+(PWND to top-left, CH/AP/BT/BAT/MODE to bottom bar with Small fonts). Until then,
+the positions documented in the master element table above are the actual active positions.
 
 ---
 
