@@ -292,8 +292,8 @@ patch_agent() {
     local f="$SITE_PKG/agent.py"
     [ -f "$f" ] || { log "SKIP agent.py: $f not found"; SKIPPED=$((SKIPPED+1)); return; }
 
-    if grep -q '_ao_mode' "$f" 2>/dev/null; then
-        log "OK   agent.py: already patched"
+    if grep -q 'ao_active' "$f" 2>/dev/null; then
+        log "OK   agent.py: already patched (full, with blind epoch fix)"
         SKIPPED=$((SKIPPED+1))
     else
         python3 - "$f" <<'PYEOF'
