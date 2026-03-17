@@ -29,19 +29,24 @@ Both modes share the same hardware layout grid:
 
 ### Element Positions (Waveshare 2.13" V4)
 
-| Element | Position | Font | Notes |
-|---------|----------|------|-------|
-| channel | (0, 0) | Bold 10pt + Medium 10pt | "CH 00" |
-| aps | (28, 0) | Bold 10pt + Medium 10pt | "APS 0 (00)" |
-| uptime | (185, 0) | Bold 10pt + Medium 10pt | "UP HH:MM:SS" |
-| line1 | Y=14, full width | — | Horizontal divider |
-| name | (5, 20) | Bold 10pt | Mode-dependent (see below) |
-| status | (125, 20) | Medium (custom font) | Wrapping text, max 20 chars/line |
-| face | (0, Y) | Huge 35pt or PNG | Y depends on mode (see below) |
-| friend_name | (0, 92) | BoldSmall 9pt | "▌▌▌│ PeerName 5 (12)" |
-| line2 | Y=108, full width | — | Horizontal divider |
-| shakes | (0, 109) | Bold 10pt + Medium 10pt | "PWND 0 (00)" |
-| mode | (225, 109) | Bold 10pt | "AUTO" or "MANU" |
+| Element | Key | Position (x, y) | Font | Content | Mode |
+|---------|-----|-----------------|------|---------|------|
+| Channel | `channel` | (0, 0) | Bold 10pt label + Medium 10pt value | "CH 00" | Both |
+| APs | `aps` | (28, 0) | Bold 10pt label + Medium 10pt value | "APS 0 (00)" | Both |
+| Bluetooth | `bluetooth` | (115, 0) | Bold 10pt label + Medium 10pt value | "BT C" / "BT -" | Both (bt-tether plugin) |
+| Battery | `bat` | (140, 0) | Bold 10pt label + Medium 10pt value | "BAT 85%" | Both (pisugarx plugin) |
+| Uptime | `uptime` | (185, 0) | Bold 10pt label + Medium 10pt value | "UP HH:MM:SS" | Both |
+| Line 1 | — | (0, 14) → (250, 14) | — | Horizontal divider, 1px | Both |
+| Name | `name` | (5, 20) | Bold 10pt | "Pwnagotchi> █" / empty | PWN only |
+| Status | `status` | (125, 20) | Medium custom (status_font) | Wrapping text, max 20 chars/line | Both |
+| Face | `face` | (0, 16) AO / (0, 34) PWN | Huge 35pt text / PNG paste | Bull PNG 120×66 / Korean text | Both |
+| WalkBy | `walkby_status` | (0, 82) | Small 9pt | "BLITZ 5atk 2cap" / empty | PWN only |
+| AO Status | `angryoxide` | (0, 85) | Small 9pt label + Small 9pt value | "AO: 5 \| 01:23" / empty | AO only |
+| Friend face | `friend_face` | (0, 92) | Bold 10pt | Peer's face text | Both (hidden if no peer) |
+| Friend name | `friend_name` | (40, 94) | BoldSmall 9pt | "▌▌▌│ buddy 3 (15) of 4" | Both (hidden if no peer) |
+| Line 2 | — | (0, 108) → (250, 108) | — | Horizontal divider, 1px | Both |
+| Handshakes | `shakes` | (0, 109) | Bold 10pt label + Medium 10pt value | "PWND 0 (00)" | Both |
+| Mode | `mode` | (225, 109) | Bold 10pt | "AUTO" or "MANU" | Both |
 
 ### Font Sizes (Waveshare V4 override)
 
@@ -104,36 +109,45 @@ fonts.setup(10, 9, 10, 35, 25, 9)
 
 All faces are bull head PNGs at `/etc/pwnagotchi/custom-plugins/faces/`:
 
-| Event | Face PNG | When |
-|-------|----------|------|
-| Starting | `awake.png` | Boot, initialization |
-| Normal/Idle | `awake.png` | Default idle state |
-| Sleeping | `sleep.png` | Between recon cycles |
-| Looking (good mood) | `look_r_happy.png` / `look_l_happy.png` | Waiting, alternating L/R |
-| Looking (neutral) | `look_r.png` / `look_l.png` | Waiting, alternating L/R |
-| Association | `intense.png` | Sending PMKID assoc frame |
-| Deauth | `cool.png` | Sending deauth frame |
-| Handshake captured | `happy.png` | New handshake file detected |
-| New peer | `awake.png` / `cool.png` / `friend.png` | Mesh peer discovered |
-| Lost peer | `lonely.png` | Mesh peer lost |
-| Good friend | `motivated.png` / `friend.png` / `happy.png` | Known peer with high bond |
-| Bored | `bored.png` | No activity for bored_num_epochs |
-| Sad | `sad.png` | No activity for sad_num_epochs |
-| Angry | `angry.png` | Extended inactivity + no friends |
-| Motivated | `motivated.png` | Positive reward trend |
-| Demotivated | `demotivated.png` | Negative reward trend |
-| Excited | `excited.png` | Sustained activity (excited_num_epochs) |
-| Grateful | `grateful.png` | Sad/bored but has good friends |
-| Smart | `smart.png` | Reading logs, free channel found |
-| Uploading | `upload.png` | Uploading to wpa-sec |
-| Rebooting | `broken.png` | System reboot triggered |
-| Debug | `debug.png` | Custom debug message |
-| Shutdown | `sleep.png` | Graceful shutdown |
-| FW crash | `fw_crash.png` | AO plugin: firmware crash detected |
-| AO crashed | `ao_crashed.png` | AO plugin: AO process died |
-| Battery low | `battery_low.png` | Battery plugin: < 20% |
-| Battery critical | `battery_critical.png` | Battery plugin: < 5% |
-| WiFi down | `wifi_down.png` | Monitor interface disappeared |
+| Event | view.py method | Face PNG | Trigger |
+|-------|---------------|----------|---------|
+| Starting | `on_starting()` | `awake.png` | Boot, initialization |
+| Keys generation | `on_keys_generation()` | `awake.png` | Generating mesh identity keys |
+| Normal/Idle | `on_normal()` | `awake.png` | Default idle state after sleep cycle |
+| Sleeping | `wait(sleeping=True)` | `sleep.png` | Between recon cycles (napping) |
+| Looking (good mood) | `wait(sleeping=False)` | `look_r_happy.png` / `look_l_happy.png` | Waiting, alternating L/R every step |
+| Looking (neutral) | `wait(sleeping=False)` | `look_r.png` / `look_l.png` | Waiting, alternating L/R every step |
+| Association | `on_assoc(ap)` | `intense.png` | Sending PMKID assoc frame |
+| Deauth | `on_deauth(sta)` | `cool.png` | Sending deauth frame |
+| Missed target | `on_miss(who)` | `sad.png` | Target AP/STA no longer in range |
+| Handshake captured | `on_handshakes(n)` | `happy.png` | New handshake file detected |
+| New peer (first meet) | `on_new_peer(peer)` | `awake.png` or `cool.png` | First encounter with mesh peer |
+| New peer (good friend) | `on_new_peer(peer)` | `motivated.png` / `friend.png` / `happy.png` | Known peer with high bond factor |
+| New peer (normal) | `on_new_peer(peer)` | `excited.png` / `happy.png` / `smart.png` | Repeat peer, normal bond |
+| Lost peer | `on_lost_peer(peer)` | `lonely.png` | Mesh peer out of range |
+| Free channel | `on_free_channel(ch)` | `smart.png` | Empty channel found during recon |
+| Reading logs | `on_reading_logs(n)` | `smart.png` | Parsing last session log file |
+| Bored | `on_bored()` | `bored.png` | No activity for bored_num_epochs (default 15) |
+| Sad | `on_sad()` | `sad.png` | No activity for sad_num_epochs (default 25) |
+| Angry | `on_angry()` | `angry.png` | Extended inactivity + no friends nearby |
+| Motivated | `on_motivated(r)` | `motivated.png` | Positive reward trend |
+| Demotivated | `on_demotivated(r)` | `demotivated.png` | Negative reward trend |
+| Excited | `on_excited()` | `excited.png` | Sustained activity for excited_num_epochs (default 10) |
+| Grateful | `on_grateful()` | `grateful.png` | Would be sad/bored but has good friends nearby |
+| Smart | (via bored/free_ch) | `smart.png` | Reading logs, free channel found |
+| Lonely | `on_lonely()` | `lonely.png` | No peers + no support network |
+| Unread messages | `on_unread_messages()` | `excited.png` | Unread mesh messages (5s display) |
+| Uploading | `on_uploading(to)` | `upload.png` | Uploading captures to wpa-sec |
+| Rebooting | `on_rebooting()` | `broken.png` | System reboot triggered |
+| Custom/Debug | `on_custom(text)` | `debug.png` | Plugin-triggered custom message |
+| Shutdown | `on_shutdown()` | `sleep.png` | Graceful shutdown (display frozen after) |
+| Manual mode (good) | `on_manual_mode()` | `happy.png` | MANU mode, last session had handshakes |
+| Manual mode (bad) | `on_manual_mode()` | `sad.png` | MANU mode, >3 epochs + 0 handshakes |
+| FW crash | (AO plugin) | `fw_crash.png` | Firmware crash detected in journalctl |
+| AO crashed | (AO plugin) | `ao_crashed.png` | AO process exited unexpectedly |
+| Battery low | (AO plugin) | `battery_low.png` | PiSugar < 20% |
+| Battery critical | (AO plugin) | `battery_critical.png` | PiSugar < 5% |
+| WiFi down | (AO plugin) | `wifi_down.png` | Monitor interface missing from sysfs |
 
 ### Bull Face PNG Specs
 
@@ -200,35 +214,43 @@ All faces are bull head PNGs at `/etc/pwnagotchi/custom-plugins/faces/`:
 
 All faces are Korean Unicode text rendered with Huge 35pt font:
 
-| Event | Face Text | Variants |
-|-------|-----------|----------|
-| Starting | `(◕‿‿◕)` | AWAKE |
-| Normal/Idle | `(◕‿‿◕)` | AWAKE |
-| Sleeping | `(⇀‿‿↼)` | `(≖‿‿≖)`, `(－_－)` |
-| Looking R | `( ⚆_⚆)` | |
-| Looking L | `(☉_☉ )` | |
-| Looking R happy | `( ◕‿◕)` | `( ≧◡≦)` |
-| Looking L happy | `(◕‿◕ )` | `(≧◡≦ )` |
-| Association | `(°▃▃°)` | `(°ロ°)` — INTENSE |
-| Deauth | `(⌐■_■)` | COOL |
-| Handshake | `(•‿‿•)` | `(^‿‿^)`, `(^◡◡^)` — HAPPY |
-| New peer (first) | AWAKE or COOL | Random |
-| New peer (friend) | MOTIVATED/FRIEND/HAPPY | Random |
-| New peer (normal) | EXCITED/HAPPY/SMART | Random |
-| Lost peer | `(ب__ب)` | `(｡•́︿•̀｡)`, `(︶︹︺)` — LONELY |
-| Bored | `(-__-)` | `(—__—)` |
-| Sad | `(╥☁╥ )` | `(╥﹏╥)`, `(ಥ﹏ಥ)` |
-| Angry | `(-_-')` | `(⇀__⇀)`, `` (`___´) `` |
-| Motivated | `(☼‿‿☼)` | `(★‿★)`, `(•̀ᴗ•́)` |
-| Demotivated | `(≖__≖)` | `(￣ヘ￣)`, `(¬､¬)` |
-| Excited | `(ᵔ◡◡ᵔ)` | `(✜‿‿✜)` |
-| Grateful | `(^‿‿^)` | |
-| Smart | `(✜‿‿✜)` | |
-| Friend | `(♥‿‿♥)` | `(♡‿‿♡)`, `(♥‿♥ )`, `(♥ω♥ )` |
-| Uploading | `(1__0)` | `(1__1)`, `(0__1)` |
-| Rebooting | `(☓‿‿☓)` | BROKEN |
-| Debug | `(#__#)` | |
-| Shutdown | `(⇀‿‿↼)` | SLEEP |
+| Event | view.py method | Face Text | Variants |
+|-------|---------------|-----------|----------|
+| Starting | `on_starting()` | `(◕‿‿◕)` | AWAKE |
+| Keys generation | `on_keys_generation()` | `(◕‿‿◕)` | AWAKE |
+| Normal/Idle | `on_normal()` | `(◕‿‿◕)` | AWAKE |
+| Sleeping | `wait(sleeping=True)` | `(⇀‿‿↼)` | `(≖‿‿≖)`, `(－_－)` |
+| Looking R | `wait(sleeping=False)` | `( ⚆_⚆)` | Neutral mood, even steps |
+| Looking L | `wait(sleeping=False)` | `(☉_☉ )` | Neutral mood, odd steps |
+| Looking R happy | `wait(sleeping=False)` | `( ◕‿◕)` | `( ≧◡≦)` — good mood, even steps |
+| Looking L happy | `wait(sleeping=False)` | `(◕‿◕ )` | `(≧◡≦ )` — good mood, odd steps |
+| Association | `on_assoc(ap)` | `(°▃▃°)` | `(°ロ°)` — INTENSE |
+| Deauth | `on_deauth(sta)` | `(⌐■_■)` | COOL |
+| Missed target | `on_miss(who)` | `(╥☁╥ )` | `(╥﹏╥)`, `(ಥ﹏ಥ)` — SAD |
+| Handshake | `on_handshakes(n)` | `(•‿‿•)` | `(^‿‿^)`, `(^◡◡^)` — HAPPY |
+| New peer (first) | `on_new_peer(peer)` | AWAKE or COOL | Random choice |
+| New peer (friend) | `on_new_peer(peer)` | MOTIVATED/FRIEND/HAPPY | Random choice |
+| New peer (normal) | `on_new_peer(peer)` | EXCITED/HAPPY/SMART | Random choice |
+| Lost peer | `on_lost_peer(peer)` | `(ب__ب)` | `(｡•́︿•̀｡)`, `(︶︹︺)` — LONELY |
+| Free channel | `on_free_channel(ch)` | `(✜‿‿✜)` | SMART |
+| Reading logs | `on_reading_logs(n)` | `(✜‿‿✜)` | SMART |
+| Bored | `on_bored()` | `(-__-)` | `(—__—)` |
+| Sad | `on_sad()` | `(╥☁╥ )` | `(╥﹏╥)`, `(ಥ﹏ಥ)` |
+| Angry | `on_angry()` | `(-_-')` | `(⇀__⇀)`, `` (`___´) `` |
+| Motivated | `on_motivated(r)` | `(☼‿‿☼)` | `(★‿★)`, `(•̀ᴗ•́)` |
+| Demotivated | `on_demotivated(r)` | `(≖__≖)` | `(￣ヘ￣)`, `(¬､¬)` |
+| Excited | `on_excited()` | `(ᵔ◡◡ᵔ)` | `(✜‿‿✜)` |
+| Grateful | `on_grateful()` | `(^‿‿^)` | |
+| Smart | (via events above) | `(✜‿‿✜)` | |
+| Lonely | `on_lonely()` | `(ب__ب)` | `(｡•́︿•̀｡)`, `(︶︹︺)` |
+| Friend | (via on_new_peer) | `(♥‿‿♥)` | `(♡‿‿♡)`, `(♥‿♥ )`, `(♥ω♥ )` |
+| Unread messages | `on_unread_messages()` | `(ᵔ◡◡ᵔ)` | EXCITED (displayed 5s) |
+| Uploading | `on_uploading(to)` | `(1__0)` | `(1__1)`, `(0__1)` |
+| Rebooting | `on_rebooting()` | `(☓‿‿☓)` | BROKEN |
+| Custom/Debug | `on_custom(text)` | `(#__#)` | DEBUG |
+| Shutdown | `on_shutdown()` | `(⇀‿‿↼)` | SLEEP (display frozen after) |
+| Manual mode (good) | `on_manual_mode()` | `(•‿‿•)` | HAPPY — had handshakes |
+| Manual mode (bad) | `on_manual_mode()` | `(╥☁╥ )` | SAD — >3 epochs, 0 handshakes |
 
 ### Shutdown Sequence (PWN Mode)
 
@@ -319,7 +341,7 @@ All faces are Korean Unicode text rendered with Huge 35pt font:
 │                                                          │
 │  [WALKBY]  (0,82)                                        │  Y=82
 │  [AO STATUS]  (0,85)                                     │  Y=85
-│  [FRIEND]  (0,92)                                        │  Y=92
+│  [FRIEND FACE]  (0,92)   [FRIEND NAME]  (40,94)         │  Y=92-94
 ├──────────────────────────────────────────────────────────┤  Y=108 (line2)
 │  PWND 0 (00)  (0,109)                     AUTO (225,109) │  Y=109
 └──────────────────────────────────────────────────────────┘
@@ -346,7 +368,8 @@ All faces are Korean Unicode text rendered with Huge 35pt font:
 | Face | `face` | (0, 16) or (0, 34) | Huge 35pt / PNG | Core | Both (PNG in AO, text in PWN) |
 | WalkBy status | `walkby_status` | (0, 82) | Small 9pt | walkby plugin | **PWN only** (disabled in AO config) |
 | AO status | `angryoxide` | (0, 85) | Small 9pt | angryoxide plugin | **AO only** (hidden in PWN) |
-| Friend | `friend_name` | (0, 92) | BoldSmall 9pt | Core | Both |
+| Friend face | `friend_face` | (0, 92) | Bold 10pt | Core | Both (hidden when no peer) |
+| Friend name | `friend_name` | (40, 94) | BoldSmall 9pt | Core | Both (hidden when no peer) |
 
 **Bottom Bar (Y=108+) — Mode-independent, always visible:**
 
