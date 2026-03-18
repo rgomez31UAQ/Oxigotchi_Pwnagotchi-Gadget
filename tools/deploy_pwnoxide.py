@@ -152,8 +152,8 @@ FILE_MAP = {
         "+x",
     ),
     "plugin": (
-        os.path.join(SCRIPT_DIR, "angryoxide_v2.py"),
-        "angryoxide.py",  # renamed on deploy
+        os.path.join(SCRIPT_DIR, "..", "plugin", "angryoxide.py"),
+        "angryoxide.py",
         "/etc/pwnagotchi/custom-plugins/angryoxide.py",
         None,
     ),
@@ -200,7 +200,7 @@ FACES_LOCAL_DIR = os.path.join(SCRIPT_DIR, "faces", "eink")
 FACES_REMOTE_DIR = "/etc/pwnagotchi/custom-plugins/faces"
 
 FW_ORIG = "/lib/firmware/brcm/brcmfmac43436-sdio.bin.orig"
-HOSTS_TO_TRY = ["192.168.137.8", "10.0.0.2", PI_HOST]
+HOSTS_TO_TRY = ["10.12.194.1", "192.168.137.8", "10.0.0.2", PI_HOST]
 
 # Packages to hold — prevents kernel/firmware upgrades from breaking monitor mode
 APT_HOLD_PACKAGES = [
@@ -334,6 +334,15 @@ def step5_upload_plugin(ssh, sftp):
     """Upload pwnagotchi plugin."""
     step(5, "Upload plugin")
     _upload_and_install(ssh, sftp, "plugin")
+
+    # Also install into the .pwn venv — pwnagotchi loads plugins from venv, not just custom-plugins
+    staging_path = f"{STAGING}/angryoxide.py"
+    venv_dest = "/home/pi/.pwn/lib/python3.13/site-packages/pwnagotchi/plugins/default/angryoxide.py"
+    out, err = run(ssh, f"sudo cp {staging_path} {venv_dest} 2>&1; echo OK")
+    if "OK" in out:
+        ok(f"Also installed to venv: {venv_dest}")
+    else:
+        warn(f"Venv install may have failed: {err or out} (continuing)")
 
 
 def step6_upload_config(ssh, sftp):

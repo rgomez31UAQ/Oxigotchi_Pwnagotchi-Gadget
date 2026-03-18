@@ -110,10 +110,13 @@ def log(msg):
 
 
 def step_stop_services(client):
-    """Gracefully stop services before imaging."""
-    log("Stopping services...")
-    services = ["pwnagotchi", "bettercap", "bt-keepalive.timer",
-                "oxigotchi-splash", "pi_helper"]
+    """Gracefully stop services before imaging.
+    NOTE: pwnagotchi is intentionally NOT stopped — stopping it kills the USB gadget
+    (g_ether/g_cdc), which would drop our SSH lifeline over usb0. The live dd snapshot
+    is fine since we're reading the block device directly; pwnagotchi writes are small
+    and won't corrupt the image for distribution use."""
+    log("Stopping non-critical services (keeping pwnagotchi up to preserve SSH)...")
+    services = ["bettercap", "bt-keepalive.timer", "oxigotchi-splash", "pi_helper"]
     for svc in services:
         ssh_run(client, f"systemctl stop {svc} 2>/dev/null", timeout=30)
     time.sleep(2)

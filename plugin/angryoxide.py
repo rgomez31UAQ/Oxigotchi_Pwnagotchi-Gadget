@@ -93,6 +93,9 @@ class AngryOxide(plugins.Plugin):
         # Cached set of captured AP MACs (refreshed by _scan_captures)
         self._captured_macs = set()
         self._captured_macs_stale = True
+        # Track pcapng paths that have been confirmed as verified (.22000 companion exists)
+        # Used to fire bonus XP only once per newly-verified capture
+        self._known_verified = set()
         self._discord_webhook = None
         self._pwn_deauth = True
         self._pwn_associate = True
@@ -562,6 +565,18 @@ class AngryOxide(plugins.Plugin):
             logging.debug("[angryoxide] could not check kernel logs: %s", e)
         return True
 
+    def _count_pcapngs(self, output_dir):
+        """Count all .pcapng files in output_dir (total captures on disk)."""
+        return len(glob.glob(os.path.join(output_dir, '*.pcapng')))
+
+    def _count_verified(self, output_dir):
+        """Count pcapng files that have a companion .22000 file (confirmed crackable handshake)."""
+        count = 0
+        for f in glob.glob(os.path.join(output_dir, '*.pcapng')):
+            if os.path.isfile(f.rsplit('.', 1)[0] + '.22000'):
+                count += 1
+        return count
+
     def _is_whitelisted(self, filename, whitelist):
         """Check if a capture filename matches any whitelist entry.
         Mirrors utils.remove_whitelisted normalization: lowercase, alphanumeric-only, substring match."""
@@ -655,6 +670,23 @@ class AngryOxide(plugins.Plugin):
         self._known_files = current_files
         # Refresh captured MACs cache so _get_access_points doesn't rescan dirs
         self._captured_macs_stale = True
+
+        # Check for captures that became verified this scan (.22000 companion appeared).
+        # Fire a bonus handshake event so exp plugin rewards verified captures with extra XP.
+        for filepath in current_files:
+            if filepath in self._known_verified:
+                continue
+            hash_path = filepath.rsplit('.', 1)[0] + '.22000'
+            if os.path.isfile(hash_path):
+                self._known_verified.add(filepath)
+                filename = os.path.basename(filepath)
+                ap_mac, sta_mac = self._parse_capture_filename(filename)
+                dest_path = filepath
+                if os.path.abspath(output_dir) != os.path.abspath(handshake_dir):
+                    dest_path = os.path.join(handshake_dir, filename)
+                plugins.on('handshake', agent, dest_path, ap_mac, sta_mac)
+                logging.info("[angryoxide] capture verified (.22000 present): %s", filename)
+
         return new_count
 
     @staticmethod
@@ -913,12 +945,16 @@ class AngryOxide(plugins.Plugin):
             agent.set_stub_aps(stub_aps)
 
         # set pwnagotchi mood based on AO activity
-        if self._captures_this_epoch > 0:
-            agent.set_face(faces.EXCITED)
-            agent.set_status("AO pwnd!")
-        elif self._stable_epochs > 30:
-            agent.set_face(faces.BORED)
-            agent.set_status("AO scanning...")
+        try:
+            _view = agent._view
+            if self._captures_this_epoch > 0:
+                _view.set('face', faces.EXCITED)
+                agent.set_status("AO pwnd!")
+            elif self._stable_epochs > 30:
+                _view.set('face', faces.BORED)
+                agent.set_status("AO scanning...")
+        except Exception:
+            pass
 
         # reset crash count after 5 minutes of stability
         if self._crash_count > 0 and self._last_crash_time > 0:
@@ -992,17 +1028,19 @@ class AngryOxide(plugins.Plugin):
             elif self._running:
                 uptime = self._format_uptime()
                 try:
-                    import pwnagotchi.utils as _u
-                    tot = _u.total_unique_handshakes(self.options.get('output_dir', '/etc/pwnagotchi/handshakes/'))
+                    output_dir = self.options.get('output_dir', '/etc/pwnagotchi/handshakes/')
+                    tot = self._count_pcapngs(output_dir)
+                    vrf = self._count_verified(output_dir)
                 except Exception:
-                    tot = '?'
+                    tot, vrf = '?', '?'
                 channels = self._channels if self._channels else ('AH' if self._autohunt else '1,6,11')
-                ui.set('angryoxide', 'AO: %d/%s | %s | CH:%s' % (self._captures, tot, uptime, channels))
+                # vrf = captures with .22000 (confirmed crackable), tot = all pcapngs on disk
+                ui.set('angryoxide', 'AO: %s/%s | %s | CH:%s' % (vrf, tot, uptime, channels))
                 # Override status text that bt-tether/other plugins write
                 try:
                     cur_status = ui.get('status')
                     if cur_status and ('bnep' in str(cur_status) or 'BT' in str(cur_status)):
-                        ui.set('status', 'AO: %d captures | %s' % (self._captures, uptime))
+                        ui.set('status', 'AO: %s/%s verified | %s' % (vrf, tot, uptime))
                 except Exception:
                     pass
             else:
@@ -1111,6 +1149,8 @@ class AngryOxide(plugins.Plugin):
                 'running': self._running,
                 'pid': self._process.pid if self._process else None,
                 'captures': self._captures,
+                'verified_captures': self._count_verified(self.options.get('output_dir', '/etc/pwnagotchi/handshakes/')),
+                'total_captures': self._count_pcapngs(self.options.get('output_dir', '/etc/pwnagotchi/handshakes/')),
                 'cracked': cracked_count,
                 'crash_count': self._crash_count,
                 'fw_crash_count': self._fw_crash_count,
@@ -1720,7 +1760,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="label">State</div><div class="value" id="s-state">--</div>
 <div class="label">PID</div><div class="value" id="s-pid">--</div>
 <div class="label">Uptime</div><div class="value" id="s-uptime">--</div>
-<div class="label">Captures</div><div class="value" id="s-captures">--</div>
+<div class="label">Verified / Total</div><div class="value" id="s-captures">--</div>
 <div class="label">Crashes</div><div class="value" id="s-crashes">--</div>
 <div class="label">FW Crashes</div><div class="value" id="s-fwcrashes">--</div>
 </div>
@@ -2157,8 +2197,10 @@ function refreshStatus() {
         document.getElementById('s-state').style.color = d.running ? '#00d4aa' : '#e94560';
         document.getElementById('s-pid').textContent = d.pid || '--';
         document.getElementById('s-uptime').textContent = fmtUptime(d.uptime_secs);
-        document.getElementById('s-captures').textContent = d.captures;
-        document.getElementById('s-captures').style.color = d.captures > 0 ? '#00d4aa' : '#e0e0e0';
+        var vrf = (d.verified_captures !== undefined) ? d.verified_captures : d.captures;
+        var tot = (d.total_captures !== undefined) ? d.total_captures : d.captures;
+        document.getElementById('s-captures').textContent = vrf + ' / ' + tot;
+        document.getElementById('s-captures').style.color = vrf > 0 ? '#00d4aa' : '#e0e0e0';
         document.getElementById('s-crashes').textContent = d.crash_count;
         document.getElementById('s-crashes').style.color = d.crash_count > 0 ? '#f0c040' : '#e0e0e0';
         document.getElementById('s-fwcrashes').textContent = d.fw_crash_count;
