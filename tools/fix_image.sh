@@ -232,7 +232,10 @@ sudo rm -f $PI/etc/systemd/system/multi-user.target.wants/userconfig.service
 echo "=== 21. Disable pi-helper (unnecessary) ==="
 sudo rm -f $PI/etc/systemd/system/multi-user.target.wants/pi-helper.service
 
-echo "=== 22. Fix ui.font.name in config.toml ==="
+echo "=== 22a. Enable angryoxide (AO mode default) ==="
+sudo sed -i '/^\[main\.plugins\.angryoxide\]/,/^\[/{s/^enabled = false/enabled = true/}' $PI/etc/pwnagotchi/config.toml 2>/dev/null || true
+
+echo "=== 22b. Fix ui.font.name in config.toml ==="
 # Handle both flat key (ui.font.name = ...) and section-based (name = ... under [ui.font])
 sudo sed -i 's/^\(ui\.font\.name\s*=\s*\)"oxigotchi"/\1"DejaVuSansMono"/' $PI/etc/pwnagotchi/config.toml 2>/dev/null || true
 sudo sed -i '/^\[ui\.font\]/,/^\[/{s/^\(name\s*=\s*\)"oxigotchi"/\1"DejaVuSansMono"/}' $PI/etc/pwnagotchi/config.toml 2>/dev/null || true
