@@ -23,7 +23,7 @@ Both modes share the same hardware layout grid:
 │                                                          │
 │  [FRIEND FACE + NAME]                                    │  ← Y=92..94
 ├──────────────────────────────────────────────────────────┤  ← line2 (Y=108)
-│ PWND 0 (00)                                        AUTO  │  ← Bottom bar (Y=109+)
+│ PWND 0 (00)                                        AUTO  │  ← Bottom bar (Y=109+, mode at Y=112)
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -46,7 +46,7 @@ Both modes share the same hardware layout grid:
 | Friend name | `friend_name` | (40, 94) | BoldSmall 9pt | "▌▌▌│ buddy 3 (15) of 4" | Both (hidden if no peer) |
 | Line 2 | — | (0, 108) → (250, 108) | — | Horizontal divider, 1px | Both |
 | Handshakes | `shakes` | (0, 109) | Bold 10pt label + Medium 10pt value | PWN: "PWND 1 (294) [AP_NAME]" / AO: **hidden** (AO indicator replaces it) | PWN only |
-| Mode | `mode` | (225, 109) | Bold 10pt | "AUTO" or "MANU" | Both |
+| Mode | `mode` | (222, 112) | Bold 10pt | "AUTO" or "MANU" | Both |
 
 ### Font Sizes (Waveshare V4 override)
 
@@ -442,7 +442,7 @@ Each plugin checks `bettercap.disabled` at setup time — if False, the plugin n
 │  [AO STATUS]  (0,0) — top bar left (replaces PWND)        │  Y=0
 │  [FRIEND FACE]  (0,92)   [FRIEND NAME]  (40,94)         │  Y=92-94
 ├──────────────────────────────────────────────────────────┤  Y=108 (line2)
-│  PWND 0 (00)  (0,109)                     AUTO (225,109) │  Y=109
+│  PWND 0 (00)  (0,109)                     AUTO (222,112) │  Y=109/112
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -513,7 +513,7 @@ isn't scanning — AO handles it. These elements are repurposed:
 | (85, 109) | conn status | conn status (unchanged) | bt-tether plugin |
 | (120, 109) | `BT-` / `BT C` | unchanged | bt-tether plugin |
 | (155, 109) | `CHG100%` | unchanged | pisugarx plugin |
-| (220, 109) | `AUTO` | unchanged | core |
+| (222, 112) | `AUTO` | unchanged | core (repositioned by angryoxide plugin) |
 
 **Crash counter:**
 - Shows `CRASH:0` when stable (no firmware crashes)

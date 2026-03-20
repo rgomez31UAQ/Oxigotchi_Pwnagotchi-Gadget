@@ -299,12 +299,15 @@ class AngryOxide(plugins.Plugin):
             import threading
             threading.Timer(30.0, self._restore_delayed_plugins).start()
 
-        # Set awake bull face on boot
-        try:
-            agent._view.set('face', self._face('awake'))
-            agent._view.update()
-        except Exception:
-            pass
+        # Set awake bull face on boot — only in AO mode.
+        # In PWN mode with png=false, let pwnagotchi core handle faces
+        # (text kaomoji like "(◕‿‿◕)"), don't override with PNG bull face.
+        if self._is_ao_mode():
+            try:
+                agent._view.set('face', self._face('awake'))
+                agent._view.update()
+            except Exception:
+                pass
 
     def _build_cmd(self):
         binary = self.options.get('binary_path', '/usr/local/bin/angryoxide')
@@ -396,6 +399,11 @@ class AngryOxide(plugins.Plugin):
             if self._running:
                 return
 
+            iface = self.options.get('interface', 'wlan0mon')
+            if not os.path.exists('/sys/class/net/%s' % iface):
+                logging.error("[angryoxide] cannot start: interface %s does not exist", iface)
+                return
+
             output_dir = self.options.get('output_dir', '/etc/pwnagotchi/handshakes/')
             os.makedirs(output_dir, exist_ok=True)
 
@@ -446,6 +454,10 @@ class AngryOxide(plugins.Plugin):
                 except Exception as e:
                     logging.error("[angryoxide] error stopping AO: %s", e)
                 finally:
+                    try:
+                        self._process.wait(timeout=3)  # reap zombie
+                    except Exception:
+                        pass
                     self._process = None
                     self._running = False
                     self._start_time = None
@@ -470,6 +482,10 @@ class AngryOxide(plugins.Plugin):
             if self._process and self._process.poll() is not None:
                 rc = self._process.returncode
                 logging.warning("[angryoxide] AO process died with exit code %d", rc)
+                try:
+                    self._process.wait(timeout=3)  # reap zombie
+                except Exception:
+                    pass
                 self._process = None
                 self._running = False
                 self._start_time = None
@@ -847,6 +863,12 @@ class AngryOxide(plugins.Plugin):
         if self._stopped_permanently:
             return
 
+        # In PWN mode, skip all AO-specific epoch logic (health checks,
+        # capture scanning, AO face/status overrides). Let bettercap and
+        # pwnagotchi core manage the display without AO interference.
+        if not self._is_ao_mode():
+            return
+
         # Prevent blind epoch restart — report AO's AP count to pwnagotchi
         if self._running and self._agent:
             try:
@@ -969,16 +991,29 @@ class AngryOxide(plugins.Plugin):
                 pos = [int(x.strip()) for x in pos.split(',')]
             else:
                 pos = (0, 0)
+            # Start with empty value — on_ui_update will populate if in AO mode.
+            # This prevents AO indicators from flashing on screen in PWN mode
+            # before the first on_ui_update clears them.
             ui.add_element('angryoxide', LabeledValue(
                 color=BLACK,
                 label='',
-                value='AO: ...',
+                value='',
                 position=pos,
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
             # Name hiding is handled in on_ui_update based on mode
             # Don't hide here — mode may not be known yet at setup time
+
+            # Move AUTO/MANU mode indicator to the very bottom-right corner
+            # of the display (250x122). Position it so text ends at the right
+            # edge and sits at the bottom of the screen.
+            try:
+                mode_elem = ui._state._state.get('mode')
+                if mode_elem:
+                    mode_elem.xy = (222, 112)
+            except Exception:
+                pass
 
     def on_ui_update(self, ui):
         with ui._lock:
