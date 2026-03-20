@@ -1,0 +1,14 @@
+[Unit]
+Description=Expand root filesystem to fill SD card
+After=local-fs.target
+Before=pwnagotchi.service
+ConditionPathExists=!/var/lib/.rootfs-expanded
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'growpart /dev/mmcblk0 2 2>/dev/null; resize2fs /dev/mmcblk0p2 2>/dev/null; touch /var/lib/.rootfs-expanded; exit 0'
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

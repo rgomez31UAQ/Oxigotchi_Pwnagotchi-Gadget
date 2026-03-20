@@ -106,6 +106,8 @@ class AngryOxide(plugins.Plugin):
         self._health_cache_time = 0
         self._mode_cache = None
         self._mode_cache_time = 0
+        # H2: monkey-patch flag for safe _update_peers wrapper
+        self._peers_patched = False
 
     def _face(self, name):
         """Return face path for PNG mode, or fall back to text faces."""
@@ -317,7 +319,18 @@ class AngryOxide(plugins.Plugin):
         no_setup = self.options.get('no_setup', True)
         extra_args = self.options.get('extra_args', '')
 
-        cmd = [binary, '--interface', iface, '--headless', '--output', output_dir]
+        # H3: AO --output is a filename prefix, not just a directory.
+        # Without a prefix, captures are named "-DATETIME.pcapng" (empty prefix).
+        # Append the device hostname so files become "oxigotchi-DATETIME.pcapng".
+        import socket
+        capture_prefix = self.options.get('capture_prefix', '')
+        if not capture_prefix:
+            try:
+                capture_prefix = socket.gethostname() or 'oxigotchi'
+            except Exception:
+                capture_prefix = 'oxigotchi'
+        output_path = os.path.join(output_dir, capture_prefix)
+        cmd = [binary, '--interface', iface, '--headless', '--output', output_path]
 
         if notx:
             cmd.append('--notx')
@@ -682,6 +695,16 @@ class AngryOxide(plugins.Plugin):
         # update display and trigger mood if we got new captures
         if new_count > 0:
             agent._update_handshakes(new_count)
+            # H1: Reset blind epoch counter — captures prove the interface is
+            # working even though bettercap's wifi.recon doesn't see AO's activity.
+            # Without this, blind_for climbs every epoch and the AI reward stays
+            # negative, eventually triggering a needless restart.
+            try:
+                agent._epoch.blind_for = 0
+                agent._epoch.any_activity = True
+                logging.debug("[angryoxide] reset blind_for: %d new captures fed to AI", new_count)
+            except Exception:
+                pass
 
         self._known_files = current_files
         # Refresh captured MACs cache so _get_access_points doesn't rescan dirs
@@ -863,11 +886,41 @@ class AngryOxide(plugins.Plugin):
         if self._stopped_permanently:
             return
 
+        # H2: Monkey-patch agent._update_peers to suppress the
+        # "'Array' object has no attribute 'read'" AttributeError that fires
+        # every epoch from _fetch_stats -> _update_peers -> set_closest_peer.
+        # Root cause is a pwngrid API response format mismatch, but patching
+        # pwnagotchi core is fragile. Wrapping the method here is safe and
+        # survives pwnagotchi updates (since it's applied at runtime).
+        if not self._peers_patched and hasattr(agent, '_update_peers'):
+            _original_update_peers = agent._update_peers
+            def _safe_update_peers():
+                try:
+                    _original_update_peers()
+                except (AttributeError, TypeError) as e:
+                    logging.debug("[angryoxide] suppressed _update_peers error: %s", e)
+            agent._update_peers = _safe_update_peers
+            self._peers_patched = True
+            logging.info("[angryoxide] patched agent._update_peers with safe wrapper")
+
         # In PWN mode, skip all AO-specific epoch logic (health checks,
         # capture scanning, AO face/status overrides). Let bettercap and
         # pwnagotchi core manage the display without AO interference.
         if not self._is_ao_mode():
             return
+
+        # H1: Prevent blind epoch escalation — if AO is running with the
+        # monitor interface up, reset blind_for directly. The epoch.observe()
+        # call happens BEFORE on_epoch, so by the time we get here blind_for
+        # has already been incremented. We correct it here. The dummy AP
+        # injection below is a belt-and-suspenders backup.
+        if self._running and self._agent:
+            try:
+                iface = self.options.get('interface', 'wlan0mon')
+                if os.path.exists('/sys/class/net/%s' % iface):
+                    self._agent._epoch.blind_for = 0
+            except Exception:
+                pass
 
         # Prevent blind epoch restart — report AO's AP count to pwnagotchi
         if self._running and self._agent:

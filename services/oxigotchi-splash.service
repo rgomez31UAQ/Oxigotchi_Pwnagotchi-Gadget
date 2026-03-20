@@ -2,7 +2,7 @@
 Description=Oxigotchi Boot Splash
 DefaultDependencies=no
 Before=pwnagotchi.service
-After=local-fs.target sysinit.target
+After=local-fs.target sysinit.target epd-startup.service
 
 [Service]
 Type=oneshot

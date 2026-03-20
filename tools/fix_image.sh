@@ -57,6 +57,11 @@ echo "=== 7. Neutralize rc.local ==="
 printf '#!/bin/bash\nexit 0\n' | sudo tee $PI/etc/rc.local > /dev/null
 sudo chmod +x $PI/etc/rc.local
 
+echo "=== 7b. Resize rootfs (idempotent) ==="
+growpart /dev/loop0 2 2>/dev/null || true
+resize2fs /dev/loop0p2 2>/dev/null || true
+sudo touch $PI/var/lib/.rootfs-expanded
+
 echo "=== 8. Clean disk bloat ==="
 sudo rm -rf $PI/root/.rustup
 sudo rm -rf $PI/root/go
