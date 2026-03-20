@@ -1002,8 +1002,15 @@ class AngryOxide(plugins.Plugin):
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
-            # Name hiding is handled in on_ui_update based on mode
-            # Don't hide here — mode may not be known yet at setup time
+            # CRASH counter at bottom-left (where PWND was)
+            ui.add_element('ao_crash', LabeledValue(
+                color=BLACK,
+                label='',
+                value='',
+                position=(0, 109),
+                label_font=fonts.Small,
+                text_font=fonts.Small
+            ))
 
             # Move AUTO/MANU mode indicator to the very bottom-right corner
             # of the display (250x122). Position it so text ends at the right
@@ -1030,6 +1037,7 @@ class AngryOxide(plugins.Plugin):
             if not self._is_ao_mode():
                 try:
                     ui.set('angryoxide', '')
+                    ui.set('ao_crash', '')
                 except Exception:
                     pass
                 return
@@ -1051,13 +1059,9 @@ class AngryOxide(plugins.Plugin):
                 except Exception:
                     pass
 
-            # Show CRASH counter at bottom-left (0, 109) where PWND was
+            # Show CRASH counter at bottom-left
             try:
-                shakes_elem = ui._state._state.get('shakes')
-                if shakes_elem:
-                    shakes_elem.xy = (0, 109)
-                    shakes_elem.label = ''
-                    shakes_elem.value = 'CRASH:%d' % self._fw_crash_count
+                ui.set('ao_crash', 'CRASH:%d' % self._fw_crash_count)
             except Exception:
                 pass
 
