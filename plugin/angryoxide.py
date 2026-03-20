@@ -1051,7 +1051,7 @@ class AngryOxide(plugins.Plugin):
             # Move bettercap + PWN-mode plugin elements off-screen (blanking doesn't
             # work — bettercap rewrites them after our plugin runs). Position (300, 300)
             # is off the 250x122 display so they render but are invisible.
-            for hide_key in ('shakes', 'channel', 'aps', 'display-password', 'bt-tether'):
+            for hide_key in ('shakes', 'channel', 'aps', 'display-password'):
                 try:
                     el = ui._state._state.get(hide_key)
                     if el and hasattr(el, 'xy'):
