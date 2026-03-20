@@ -79,7 +79,7 @@ class AngryOxide(plugins.Plugin):
             'anon_reassoc': True,
             'rogue_m2': True,
         }
-        self._rate = 2          # 1, 2, or 3
+        self._rate = 1          # 1, 2, or 3 (rate 2+ crashes BCM43436B0 in ~68s)
         self._channels = ''     # empty = default (1,6,11)
         self._autohunt = False
         self._dwell = 2         # seconds
