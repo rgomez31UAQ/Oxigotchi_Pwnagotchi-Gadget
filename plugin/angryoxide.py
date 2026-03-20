@@ -990,7 +990,7 @@ class AngryOxide(plugins.Plugin):
             if pos:
                 pos = [int(x.strip()) for x in pos.split(',')]
             else:
-                pos = (0, 109)
+                pos = (0, 0)
             # Start with empty value — on_ui_update will populate if in AO mode.
             # This prevents AO indicators from flashing on screen in PWN mode
             # before the first on_ui_update clears them.
