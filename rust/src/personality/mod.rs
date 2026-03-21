@@ -161,6 +161,7 @@ pub struct Personality {
 }
 
 impl Personality {
+    /// Create a new personality with default mood (0.5) and no overrides.
     pub fn new() -> Self {
         Self {
             mood: Mood::default(),
@@ -216,6 +217,111 @@ impl Personality {
 impl Default for Personality {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// XP / Leveling system (Python: exp.py → personality/xp.rs)
+// ---------------------------------------------------------------------------
+
+/// Experience point tracker and leveling system.
+#[derive(Debug, Clone)]
+pub struct XpTracker {
+    /// Total XP earned this session.
+    pub xp: u64,
+    /// Current level.
+    pub level: u32,
+    /// XP needed to reach the next level.
+    pub xp_to_next_level: u64,
+    /// XP multiplier (bonus from streaks, etc.).
+    pub multiplier: f32,
+}
+
+impl XpTracker {
+    /// Create a new XP tracker at level 1 with zero XP.
+    pub fn new() -> Self {
+        Self {
+            xp: 0,
+            level: 1,
+            xp_to_next_level: 100,
+            multiplier: 1.0,
+        }
+    }
+
+    /// Award XP for an event. Returns true if a level-up occurred.
+    pub fn award(&mut self, base_xp: u64) -> bool {
+        let earned = (base_xp as f32 * self.multiplier) as u64;
+        self.xp += earned;
+        if self.xp >= self.xp_to_next_level {
+            self.level += 1;
+            self.xp -= self.xp_to_next_level;
+            // XP curve: each level needs 20% more XP
+            self.xp_to_next_level = (self.xp_to_next_level as f32 * 1.2) as u64;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// XP awarded for various events.
+    pub fn xp_for_handshake() -> u64 {
+        50
+    }
+    pub fn xp_for_new_ap() -> u64 {
+        10
+    }
+    pub fn xp_for_epoch() -> u64 {
+        1
+    }
+
+    /// Display string: "LVL 3 (75/120 XP)"
+    pub fn display_str(&self) -> String {
+        format!("LVL {} ({}/{} XP)", self.level, self.xp, self.xp_to_next_level)
+    }
+}
+
+impl Default for XpTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// System info (Python: memtemp-plus.py → display/sysinfo.rs)
+// ---------------------------------------------------------------------------
+
+/// System stats: CPU temperature, memory usage, CPU load.
+#[derive(Debug, Clone, Default)]
+pub struct SystemInfo {
+    /// CPU temperature in degrees Celsius.
+    pub cpu_temp_c: f32,
+    /// Memory used in MB.
+    pub mem_used_mb: u32,
+    /// Total memory in MB.
+    pub mem_total_mb: u32,
+    /// CPU usage percentage (0-100).
+    pub cpu_percent: f32,
+}
+
+impl SystemInfo {
+    /// Read system info from /proc and /sys on Linux.
+    ///
+    /// TODO: Parse /sys/class/thermal/thermal_zone0/temp for CPU temp,
+    /// /proc/meminfo for memory, /proc/stat for CPU usage.
+    pub fn read() -> Self {
+        // Stub: on non-Linux platforms, return zeros
+        Self::default()
+    }
+
+    /// Format for display: "CPU 45C MEM 42/512MB"
+    pub fn display_str(&self) -> String {
+        if self.mem_total_mb == 0 {
+            return "SYS N/A".to_string();
+        }
+        format!(
+            "CPU {:.0}C MEM {}/{}MB",
+            self.cpu_temp_c, self.mem_used_mb, self.mem_total_mb
+        )
     }
 }
 
@@ -331,5 +437,151 @@ mod tests {
         assert_eq!(json, "\"Happy\"");
         let back: Face = serde_json::from_str(&json).unwrap();
         assert_eq!(back, Face::Happy);
+    }
+
+    // ---- XP Tracker tests ----
+
+    #[test]
+    fn test_xp_tracker_new() {
+        let xp = XpTracker::new();
+        assert_eq!(xp.level, 1);
+        assert_eq!(xp.xp, 0);
+        assert_eq!(xp.xp_to_next_level, 100);
+    }
+
+    #[test]
+    fn test_xp_award_no_levelup() {
+        let mut xp = XpTracker::new();
+        let leveled = xp.award(50);
+        assert!(!leveled);
+        assert_eq!(xp.xp, 50);
+        assert_eq!(xp.level, 1);
+    }
+
+    #[test]
+    fn test_xp_award_levelup() {
+        let mut xp = XpTracker::new();
+        let leveled = xp.award(100);
+        assert!(leveled);
+        assert_eq!(xp.level, 2);
+        assert_eq!(xp.xp, 0);
+        // Next level requires 20% more: 120
+        assert_eq!(xp.xp_to_next_level, 120);
+    }
+
+    #[test]
+    fn test_xp_display_str() {
+        let xp = XpTracker::new();
+        assert_eq!(xp.display_str(), "LVL 1 (0/100 XP)");
+    }
+
+    #[test]
+    fn test_xp_multiplier() {
+        let mut xp = XpTracker::new();
+        xp.multiplier = 2.0;
+        xp.award(30); // 30 * 2.0 = 60
+        assert_eq!(xp.xp, 60);
+    }
+
+    // ---- SystemInfo tests ----
+
+    #[test]
+    fn test_system_info_default() {
+        let si = SystemInfo::default();
+        assert_eq!(si.cpu_temp_c, 0.0);
+        assert_eq!(si.display_str(), "SYS N/A");
+    }
+
+    #[test]
+    fn test_system_info_display_str() {
+        let si = SystemInfo {
+            cpu_temp_c: 45.0,
+            mem_used_mb: 42,
+            mem_total_mb: 512,
+            cpu_percent: 12.0,
+        };
+        assert_eq!(si.display_str(), "CPU 45C MEM 42/512MB");
+    }
+
+    // ---- Mood boundary tests ----
+
+    #[test]
+    fn test_mood_at_exact_zero() {
+        let mood = Mood::new(0.0);
+        assert_eq!(mood.value(), 0.0);
+        assert_eq!(mood.face(), Face::Demotivated);
+        assert_eq!(mood.status_message(), "...");
+    }
+
+    #[test]
+    fn test_mood_at_exact_one() {
+        let mood = Mood::new(1.0);
+        assert_eq!(mood.value(), 1.0);
+        assert_eq!(mood.face(), Face::Excited);
+        assert_eq!(mood.status_message(), "So many handshakes!");
+    }
+
+    #[test]
+    fn test_mood_adjust_at_floor_stays_zero() {
+        let mut mood = Mood::new(0.0);
+        mood.adjust(-0.5); // Can't go below 0
+        assert_eq!(mood.value(), 0.0);
+    }
+
+    #[test]
+    fn test_mood_adjust_at_ceiling_stays_one() {
+        let mut mood = Mood::new(1.0);
+        mood.adjust(0.5); // Can't go above 1
+        assert_eq!(mood.value(), 1.0);
+    }
+
+    #[test]
+    fn test_mood_face_at_boundaries() {
+        // Exactly on each threshold boundary
+        assert_eq!(Mood::new(0.9).face(), Face::Excited);
+        assert_eq!(Mood::new(0.7).face(), Face::Happy);
+        assert_eq!(Mood::new(0.5).face(), Face::Awake);
+        assert_eq!(Mood::new(0.3).face(), Face::Bored);
+        assert_eq!(Mood::new(0.1).face(), Face::Sad);
+        // Just below lowest threshold
+        assert_eq!(Mood::new(0.09).face(), Face::Demotivated);
+    }
+
+    #[test]
+    fn test_personality_many_blind_epochs_floors_mood() {
+        let mut p = Personality::new();
+        for _ in 0..200 {
+            p.on_blind_epoch();
+        }
+        assert_eq!(p.mood.value(), 0.0);
+        assert_eq!(p.current_face(), Face::Demotivated);
+    }
+
+    #[test]
+    fn test_personality_many_handshakes_caps_mood() {
+        let mut p = Personality::new();
+        for _ in 0..200 {
+            p.on_handshake();
+        }
+        assert_eq!(p.mood.value(), 1.0);
+        assert_eq!(p.current_face(), Face::Excited);
+    }
+
+    #[test]
+    fn test_xp_award_zero() {
+        let mut xp = XpTracker::new();
+        let leveled = xp.award(0);
+        assert!(!leveled);
+        assert_eq!(xp.xp, 0);
+    }
+
+    #[test]
+    fn test_xp_multiple_levelups() {
+        let mut xp = XpTracker::new();
+        // Award enough to skip multiple levels
+        for _ in 0..20 {
+            xp.award(XpTracker::xp_for_handshake());
+        }
+        assert!(xp.level > 1);
     }
 }

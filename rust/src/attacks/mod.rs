@@ -88,6 +88,7 @@ pub struct AttackScheduler {
 }
 
 impl AttackScheduler {
+    /// Create a new attack scheduler with the given rate limit.
     pub fn new(rate: u32) -> Self {
         Self {
             rate_limiter: RateLimiter::new(rate),
@@ -189,5 +190,41 @@ mod tests {
         // Ensure all variants are distinct
         assert_ne!(AttackType::Deauth, AttackType::Pmkid);
         assert_ne!(AttackType::Csa, AttackType::Disassoc);
+    }
+
+    #[test]
+    fn test_rate_limiter_exactly_at_limit() {
+        let mut rl = RateLimiter::new(1);
+        assert!(rl.allow());
+        assert_eq!(rl.remaining(), 0);
+        assert!(!rl.allow()); // at limit, should block
+    }
+
+    #[test]
+    fn test_rate_limiter_zero_rate() {
+        let mut rl = RateLimiter::new(0);
+        assert!(!rl.allow()); // rate 0 means nothing allowed
+        assert_eq!(rl.remaining(), 0);
+    }
+
+    #[test]
+    fn test_record_attack_no_handshake() {
+        let mut scheduler = AttackScheduler::new(10);
+        let result = AttackResult {
+            attack_type: AttackType::Deauth,
+            target_bssid: [0; 6],
+            success: false,
+            handshake_captured: false,
+            timestamp: Instant::now(),
+        };
+        scheduler.record(&result);
+        assert_eq!(scheduler.total_attacks, 1);
+        assert_eq!(scheduler.total_handshakes, 0);
+    }
+
+    #[test]
+    fn test_whitelist_empty() {
+        let scheduler = AttackScheduler::new(1);
+        assert!(!scheduler.is_whitelisted(&[0xFF; 6]));
     }
 }

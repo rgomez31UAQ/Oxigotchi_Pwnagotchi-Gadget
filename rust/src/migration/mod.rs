@@ -12,6 +12,7 @@ pub struct MigrationResult {
 }
 
 impl MigrationResult {
+    /// Returns `true` if no errors occurred during migration.
     pub fn success(&self) -> bool {
         self.errors.is_empty()
     }

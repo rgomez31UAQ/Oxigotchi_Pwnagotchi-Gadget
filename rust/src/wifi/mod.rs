@@ -27,6 +27,7 @@ pub struct AccessPoint {
 }
 
 impl AccessPoint {
+    /// Format the BSSID as a colon-separated hex string (e.g. "AA:BB:CC:DD:EE:FF").
     pub fn bssid_str(&self) -> String {
         self.bssid
             .iter()
@@ -77,6 +78,7 @@ pub struct ApTracker {
 }
 
 impl ApTracker {
+    /// Create an empty AP tracker.
     pub fn new() -> Self {
         Self::default()
     }
@@ -138,6 +140,7 @@ pub struct WifiManager {
 }
 
 impl WifiManager {
+    /// Create a new WiFi manager in the Down state.
     pub fn new() -> Self {
         Self {
             state: WifiState::Down,
@@ -168,6 +171,75 @@ impl Default for WifiManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Whitelist filtering (Python: whitelist config → wifi/whitelist.rs)
+// ---------------------------------------------------------------------------
+
+/// Whitelist entry — can match by SSID name or BSSID MAC address.
+#[derive(Debug, Clone)]
+pub enum WhitelistEntry {
+    /// Match by SSID (case-insensitive).
+    Ssid(String),
+    /// Match by BSSID (exact MAC).
+    Bssid([u8; 6]),
+}
+
+/// Parse a whitelist string into an entry.
+/// If it looks like a MAC address (XX:XX:XX:XX:XX:XX), parse as BSSID.
+/// Otherwise treat as SSID.
+pub fn parse_whitelist_entry(s: &str) -> WhitelistEntry {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 6 {
+        let mut mac = [0u8; 6];
+        let mut valid = true;
+        for (i, part) in parts.iter().enumerate() {
+            match u8::from_str_radix(part, 16) {
+                Ok(b) => mac[i] = b,
+                Err(_) => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        if valid {
+            return WhitelistEntry::Bssid(mac);
+        }
+    }
+    WhitelistEntry::Ssid(s.to_string())
+}
+
+/// Check if an AP matches any whitelist entry.
+pub fn is_whitelisted(ap: &AccessPoint, whitelist: &[WhitelistEntry]) -> bool {
+    for entry in whitelist {
+        match entry {
+            WhitelistEntry::Ssid(ssid) => {
+                if ap.ssid.eq_ignore_ascii_case(ssid) {
+                    return true;
+                }
+            }
+            WhitelistEntry::Bssid(bssid) => {
+                if ap.bssid == *bssid {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+// ---------------------------------------------------------------------------
+// Internet connectivity check (Python: internet-connection.py)
+// ---------------------------------------------------------------------------
+
+/// Check if the Pi has internet connectivity.
+///
+/// TODO: Implement actual connectivity check (ping or HTTP HEAD to a known host).
+/// The Python plugin checks by trying to resolve a hostname.
+pub fn check_internet_connection() -> bool {
+    // TODO: try TCP connect to 1.1.1.1:53 or HTTP HEAD to connectivity check URL
+    false
 }
 
 #[cfg(test)]
@@ -271,5 +343,52 @@ mod tests {
         let mut wm = WifiManager::new();
         let ch = wm.hop_channel();
         assert_eq!(ch, 2); // First hop from ch1 to ch2
+    }
+
+    // ---- Whitelist tests ----
+
+    #[test]
+    fn test_parse_whitelist_ssid() {
+        let entry = parse_whitelist_entry("MyHomeNetwork");
+        assert!(matches!(entry, WhitelistEntry::Ssid(s) if s == "MyHomeNetwork"));
+    }
+
+    #[test]
+    fn test_parse_whitelist_bssid() {
+        let entry = parse_whitelist_entry("AA:BB:CC:DD:EE:FF");
+        assert!(matches!(entry, WhitelistEntry::Bssid([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])));
+    }
+
+    #[test]
+    fn test_parse_whitelist_invalid_mac_treated_as_ssid() {
+        let entry = parse_whitelist_entry("ZZ:BB:CC:DD:EE:FF");
+        assert!(matches!(entry, WhitelistEntry::Ssid(_)));
+    }
+
+    #[test]
+    fn test_whitelist_match_ssid() {
+        let ap = make_ap(0x01, "MyHome", -50);
+        let wl = vec![parse_whitelist_entry("myhome")]; // case insensitive
+        assert!(is_whitelisted(&ap, &wl));
+    }
+
+    #[test]
+    fn test_whitelist_match_bssid() {
+        let ap = make_ap(0x01, "Other", -50);
+        let wl = vec![parse_whitelist_entry("AA:BB:CC:DD:EE:01")];
+        assert!(is_whitelisted(&ap, &wl));
+    }
+
+    #[test]
+    fn test_whitelist_no_match() {
+        let ap = make_ap(0x01, "Unknown", -50);
+        let wl = vec![parse_whitelist_entry("SomeOtherNet")];
+        assert!(!is_whitelisted(&ap, &wl));
+    }
+
+    #[test]
+    fn test_check_internet_connection_stub() {
+        // Stub always returns false
+        assert!(!check_internet_connection());
     }
 }

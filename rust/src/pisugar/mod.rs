@@ -93,6 +93,7 @@ pub struct ButtonDebouncer {
 }
 
 impl ButtonDebouncer {
+    /// Create a new button debouncer with default timing thresholds.
     pub fn new() -> Self {
         Self {
             last_press: None,
@@ -135,14 +136,14 @@ impl ButtonDebouncer {
 
     /// Check if a gesture has timed out (single tap resolved).
     pub fn check_timeout(&mut self) -> Option<ButtonAction> {
-        if let Some(last) = self.last_press {
-            if self.press_count == 1 {
-                let elapsed_ms = last.elapsed().as_millis() as u64;
-                if elapsed_ms > self.debounce_ms && elapsed_ms < self.long_press_ms {
-                    self.press_count = 0;
-                    self.last_press = None;
-                    return Some(ButtonAction::SingleTap);
-                }
+        if let Some(last) = self.last_press
+            && self.press_count == 1
+        {
+            let elapsed_ms = last.elapsed().as_millis() as u64;
+            if elapsed_ms > self.debounce_ms && elapsed_ms < self.long_press_ms {
+                self.press_count = 0;
+                self.last_press = None;
+                return Some(ButtonAction::SingleTap);
             }
         }
         None
@@ -164,6 +165,7 @@ pub struct PiSugar {
 }
 
 impl PiSugar {
+    /// Create a new PiSugar manager with the given configuration.
     pub fn new(config: PiSugarConfig) -> Self {
         Self {
             config,
@@ -225,6 +227,33 @@ impl PiSugar {
 impl Default for PiSugar {
     fn default() -> Self {
         Self::new(PiSugarConfig::default())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Button action mapping (Python: button-feedback.py → pisugar/buttons.rs)
+// ---------------------------------------------------------------------------
+
+/// Mapped button actions for the PiSugar button.
+/// Single tap = toggle Bluetooth
+/// Double tap = toggle AUTO/MANU mode
+/// Long press = toggle AO/PWN mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MappedAction {
+    /// Toggle Bluetooth PAN tethering on/off.
+    Bluetooth,
+    /// Switch between AUTO and MANUAL mode.
+    AutoManual,
+    /// Switch between AO and PWN mode.
+    AoPwn,
+}
+
+/// Map a raw button action to a semantic daemon action.
+pub fn map_button_action(action: ButtonAction) -> MappedAction {
+    match action {
+        ButtonAction::SingleTap => MappedAction::Bluetooth,
+        ButtonAction::DoubleTap => MappedAction::AutoManual,
+        ButtonAction::LongPress => MappedAction::AoPwn,
     }
 }
 
@@ -312,5 +341,79 @@ mod tests {
     fn test_charge_states() {
         assert_ne!(ChargeState::Charging, ChargeState::Discharging);
         assert_ne!(ChargeState::Full, ChargeState::Unknown);
+    }
+
+    // ---- Button action mapping tests ----
+
+    #[test]
+    fn test_button_single_tap_maps_to_bluetooth() {
+        let mapped = map_button_action(ButtonAction::SingleTap);
+        assert_eq!(mapped, MappedAction::Bluetooth);
+    }
+
+    #[test]
+    fn test_button_double_tap_maps_to_auto_manual() {
+        let mapped = map_button_action(ButtonAction::DoubleTap);
+        assert_eq!(mapped, MappedAction::AutoManual);
+    }
+
+    #[test]
+    fn test_button_long_press_maps_to_ao_pwn() {
+        let mapped = map_button_action(ButtonAction::LongPress);
+        assert_eq!(mapped, MappedAction::AoPwn);
+    }
+
+    // ---- Button press edge cases ----
+
+    #[test]
+    fn test_button_first_press_returns_none() {
+        let mut db = ButtonDebouncer::new();
+        // First press never resolves immediately (waiting for double-tap window)
+        let action = db.on_press();
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn test_button_immediate_second_press() {
+        let mut db = ButtonDebouncer::new();
+        db.on_press(); // first press
+        // Immediate second press (0ms gap) is within debounce window
+        let action = db.on_press();
+        assert_eq!(action, Some(ButtonAction::DoubleTap));
+    }
+
+    #[test]
+    fn test_button_check_timeout_no_press() {
+        let mut db = ButtonDebouncer::new();
+        // No press at all -- timeout should return None
+        let action = db.check_timeout();
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn test_battery_level_zero() {
+        let mut ps = PiSugar::default();
+        ps.set_level(0);
+        assert!(ps.status.critical);
+        assert!(ps.status.low);
+        assert!(ps.should_shutdown());
+    }
+
+    #[test]
+    fn test_battery_level_100() {
+        let mut ps = PiSugar::default();
+        ps.set_level(100);
+        assert!(!ps.status.critical);
+        assert!(!ps.status.low);
+        assert!(!ps.should_shutdown());
+    }
+
+    #[test]
+    fn test_battery_display_str_charging_full() {
+        let mut ps = PiSugar::default();
+        ps.available = true;
+        ps.status.level = 100;
+        ps.status.charge_state = ChargeState::Full;
+        assert_eq!(ps.display_str(), "BAT 100%=");
     }
 }

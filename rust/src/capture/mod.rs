@@ -30,6 +30,7 @@ pub struct CaptureManager {
 }
 
 impl CaptureManager {
+    /// Create a new capture manager rooted at the given directory.
     pub fn new(capture_dir: &str) -> Self {
         Self {
             capture_dir: PathBuf::from(capture_dir),
@@ -143,6 +144,7 @@ pub struct UploadQueue {
 }
 
 impl UploadQueue {
+    /// Create an empty upload queue.
     pub fn new() -> Self {
         Self::default()
     }
@@ -175,9 +177,176 @@ impl UploadQueue {
         self.enqueue(path);
     }
 
+    /// Number of files still waiting to be uploaded.
     pub fn pending(&self) -> usize {
         self.queue.len()
     }
+}
+
+// ---------------------------------------------------------------------------
+// WPA-SEC upload integration (Python: wpa-sec plugin → capture/wpasec.rs)
+// ---------------------------------------------------------------------------
+
+/// WPA-SEC upload client configuration.
+#[derive(Debug, Clone)]
+pub struct WpaSecConfig {
+    /// WPA-SEC API key.
+    pub api_key: String,
+    /// Upload endpoint URL.
+    pub url: String,
+    /// Whether uploads are enabled.
+    pub enabled: bool,
+}
+
+impl Default for WpaSecConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            url: "https://wpa-sec.stanev.org".into(),
+            enabled: false,
+        }
+    }
+}
+
+/// Upload a capture file to wpa-sec.stanev.org.
+///
+/// TODO: Implement HTTP multipart upload using ureq or reqwest crate.
+/// The Python plugin POSTs the pcapng file to /upload with the API key header.
+pub fn upload_to_wpasec(_path: &Path, _config: &WpaSecConfig) -> Result<(), String> {
+    // TODO: implement HTTP POST upload
+    // POST {url}/?submit with file field "file" and cookie "key={api_key}"
+    Err("WPA-SEC upload not yet implemented".into())
+}
+
+// ---------------------------------------------------------------------------
+// Quick dictionary attack (Python: better_quickdic.py → capture/quickdic.rs)
+// ---------------------------------------------------------------------------
+
+/// Run a quick offline dictionary attack on a captured handshake.
+///
+/// TODO: Implement using hashcat or aircrack-ng subprocess, or native Rust
+/// PBKDF2-SHA1 with a small built-in wordlist.
+pub fn quick_dictionary_attack(_pcapng_path: &Path, _wordlist_path: &Path) -> Result<Option<String>, String> {
+    // TODO: parse .pcapng → extract PMKID/4-way → try wordlist
+    // Returns Some(password) on success, None if no match
+    Err("Quick dictionary attack not yet implemented".into())
+}
+
+// ---------------------------------------------------------------------------
+// Cracked password display (Python: display-password.py → capture/cracked.rs)
+// ---------------------------------------------------------------------------
+
+/// A cracked WiFi password entry.
+#[derive(Debug, Clone)]
+pub struct CrackedPassword {
+    /// SSID of the cracked network.
+    pub ssid: String,
+    /// The cracked password.
+    pub password: String,
+    /// BSSID of the network.
+    pub bssid: [u8; 6],
+}
+
+/// Storage for cracked passwords, displayed on the e-ink screen.
+#[derive(Debug, Default)]
+pub struct CrackedPasswordStore {
+    pub passwords: Vec<CrackedPassword>,
+}
+
+impl CrackedPasswordStore {
+    /// Create an empty cracked-password store.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a cracked password.
+    pub fn add(&mut self, ssid: &str, password: &str, bssid: [u8; 6]) {
+        self.passwords.push(CrackedPassword {
+            ssid: ssid.to_string(),
+            password: password.to_string(),
+            bssid,
+        });
+    }
+
+    /// Get the most recently cracked password for display.
+    pub fn latest(&self) -> Option<&CrackedPassword> {
+        self.passwords.last()
+    }
+
+    /// Format for e-ink display: "SSID: pass****"
+    pub fn display_str(&self) -> String {
+        match self.latest() {
+            Some(cp) => {
+                let masked = if cp.password.len() > 4 {
+                    format!("{}****", &cp.password[..4])
+                } else {
+                    cp.password.clone()
+                };
+                format!("{}: {}", cp.ssid, masked)
+            }
+            None => String::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Handshake download via web (Python: handshakes-dl.py → capture/download.rs)
+// ---------------------------------------------------------------------------
+
+/// List capture files available for download via the web dashboard.
+///
+/// TODO: Integrate with the axum web server to serve files from capture_dir.
+pub fn list_downloadable_captures(capture_dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
+    if !capture_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    let entries = std::fs::read_dir(capture_dir)
+        .map_err(|e| format!("Failed to read {}: {e}", capture_dir.display()))?;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "pcapng" || ext == "pcap") {
+            files.push(path);
+        }
+    }
+    Ok(files)
+}
+
+// ---------------------------------------------------------------------------
+// Auto-backup (Python: auto-backup plugin)
+// ---------------------------------------------------------------------------
+
+/// Auto-backup configuration.
+#[derive(Debug, Clone)]
+pub struct AutoBackupConfig {
+    /// Whether auto-backup is enabled.
+    pub enabled: bool,
+    /// Backup interval in seconds.
+    pub interval_secs: u64,
+    /// Backup destination path.
+    pub dest_dir: std::path::PathBuf,
+}
+
+impl Default for AutoBackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 3600,
+            dest_dir: std::path::PathBuf::from("/home/pi/backups"),
+        }
+    }
+}
+
+/// Perform a backup of captures and config to the backup directory.
+///
+/// TODO: Implement file copy with timestamp-based naming.
+pub fn auto_backup(
+    _capture_dir: &Path,
+    _config_path: &Path,
+    _backup_config: &AutoBackupConfig,
+) -> Result<usize, String> {
+    // TODO: copy captures + config to dest_dir/YYYYMMDD_HHMMSS/
+    Err("Auto-backup not yet implemented".into())
 }
 
 #[cfg(test)]
@@ -290,5 +459,145 @@ mod tests {
         let removed = cm.cleanup();
         assert_eq!(removed, 3);
         assert_eq!(cm.count(), 2);
+    }
+
+    // ---- WPA-SEC config tests ----
+
+    #[test]
+    fn test_wpasec_config_default() {
+        let cfg = WpaSecConfig::default();
+        assert!(!cfg.enabled);
+        assert!(cfg.api_key.is_empty());
+        assert!(cfg.url.contains("wpa-sec"));
+    }
+
+    #[test]
+    fn test_upload_to_wpasec_not_implemented() {
+        let cfg = WpaSecConfig::default();
+        let result = upload_to_wpasec(Path::new("/tmp/test.pcapng"), &cfg);
+        assert!(result.is_err());
+    }
+
+    // ---- Cracked password tests ----
+
+    #[test]
+    fn test_cracked_password_store() {
+        let mut store = CrackedPasswordStore::new();
+        assert!(store.latest().is_none());
+        assert!(store.display_str().is_empty());
+
+        store.add("TestNet", "password123", [0; 6]);
+        assert_eq!(store.latest().unwrap().ssid, "TestNet");
+        assert_eq!(store.display_str(), "TestNet: pass****");
+    }
+
+    #[test]
+    fn test_cracked_password_short() {
+        let mut store = CrackedPasswordStore::new();
+        store.add("Net", "abc", [0; 6]);
+        // Short password shown as-is
+        assert_eq!(store.display_str(), "Net: abc");
+    }
+
+    // ---- Auto-backup tests ----
+
+    #[test]
+    fn test_auto_backup_config_default() {
+        let cfg = AutoBackupConfig::default();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.interval_secs, 3600);
+    }
+
+    #[test]
+    fn test_auto_backup_not_implemented() {
+        let cfg = AutoBackupConfig::default();
+        let result = auto_backup(Path::new("/tmp"), Path::new("/tmp/cfg"), &cfg);
+        assert!(result.is_err());
+    }
+
+    // ---- Edge case tests ----
+
+    #[test]
+    fn test_capture_manager_zero_captures() {
+        let cm = CaptureManager::new("/nonexistent");
+        assert_eq!(cm.count(), 0);
+        assert_eq!(cm.handshake_count(), 0);
+        assert_eq!(cm.pending_upload_count(), 0);
+        assert_eq!(cm.total_size(), 0);
+    }
+
+    #[test]
+    fn test_capture_manager_many_captures() {
+        let mut cm = CaptureManager::new("/tmp/captures");
+        for i in 0..1000 {
+            cm.register(CaptureFile {
+                path: PathBuf::from(format!("/tmp/captures/{i}.pcapng")),
+                ssid: format!("Net{i}"),
+                bssid: [0, 0, 0, 0, (i >> 8) as u8, (i & 0xFF) as u8],
+                has_handshake: i % 3 == 0,
+                uploaded: i % 6 == 0,
+                size: 1024,
+            });
+        }
+        assert_eq!(cm.count(), 1000);
+        // Every 3rd file has a handshake (i % 3 == 0): 0,3,6,...,999 => 334 files
+        assert_eq!(cm.handshake_count(), 334);
+        // Pending = has_handshake && !uploaded: i%3==0 && i%6!=0 => i%3==0 && i%6!=0
+        // i%6==0 implies i%3==0, so pending = (i%3==0) - (i%6==0) = 334 - 167 = 167
+        assert_eq!(cm.pending_upload_count(), 167);
+        assert_eq!(cm.total_size(), 1000 * 1024);
+    }
+
+    #[test]
+    fn test_cleanup_unlimited() {
+        let mut cm = CaptureManager::new("/tmp/nonexistent");
+        cm.max_files = 0; // unlimited
+        for i in 0..10 {
+            cm.register(CaptureFile {
+                path: PathBuf::from(format!("/tmp/nonexistent/{i}.pcapng")),
+                ssid: String::new(),
+                bssid: [0; 6],
+                has_handshake: false,
+                uploaded: false,
+                size: 100,
+            });
+        }
+        let removed = cm.cleanup();
+        assert_eq!(removed, 0);
+        assert_eq!(cm.count(), 10);
+    }
+
+    #[test]
+    fn test_cleanup_at_limit() {
+        let mut cm = CaptureManager::new("/tmp/nonexistent");
+        cm.max_files = 5;
+        for i in 0..5 {
+            cm.register(CaptureFile {
+                path: PathBuf::from(format!("/tmp/nonexistent/{i}.pcapng")),
+                ssid: String::new(),
+                bssid: [0; 6],
+                has_handshake: false,
+                uploaded: false,
+                size: 100,
+            });
+        }
+        let removed = cm.cleanup();
+        assert_eq!(removed, 0); // exactly at limit, not over
+    }
+
+    #[test]
+    fn test_mark_uploaded_nonexistent_path() {
+        let mut cm = CaptureManager::new("/tmp/captures");
+        cm.register(CaptureFile {
+            path: PathBuf::from("/tmp/captures/a.pcapng"),
+            ssid: "Net".into(),
+            bssid: [0; 6],
+            has_handshake: true,
+            uploaded: false,
+            size: 100,
+        });
+        // Marking a non-existent path does nothing
+        cm.mark_uploaded(Path::new("/tmp/captures/nonexistent.pcapng"));
+        assert_eq!(cm.pending_upload_count(), 1);
     }
 }

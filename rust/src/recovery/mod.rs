@@ -90,6 +90,7 @@ pub enum DiagLevel {
 }
 
 impl RecoveryManager {
+    /// Create a new recovery manager with the given configuration.
     pub fn new(config: RecoveryConfig) -> Self {
         Self {
             config,
@@ -223,14 +224,62 @@ pub enum RecoveryAction {
     GiveUp,
 }
 
-/// Watchdog manager — pings /dev/watchdog to prevent system reset.
+// ---------------------------------------------------------------------------
+// GPIO WL_REG_ON power cycle (actual hardware recovery)
+// ---------------------------------------------------------------------------
+
+/// BCM GPIO pin for WL_REG_ON (WiFi chip power control).
+/// On Pi Zero 2W / BCM43436B0, this is GPIO 41.
+pub const WL_REG_ON_PIN: u8 = 41;
+
+/// Perform a hardware power cycle of the WiFi chip by toggling WL_REG_ON.
+///
+/// Sequence: pull LOW (power off) → wait → pull HIGH (power on) → wait for
+/// chip to re-enumerate on SDIO bus.
+///
+/// On non-aarch64 platforms this is a no-op stub.
+pub fn gpio_power_cycle_wifi(delay_ms: u64) -> Result<(), String> {
+    #[cfg(target_arch = "aarch64")]
+    {
+        use rppal::gpio::Gpio;
+        use std::thread;
+        use std::time::Duration;
+
+        let gpio = Gpio::new().map_err(|e| format!("GPIO init: {e}"))?;
+        let mut pin = gpio
+            .get(WL_REG_ON_PIN)
+            .map_err(|e| format!("WL_REG_ON pin {WL_REG_ON_PIN}: {e}"))?
+            .into_output();
+
+        // Power off
+        pin.set_low();
+        thread::sleep(Duration::from_millis(delay_ms));
+
+        // Power on
+        pin.set_high();
+        // Wait for chip to re-enumerate
+        thread::sleep(Duration::from_millis(2000));
+
+        Ok(())
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let _ = delay_ms;
+        log::debug!("gpio_power_cycle_wifi: no-op on non-Pi platform");
+        Ok(())
+    }
+}
+
+/// Watchdog manager -- pings `/dev/watchdog` to prevent system reset.
 pub struct Watchdog {
+    /// Whether the hardware watchdog is enabled.
     pub enabled: bool,
     pub timeout_secs: u64,
     pub last_ping: Option<Instant>,
 }
 
 impl Watchdog {
+    /// Create a new watchdog with the given enabled state and timeout.
     pub fn new(enabled: bool, timeout_secs: u64) -> Self {
         Self {
             enabled,
@@ -373,5 +422,67 @@ mod tests {
     fn test_watchdog_disabled() {
         let wd = Watchdog::new(false, 60);
         assert!(!wd.needs_ping());
+    }
+
+    #[test]
+    fn test_wl_reg_on_pin_constant() {
+        assert_eq!(WL_REG_ON_PIN, 41);
+    }
+
+    #[test]
+    fn test_gpio_power_cycle_stub() {
+        // On non-Pi platforms, should succeed as a no-op
+        let result = gpio_power_cycle_wifi(500);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_recovery_after_max_retries_stays_failed() {
+        let mut rm = RecoveryManager::new(RecoveryConfig {
+            max_soft_retries: 1,
+            max_hard_retries: 1,
+            ..Default::default()
+        });
+        rm.process_health(HealthCheck::Unresponsive); // soft 1
+        rm.process_health(HealthCheck::Unresponsive); // soft exhausted -> hard 1
+        rm.process_health(HealthCheck::Unresponsive); // hard exhausted -> give up
+
+        // Further unresponsive checks should keep returning GiveUp
+        let action = rm.process_health(HealthCheck::Unresponsive);
+        assert_eq!(action, RecoveryAction::GiveUp);
+        assert_eq!(rm.state, RecoveryState::Failed);
+
+        // But if wifi recovers, we should reset to Healthy
+        let action = rm.process_health(HealthCheck::Ok);
+        assert_eq!(action, RecoveryAction::None);
+        assert_eq!(rm.state, RecoveryState::Healthy);
+    }
+
+    #[test]
+    fn test_watchdog_needs_ping_after_timeout() {
+        let mut wd = Watchdog::new(true, 60);
+        // Simulate a ping from 31+ seconds ago (half of 60)
+        wd.last_ping = Some(Instant::now() - Duration::from_secs(31));
+        assert!(wd.needs_ping());
+    }
+
+    #[test]
+    fn test_diagnostics_empty() {
+        let rm = RecoveryManager::default();
+        assert_eq!(rm.diagnostic_count(), 0);
+        assert!(rm.diagnostics_by_level(DiagLevel::Error).is_empty());
+    }
+
+    #[test]
+    fn test_diagnostics_overflow() {
+        let mut rm = RecoveryManager::default();
+        rm.max_diagnostics = 5;
+        for i in 0..20 {
+            rm.log(DiagLevel::Info, &format!("msg{i}"));
+        }
+        assert_eq!(rm.diagnostic_count(), 5);
+        // Should have messages 15-19
+        assert_eq!(rm.diagnostics[0].message, "msg15");
+        assert_eq!(rm.diagnostics[4].message, "msg19");
     }
 }

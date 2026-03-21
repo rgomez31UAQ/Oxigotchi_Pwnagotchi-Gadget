@@ -55,6 +55,7 @@ pub struct BtTether {
 }
 
 impl BtTether {
+    /// Create a new Bluetooth tether manager with the given configuration.
     pub fn new(config: BtConfig) -> Self {
         Self {
             state: BtState::Off,
@@ -115,7 +116,7 @@ impl BtTether {
         self.internet_available = false;
     }
 
-    /// Status string for display.
+    /// Status string for display (full form).
     pub fn status_str(&self) -> &'static str {
         match self.state {
             BtState::Off => "BT OFF",
@@ -123,6 +124,28 @@ impl BtTether {
             BtState::Connecting => "BT ...",
             BtState::Connected => "BT OK",
             BtState::Error => "BT ERR",
+        }
+    }
+
+    /// Short status for the top bar (matches Python "BT C" / "BT -" format).
+    pub fn status_short(&self) -> &'static str {
+        match self.state {
+            BtState::Off => "-",
+            BtState::Disconnected => "-",
+            BtState::Connecting => ".",
+            BtState::Connected => "C",
+            BtState::Error => "!",
+        }
+    }
+
+    /// Toggle connection on/off (called from button handler).
+    pub fn toggle(&mut self) {
+        match self.state {
+            BtState::Connected => self.disconnect(),
+            BtState::Off | BtState::Disconnected | BtState::Error => {
+                let _ = self.connect();
+            }
+            BtState::Connecting => {} // ignore during connection
         }
     }
 }
@@ -228,5 +251,27 @@ mod tests {
         assert_eq!(bt.status_str(), "BT OK");
         bt.state = BtState::Error;
         assert_eq!(bt.status_str(), "BT ERR");
+    }
+
+    #[test]
+    fn test_status_short() {
+        let mut bt = BtTether::default();
+        assert_eq!(bt.status_short(), "-");
+        bt.state = BtState::Connected;
+        assert_eq!(bt.status_short(), "C");
+    }
+
+    #[test]
+    fn test_toggle_connect() {
+        let config = BtConfig {
+            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
+            ..Default::default()
+        };
+        let mut bt = BtTether::new(config);
+        bt.state = BtState::Disconnected;
+        bt.toggle();
+        assert_eq!(bt.state, BtState::Connected);
+        bt.toggle();
+        assert_eq!(bt.state, BtState::Disconnected);
     }
 }

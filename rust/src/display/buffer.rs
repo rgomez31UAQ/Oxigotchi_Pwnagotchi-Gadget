@@ -24,7 +24,7 @@ impl FrameBuffer {
 
     /// Bytes per row (each row is padded to full bytes).
     pub fn stride(width: u32) -> u32 {
-        (width + 7) / 8
+        width.div_ceil(8)
     }
 
     /// Clear all pixels to white (0).
@@ -186,5 +186,42 @@ mod tests {
         assert_eq!(fb.get_pixel(5, 3), BinaryColor::On);
         fb.set_pixel(5, 3, BinaryColor::Off);
         assert_eq!(fb.get_pixel(5, 3), BinaryColor::Off);
+    }
+
+    #[test]
+    fn test_empty_framebuffer_as_bytes() {
+        // A freshly-created framebuffer (no draws) should be all zeros.
+        let fb = FrameBuffer::new(250, 122);
+        assert!(fb.as_bytes().iter().all(|&b| b == 0));
+        assert_eq!(fb.count_set_pixels(), 0);
+    }
+
+    #[test]
+    fn test_1x1_framebuffer() {
+        let mut fb = FrameBuffer::new(1, 1);
+        assert_eq!(fb.as_bytes().len(), 1);
+        fb.set_pixel(0, 0, BinaryColor::On);
+        assert_eq!(fb.get_pixel(0, 0), BinaryColor::On);
+        assert_eq!(fb.count_set_pixels(), 1);
+    }
+
+    #[test]
+    fn test_fill_entire_row() {
+        let mut fb = FrameBuffer::new(16, 1);
+        for x in 0..16 {
+            fb.set_pixel(x, 0, BinaryColor::On);
+        }
+        assert_eq!(fb.count_set_pixels(), 16);
+        // All bytes should be 0xFF
+        assert!(fb.as_bytes().iter().all(|&b| b == 0xFF));
+    }
+
+    #[test]
+    fn test_stride_edge_cases() {
+        assert_eq!(FrameBuffer::stride(0), 0);
+        assert_eq!(FrameBuffer::stride(7), 1);
+        assert_eq!(FrameBuffer::stride(8), 1);
+        assert_eq!(FrameBuffer::stride(16), 2);
+        assert_eq!(FrameBuffer::stride(17), 3);
     }
 }

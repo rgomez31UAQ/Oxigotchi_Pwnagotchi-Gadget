@@ -59,6 +59,7 @@ pub struct EpochLoop {
 }
 
 impl EpochLoop {
+    /// Create a new epoch loop with the given duration per epoch.
     pub fn new(epoch_duration: Duration) -> Self {
         Self {
             metrics: EpochMetrics::default(),

@@ -37,28 +37,29 @@ impl Screen {
         self.fb.clear();
     }
 
-    /// Draw a kaomoji face at the center of the display.
+    /// Draw a kaomoji face at the Python-matching position.
+    /// Python spec: face at (0, 34) in PWN mode, (0, 16) in AO mode.
+    /// We use (0, 34) as default — embedded-graphics y is baseline, so add font height.
     pub fn draw_face(&mut self, face: &Face) {
         let text = face.as_str();
         let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-        // Center the face text roughly in the middle of the display
-        let text_width = text.len() as i32 * 6;
-        let x = ((DISPLAY_WIDTH as i32) - text_width) / 2;
-        let y = (DISPLAY_HEIGHT as i32) / 2;
-        let _ = Text::new(text, Point::new(x, y), style).draw(&mut self.fb);
+        // Python layout: face at (0, 34). Font baseline offset: +10.
+        let _ = Text::new(text, Point::new(0, 44), style).draw(&mut self.fb);
     }
 
-    /// Draw the device name at the top-left corner (e.g. "oxigotchi>").
+    /// Draw the device name. Python spec: name at (5, 20), bold, "name> ".
     pub fn draw_name(&mut self, name: &str) {
         let label = format!("{}>", name);
         let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-        let _ = Text::new(&label, Point::new(0, 10), style).draw(&mut self.fb);
+        // Python layout: (5, 20). Font baseline offset: +10.
+        let _ = Text::new(&label, Point::new(5, 30), style).draw(&mut self.fb);
     }
 
-    /// Draw a status message near the bottom of the display.
+    /// Draw a status message. Python spec: status at (125, 20).
     pub fn draw_status(&mut self, text: &str) {
         let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-        let _ = Text::new(text, Point::new(0, DISPLAY_HEIGHT as i32 - 2), style).draw(&mut self.fb);
+        // Python layout: (125, 20). Font baseline offset: +10.
+        let _ = Text::new(text, Point::new(125, 30), style).draw(&mut self.fb);
     }
 
     /// Draw a "LABEL: value" pair at a given (x, y) pixel position.
@@ -66,6 +67,16 @@ impl Screen {
         let combined = format!("{}: {}", label, value);
         let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
         let _ = Text::new(&combined, Point::new(x, y), style).draw(&mut self.fb);
+    }
+
+    /// Draw a horizontal line (1px tall) for layout dividers.
+    pub fn draw_hline(&mut self, x: i32, y: i32, width: u32) {
+        for px in 0..width {
+            let xi = x + px as i32;
+            if xi >= 0 && (xi as u32) < DISPLAY_WIDTH && y >= 0 && (y as u32) < DISPLAY_HEIGHT {
+                self.fb.set_pixel(xi as u32, y as u32, BinaryColor::On);
+            }
+        }
     }
 
     /// Set a single pixel in the framebuffer.
@@ -77,10 +88,13 @@ impl Screen {
 
     /// Flush the framebuffer to the physical display.
     /// On non-aarch64 platforms this is a no-op.
+    /// Logs errors instead of panicking — the display can fail transiently.
     pub fn flush(&self) {
         #[cfg(target_arch = "aarch64")]
         {
-            driver::flush_to_hardware(&self.fb, &self.config);
+            if let Err(e) = driver::flush_to_hardware(&self.fb, &self.config) {
+                log::error!("display flush failed: {e}");
+            }
         }
         #[cfg(not(target_arch = "aarch64"))]
         {
@@ -132,21 +146,21 @@ mod tests {
     fn test_draw_name_writes_pixels() {
         let mut screen = Screen::new(test_config());
         screen.draw_name("oxi");
-        // At least some pixels should be set in the top area
+        // Name at (5, 30 baseline) — pixels in y range ~21..31
         let has_pixels = (0..DISPLAY_WIDTH)
-            .any(|x| (0..12).any(|y| screen.fb.get_pixel(x, y) == BinaryColor::On));
-        assert!(has_pixels, "draw_name should set pixels in the top area");
+            .any(|x| (20..35).any(|y| screen.fb.get_pixel(x, y) == BinaryColor::On));
+        assert!(has_pixels, "draw_name should set pixels in the name zone (y 20-35)");
     }
 
     #[test]
     fn test_draw_status_writes_pixels() {
         let mut screen = Screen::new(test_config());
         screen.draw_status("testing");
-        let has_pixels = (0..DISPLAY_WIDTH).any(|x| {
-            ((DISPLAY_HEIGHT - 12)..DISPLAY_HEIGHT)
-                .any(|y| screen.fb.get_pixel(x, y) == BinaryColor::On)
+        // Status at (125, 30 baseline) — pixels in y range ~21..31
+        let has_pixels = (125..DISPLAY_WIDTH).any(|x| {
+            (20..35).any(|y| screen.fb.get_pixel(x, y) == BinaryColor::On)
         });
-        assert!(has_pixels, "draw_status should set pixels near the bottom");
+        assert!(has_pixels, "draw_status should set pixels in the status zone (y 20-35)");
     }
 
     #[test]
@@ -156,6 +170,20 @@ mod tests {
         let has_pixels = (0..60)
             .any(|x| (20..40).any(|y| screen.fb.get_pixel(x, y) == BinaryColor::On));
         assert!(has_pixels, "draw_labeled_value should set pixels");
+    }
+
+    #[test]
+    fn test_draw_hline() {
+        let mut screen = Screen::new(test_config());
+        screen.draw_hline(0, 14, 250);
+        // All pixels at y=14 should be set
+        let count = (0..250u32)
+            .filter(|&x| screen.fb.get_pixel(x, 14) == BinaryColor::On)
+            .count();
+        assert_eq!(count, 250, "hline should set all 250 pixels at y=14");
+        // Pixel above/below should be clear
+        assert_eq!(screen.fb.get_pixel(0, 13), BinaryColor::Off);
+        assert_eq!(screen.fb.get_pixel(0, 15), BinaryColor::Off);
     }
 
     #[test]
@@ -174,5 +202,22 @@ mod tests {
     fn test_flush_no_panic() {
         let screen = Screen::new(test_config());
         screen.flush(); // Should be no-op on non-Pi
+    }
+
+    #[test]
+    fn test_empty_framebuffer_flush() {
+        // Flushing without any draws should succeed and produce an all-white buffer.
+        let screen = Screen::new(test_config());
+        assert_eq!(screen.fb.count_set_pixels(), 0);
+        screen.flush(); // should not panic
+    }
+
+    #[test]
+    fn test_draw_empty_strings() {
+        let mut screen = Screen::new(test_config());
+        screen.draw_name("");
+        screen.draw_status("");
+        screen.draw_labeled_value("", "", 0, 0);
+        // No crash, may or may not set pixels (font draws colon separator)
     }
 }

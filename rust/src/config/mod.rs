@@ -1,49 +1,71 @@
+//! Configuration loading and TOML parsing.
+//!
+//! Reads the pwnagotchi-compatible `config.toml` and exposes typed fields
+//! for the daemon to consume.
+
 use serde::Deserialize;
 use std::path::Path;
 
 /// Top-level configuration, matching pwnagotchi's TOML format.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    /// Main section (name, whitelist, etc.).
     #[serde(default = "default_main")]
     pub main: MainConfig,
+    /// UI section (display, font, etc.).
     #[serde(default)]
     pub ui: UiConfig,
 
     // Convenience accessors populated after deserialization
+    /// Shortcut for `main.name`.
     #[serde(skip)]
     pub name: String,
+    /// Shortcut for `main.whitelist`.
     #[serde(skip)]
     pub whitelist: Vec<String>,
+    /// Shortcut for `ui.display`.
     #[serde(skip)]
     pub display: DisplayConfig,
 }
 
+/// The `[main]` TOML section.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MainConfig {
+    /// Device name displayed on screen and in the web dashboard.
     #[serde(default = "default_name")]
     pub name: String,
+    /// SSIDs or BSSIDs to never attack.
     #[serde(default)]
     pub whitelist: Vec<String>,
 }
 
+/// The `[ui]` TOML section.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct UiConfig {
+    /// Whether to invert the display colors.
     #[serde(default)]
     pub invert: bool,
+    /// Target frames per second (0 = default).
     #[serde(default)]
     pub fps: u32,
+    /// Display hardware settings.
     #[serde(default)]
     pub display: DisplayConfig,
+    /// Font settings.
     #[serde(default)]
     pub font: FontConfig,
 }
 
+/// The `[ui.display]` TOML section.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DisplayConfig {
+    /// Whether the display is enabled at all.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Display driver type (e.g. "waveshare_4", "inky").
     #[serde(rename = "type", default = "default_display_type")]
     pub display_type: String,
+    /// Screen rotation in degrees (0, 90, 180, 270).
     #[serde(default)]
     pub rotation: u16,
 }
@@ -58,8 +80,10 @@ impl Default for DisplayConfig {
     }
 }
 
+/// The `[ui.font]` TOML section.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FontConfig {
+    /// Font family name.
     #[serde(default = "default_font_name")]
     pub name: String,
 }
@@ -223,5 +247,50 @@ type = "inky"
 "#;
         let cfg = Config::from_toml(toml).unwrap();
         assert_eq!(cfg.display.display_type, "inky");
+    }
+
+    #[test]
+    fn test_partial_config_ui_only() {
+        let toml = r#"
+[ui]
+invert = true
+"#;
+        let cfg = Config::from_toml(toml).unwrap();
+        assert_eq!(cfg.name, "oxigotchi"); // default name
+        assert!(cfg.ui.invert);
+        assert!(cfg.display.enabled); // default
+    }
+
+    #[test]
+    fn test_partial_config_display_only() {
+        let toml = r#"
+[ui.display]
+rotation = 90
+"#;
+        let cfg = Config::from_toml(toml).unwrap();
+        assert_eq!(cfg.display.rotation, 90);
+        assert!(cfg.display.enabled); // default
+        assert_eq!(cfg.display.display_type, "waveshare_4"); // default
+    }
+
+    #[test]
+    fn test_invalid_toml_returns_error() {
+        let result = Config::from_toml("not valid [[ toml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unknown_fields_ignored() {
+        let toml = r#"
+[main]
+name = "test"
+unknown_field = 42
+
+[ui]
+some_future_option = true
+"#;
+        // serde should ignore unknown fields (default behavior)
+        let cfg = Config::from_toml(toml).unwrap();
+        assert_eq!(cfg.name, "test");
     }
 }
