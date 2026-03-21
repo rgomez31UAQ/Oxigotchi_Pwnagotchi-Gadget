@@ -1716,7 +1716,7 @@ class AngryOxide(plugins.Plugin):
                 color=BLACK,
                 label='',
                 value='',
-                position=(140, 0),
+                position=(145, 0),
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
@@ -1724,15 +1724,6 @@ class AngryOxide(plugins.Plugin):
             # Move AUTO/MANU mode indicator to the very bottom-right corner
             # of the display (250x122). Position it so text ends at the right
             # edge and sits at the bottom of the screen.
-            try:
-                mode_elem = ui._state._state.get('mode')
-                if mode_elem:
-                    mode_elem.xy = (222, 112)
-            except Exception:
-                pass
-
-    # WiFi pixel icon removed — render callback approach didn't work on e-ink
-
     def on_ui_update(self, ui):
         with ui._lock:
             # Move mode indicator to bottom-right every update
