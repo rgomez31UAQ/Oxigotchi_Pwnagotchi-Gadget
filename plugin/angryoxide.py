@@ -678,8 +678,24 @@ class AngryOxide(plugins.Plugin):
         except Exception:
             return True  # default to AO mode if status check fails
 
+    def _on_render(self, canvas):
+        """Render callback — draws WiFi icon on every frame."""
+        if self._is_ao_mode():
+            try:
+                from PIL import ImageDraw
+                draw = ImageDraw.Draw(canvas)
+                self._draw_wifi_icon(draw, 140, 0)
+            except Exception:
+                pass
+
     def on_ready(self, agent):
         self._agent = agent
+
+        # Register render callback for WiFi icon drawing
+        try:
+            agent._view._render_cbs.append(self._on_render)
+        except Exception:
+            pass
 
         binary = self.options.get('binary_path', '/usr/local/bin/angryoxide')
         if not os.path.isfile(binary):
@@ -1799,17 +1815,9 @@ class AngryOxide(plugins.Plugin):
             except Exception:
                 pass
 
-            # Show WiFi icon + AP count in top bar
+            # Show AP count in top bar (WiFi icon drawn via render callback)
             try:
                 ui.set('ao_aps', '  %d' % self._ao_ap_count)
-                # Draw WiFi icon before the number
-                canvas = getattr(ui, '_canvas', None)
-                if canvas is None:
-                    canvas = getattr(getattr(ui, '_state', None), '_canvas', None)
-                if canvas:
-                    from PIL import ImageDraw
-                    draw = ImageDraw.Draw(canvas)
-                    self._draw_wifi_icon(draw, 140, 0)
             except Exception:
                 pass
 
