@@ -92,6 +92,14 @@ while true; do
             gpio_recovery
         else
             log "false alarm — wlan0 came back"
+
+    # Also check: wlan0 exists but monitor mode fails (firmware half-dead)
+    elif [ ! -e /sys/class/net/wlan0mon ]; then
+        log "wlan0mon MISSING but wlan0 exists — firmware may be stuck"
+        sleep 10
+        if [ ! -e /sys/class/net/wlan0mon ]; then
+            log "wlan0mon still missing after 10s — GPIO recovery needed"
+            gpio_recovery
         fi
     fi
 done
