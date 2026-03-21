@@ -143,6 +143,25 @@ oxigotchi (single Rust binary — "Rusty Oxigotchi")
 - [ ] Image builder (bake_v3.sh)
 - [ ] Release build optimization (LTO, strip, UPX)
 
+### Phase 6: Peer Discovery (Sprint 14)
+
+**Sprint 14: Pwngrid-compatible peer discovery**
+
+Goal: Rusty devices see pwnagotchis, pwnagotchis see Rusty devices, Rusties see each other. The Friend face shows for all.
+
+- [ ] **RX: Listen for pwngrid beacons** — AO already receives all frames on wlan0mon. Add a filter in Rusty that recognizes pwngrid beacon frames (signed JSON in vendor-specific IEs). Parse peer name, identity, version, uptime, pwnd count. No extra sockets, pure RX — zero crash risk.
+- [ ] **TX: Broadcast identity via keepalive** — The keepalive already sends probe frames every 3s. Embed our identity in vendor-specific information elements (standard 802.11). No extra TX load — piggybacks on existing probes. Contains: name, version ("rusty-3.0"), uptime, capture count, public key.
+- [ ] **Pwngrid protocol compatibility** — Reverse-engineer pwngrid's beacon format from the Go source. Must be byte-compatible so stock pwnagotchis recognize us as peers.
+- [ ] **Peer tracker** — Track discovered peers: name, last seen, signal strength, version. Expire after 5 minutes of silence.
+- [ ] **Friend face trigger** — When a new peer is discovered, show Friend face for 1 epoch with "Found a friend: {name}!"
+- [ ] **Web dashboard peers card** — Show discovered peers with names, versions, and last seen times.
+- [ ] **TDD: beacon parsing, peer tracking, expiry, protocol compatibility**
+
+Design decisions:
+- Do NOT open a separate raw socket for TX — crashes the chip. Piggyback on keepalive.
+- AO handles all frame reception. Rusty just parses AO's output or reads frames from the shared socket.
+- If AO is modified upstream to support peer beacons natively, switch to that.
+
 ## Crate Dependencies
 
 ```toml
