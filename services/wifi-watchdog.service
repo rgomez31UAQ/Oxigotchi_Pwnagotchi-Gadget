@@ -1,0 +1,14 @@
+[Unit]
+Description=WiFi SDIO watchdog (runtime recovery)
+After=wifi-recovery.service wlan-keepalive.service
+Wants=wlan-keepalive.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 30
+ExecStart=/usr/local/bin/wifi-watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
