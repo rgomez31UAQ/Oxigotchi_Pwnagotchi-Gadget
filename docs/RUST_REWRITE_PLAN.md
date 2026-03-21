@@ -157,6 +157,58 @@ env_logger = "0.11"
 chrono = "0.4"
 ```
 
+## SD Card Wear Reduction
+
+One of the biggest benefits of the rewrite. Python pwnagotchi constantly writes to the SD card, killing it in 1-2 years of continuous use.
+
+| Factor | Python (now) | Rust (after) |
+|--------|-------------|--------------|
+| Logging | Constant (pwnagotchi.log, debug.log, journal) | Ring buffer in RAM, flush on shutdown only |
+| tmpfs mounts | 2 zram mounts to reduce writes | Not needed — everything lives in RAM |
+| Swap | 100MB swapfile, occasional writes | No swap needed (10MB RSS) |
+| Config writes | Every plugin save, state files | Only on explicit user changes |
+| Capture writes | pcapng to disk | Same (unavoidable, but only actual data) |
+| Python __pycache__ | .pyc recompiled on boot | None |
+| pip/venv | Package management touches disk | None |
+| Journal | systemd journal for 5+ services | 1 service, minimal logging |
+
+**Estimated wear reduction: 80-90%.** SD card lifespan goes from 1-2 years to 5-10+ years.
+
+## Plugin Rewrite Strategy
+
+All current plugins rewritten as native Rust modules compiled into the binary:
+
+| Python Plugin | Rust Module | Notes |
+|--------------|-------------|-------|
+| angryoxide.py | `attacks/` | Core attack engine, already Rust (AO binary) |
+| walkby.py | `attacks/walkby.rs` | Drive-by capture logic |
+| frame_padding.py | `wifi/padding.rs` | Frame padding for PSM stability |
+| bt-tether (standalone) | `bluetooth/tether.rs` | BlueZ D-Bus integration |
+| IPDisplay.py | `display/ip.rs` | Show IPs on e-ink |
+| memtemp-plus.py | `display/sysinfo.rs` | CPU/mem/temp stats |
+| exp.py | `personality/xp.rs` | XP/leveling system |
+| display-password.py | `capture/cracked.rs` | Show cracked passwords |
+| handshakes-dl.py | `capture/download.rs` | Download handshakes |
+| enable_assoc/deauth.py | `display/indicators.rs` | Attack status indicators |
+| internet-connection.py | `display/connectivity.rs` | Internet status indicator |
+| cache.py | Built into core | In-memory caching, no plugin needed |
+| fix_services.py | `recovery/` | Built into recovery module |
+| pisugarx.py | `pisugar/` | Native I2C, no plugin needed |
+| webcfg.py | `web/` | Built into web dashboard |
+| better_quickdic.py | `capture/quickdic.rs` | Offline dictionary cracking |
+| wpa-sec | `capture/wpasec.rs` | Upload to wpa-sec.stanev.org |
+| grid.py | `mesh/grid.rs` | Peer discovery (evaluate if needed) |
+| tweak_view.py | `display/layout.rs` | Custom UI layout |
+| button-feedback.py | `pisugar/buttons.rs` | Button action feedback on display |
+
+**No Python plugin system needed.** All plugins become compile-time Rust modules. This means:
+- Zero runtime overhead from plugin loading
+- No plugin crashes from bad Python code
+- Type-safe configuration
+- Plugins can't leak memory or file descriptors
+
+For users who want custom behavior, a Lua scripting layer (`mlua` crate) can be added in a later phase — but most users just use stock plugins.
+
 ## Risk Assessment
 
 | Risk | Mitigation |
