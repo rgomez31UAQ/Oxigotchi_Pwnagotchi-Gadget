@@ -505,12 +505,15 @@ impl Personality {
         let face = self.current_face();
         let face_name = face.face_key().to_string();
 
-        // If face changed mid-joke, reset joke state
+        // If face changed, reset ALL status state — don't show stale messages
+        // from a different face (e.g., angry message on sleep face)
         if self.joke_face != face_name {
             self.joke_phase = 0;
             self.joke_epochs_left = 0;
             self.joke_index = None;
             self.joke_face = face_name.clone();
+            self.status_display_epochs = 3; // force new message pick
+            self.current_status.clear();
         }
 
         // If a joke is actively being displayed, continue it
