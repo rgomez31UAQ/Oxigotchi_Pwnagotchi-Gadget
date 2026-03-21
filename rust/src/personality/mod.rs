@@ -1,4 +1,9 @@
+pub mod jokes;
+pub mod messages;
+pub mod variety;
+
 use log::warn;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -62,6 +67,62 @@ impl Face {
             Face::FwCrash => "(X_X)fw",
             Face::AoCrashed => "(X_X)ao",
             Face::Shutdown => "(~_~)",
+        }
+    }
+
+    /// Return the lowercase key used for message/joke lookup.
+    pub fn face_key(&self) -> &'static str {
+        match self {
+            Face::Awake => "awake",
+            Face::Sleep => "sleep",
+            Face::Happy => "happy",
+            Face::Sad => "sad",
+            Face::Excited => "excited",
+            Face::Bored => "bored",
+            Face::Intense => "intense",
+            Face::Cool => "cool",
+            Face::Angry => "angry",
+            Face::Broken => "debug",
+            Face::Friend => "friend",
+            Face::Debug => "debug",
+            Face::Upload => "upload",
+            Face::Lonely => "lonely",
+            Face::Grateful => "grateful",
+            Face::Motivated => "motivated",
+            Face::Demotivated => "demotivated",
+            Face::Smart => "smart",
+            Face::BatteryCritical => "angry",
+            Face::BatteryLow => "sad",
+            Face::WifiDown => "angry",
+            Face::FwCrash => "angry",
+            Face::AoCrashed => "angry",
+            Face::Shutdown => "sleep",
+        }
+    }
+
+    /// Convert a string key (from variety engine) back to a Face enum.
+    /// Returns None for unknown keys.
+    pub fn from_key(key: &str) -> Option<Face> {
+        match key {
+            "awake" => Some(Face::Awake),
+            "sleep" => Some(Face::Sleep),
+            "happy" => Some(Face::Happy),
+            "sad" => Some(Face::Sad),
+            "excited" => Some(Face::Excited),
+            "bored" => Some(Face::Bored),
+            "intense" => Some(Face::Intense),
+            "cool" => Some(Face::Cool),
+            "angry" => Some(Face::Angry),
+            "broken" => Some(Face::Broken),
+            "friend" => Some(Face::Friend),
+            "debug" => Some(Face::Debug),
+            "upload" => Some(Face::Upload),
+            "lonely" => Some(Face::Lonely),
+            "grateful" => Some(Face::Grateful),
+            "motivated" => Some(Face::Motivated),
+            "demotivated" => Some(Face::Demotivated),
+            "smart" => Some(Face::Smart),
+            _ => None,
         }
     }
 
@@ -279,6 +340,20 @@ pub struct Personality {
     pub xp: XpTracker,
     /// Current system context for status messages.
     pub context: SystemContext,
+    /// Face variety engine (milestones, idle rotation, rare faces, etc.)
+    pub variety: variety::FaceVariety,
+    /// Joke phase state: 0 = question, 1 = punchline.
+    joke_phase: u8,
+    /// Epochs remaining in current joke phase.
+    joke_epochs_left: u32,
+    /// Index into face joke list (-1 equivalent = None).
+    joke_index: Option<usize>,
+    /// Which face's joke pool is active.
+    joke_face: String,
+    /// Status text cycling: epochs the current status has been shown.
+    status_display_epochs: u32,
+    /// The currently displayed status text.
+    current_status: String,
 }
 
 impl Personality {
@@ -292,12 +367,31 @@ impl Personality {
             total_aps_seen: 0,
             xp: XpTracker::new(),
             context: SystemContext::default(),
+            variety: variety::FaceVariety::new(),
+            joke_phase: 0,
+            joke_epochs_left: 0,
+            joke_index: None,
+            joke_face: String::new(),
+            status_display_epochs: 0,
+            current_status: String::new(),
         }
     }
 
-    /// Get the face to display, considering overrides.
+    /// Get the face to display, considering overrides and variety engine.
+    /// Priority: hardware override > variety engine > mood-based.
     pub fn current_face(&self) -> Face {
-        self.override_face.unwrap_or_else(|| self.mood.face())
+        // Hardware overrides (battery, crash, wifi) take highest priority
+        if let Some(f) = self.override_face {
+            return f;
+        }
+        // Face variety engine (milestones, idle rotation, capture cycling, etc.)
+        if let Some(key) = self.variety.current_override() {
+            if let Some(face) = Face::from_key(key) {
+                return face;
+            }
+        }
+        // Default: mood-based face
+        self.mood.face()
     }
 
     /// Called when a handshake is captured. Returns true if leveled up.
@@ -397,9 +491,111 @@ impl Personality {
         self.context.scan_channels.clear();
     }
 
-    /// Generate a status message for the current state.
+    /// Generate and cache a bull-themed status message for the current state.
+    ///
+    /// Call this once per epoch (requires &mut self for joke state tracking).
+    /// Uses slow cycling (3 epochs per message) and 30% chance for two-part jokes.
+    pub fn generate_status(&mut self) {
+        // If milestone is active, show milestone status
+        if let Some(status) = self.variety.milestone_status {
+            self.current_status = status.to_string();
+            return;
+        }
+
+        let face = self.current_face();
+        let face_name = face.face_key().to_string();
+
+        // If face changed mid-joke, reset joke state
+        if self.joke_face != face_name {
+            self.joke_phase = 0;
+            self.joke_epochs_left = 0;
+            self.joke_index = None;
+            self.joke_face = face_name.clone();
+        }
+
+        // If a joke is actively being displayed, continue it
+        if self.joke_epochs_left > 0 {
+            self.joke_epochs_left -= 1;
+            if let Some(idx) = self.joke_index {
+                let joke_list = jokes::jokes_for_face(&self.joke_face);
+                if idx < joke_list.len() {
+                    let part = if self.joke_phase == 0 { joke_list[idx].0 } else { joke_list[idx].1 };
+                    self.current_status = part.to_string();
+                    return;
+                }
+            }
+        }
+
+        // Question phase just ended — switch to punchline
+        if self.joke_phase == 0 && self.joke_index.is_some() && self.joke_epochs_left == 0 {
+            self.joke_phase = 1;
+            self.joke_epochs_left = 2; // punchline for 3 total (this + 2 remaining)
+            if let Some(idx) = self.joke_index {
+                let joke_list = jokes::jokes_for_face(&self.joke_face);
+                if idx < joke_list.len() {
+                    self.current_status = joke_list[idx].1.to_string();
+                    return;
+                }
+            }
+        }
+
+        // Punchline done — clear joke state
+        if self.joke_phase == 1 && self.joke_epochs_left == 0 {
+            self.joke_index = None;
+            self.joke_phase = 0;
+        }
+
+        // Slow cycling: keep current status for 3 epochs
+        if self.status_display_epochs < 3 && !self.current_status.is_empty() {
+            self.status_display_epochs += 1;
+            return;
+        }
+
+        let mut rng = rand::thread_rng();
+
+        // 30% chance for a new joke
+        if rng.r#gen::<f32>() < 0.30 {
+            let joke_list = jokes::jokes_for_face(&face_name);
+            if !joke_list.is_empty() {
+                let idx = rng.gen_range(0..joke_list.len());
+                let question = joke_list[idx].0.to_string();
+                self.joke_index = Some(idx);
+                self.joke_phase = 0;
+                self.joke_epochs_left = 1; // question for 2 total (this + 1)
+                self.joke_face = face_name;
+                self.current_status = question;
+                self.status_display_epochs = 1;
+                return;
+            }
+        }
+
+        // Regular bull message
+        let msgs = messages::messages_for_face(&face_name);
+        if msgs.is_empty() {
+            self.current_status = "AO scanning...".to_string();
+            self.status_display_epochs = 1;
+            return;
+        }
+        let idx = rng.gen_range(0..msgs.len());
+        let mut msg = msgs[idx].to_string();
+        // Avoid repeating
+        if msgs.len() > 1 && msg == self.current_status {
+            let filtered: Vec<_> = msgs.iter().filter(|m| **m != self.current_status).collect();
+            if !filtered.is_empty() {
+                let alt = rng.gen_range(0..filtered.len());
+                msg = filtered[alt].to_string();
+            }
+        }
+        self.current_status = msg;
+        self.status_display_epochs = 1;
+    }
+
+    /// Get the cached status message. Call `generate_status()` once per epoch first.
     pub fn status_msg(&self) -> String {
-        status_message(&self.context, &self.mood)
+        if self.current_status.is_empty() {
+            return status_message(&self.context, &self.mood);
+        }
+        self.current_status.clone()
     }
 }
 

@@ -108,6 +108,11 @@ pub struct DaemonState {
     // -- cracked passwords --
     pub cracked: Vec<CrackedEntry>,
 
+    // -- display framebuffer snapshot (250x122, 1-bit packed, MSB first) --
+    pub screen_width: u32,
+    pub screen_height: u32,
+    pub screen_bytes: Vec<u8>,
+
     // -- action requests from web -> daemon --
     pub pending_mode_switch: Option<String>,
     pub pending_rate_change: Option<u32>,
@@ -184,6 +189,9 @@ impl DaemonState {
             recovery_hard_retries: 0,
             recovery_last_str: "never".into(),
             cracked: Vec::new(),
+            screen_width: 250,
+            screen_height: 122,
+            screen_bytes: Vec::new(),
             pending_mode_switch: None,
             pending_rate_change: None,
             pending_restart: false,
@@ -772,6 +780,92 @@ async fn shutdown_handler(State(state): State<SharedState>) -> Json<ActionRespon
 }
 
 // ---------------------------------------------------------------------------
+// Display framebuffer endpoint
+// ---------------------------------------------------------------------------
+
+/// GET /api/display.png -> 1-bit BMP of the current e-ink framebuffer.
+/// Returns a 250x122 monochrome BMP image.
+async fn display_handler(
+    State(state): State<SharedState>,
+) -> axum::response::Response<axum::body::Body> {
+    use axum::http::{header, StatusCode};
+
+    let s = state.lock().unwrap();
+    let w = s.screen_width;
+    let h = s.screen_height;
+    let fb = s.screen_bytes.clone();
+    drop(s);
+
+    if fb.is_empty() {
+        return axum::response::Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .body(axum::body::Body::from("no framebuffer yet"))
+            .unwrap();
+    }
+
+    // Build a 1-bit BMP (monochrome, uncompressed).
+    // BMP stores rows bottom-to-top, each row padded to 4-byte boundary.
+    let fb_stride = ((w + 7) / 8) as usize; // 32 bytes per row in our framebuffer
+    let bmp_stride = ((w + 31) / 32 * 4) as usize; // 32 bytes (250 bits -> 32 bytes, already 4-byte aligned)
+    let pixel_data_size = bmp_stride * h as usize;
+    let file_header_size = 14u32;
+    let dib_header_size = 40u32;
+    let color_table_size = 8u32; // 2 entries * 4 bytes each
+    let pixel_offset = file_header_size + dib_header_size + color_table_size;
+    let file_size = pixel_offset + pixel_data_size as u32;
+
+    let mut bmp = Vec::with_capacity(file_size as usize);
+
+    // File header (14 bytes)
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&file_size.to_le_bytes());
+    bmp.extend_from_slice(&[0u8; 4]); // reserved
+    bmp.extend_from_slice(&pixel_offset.to_le_bytes());
+
+    // DIB header (BITMAPINFOHEADER, 40 bytes)
+    bmp.extend_from_slice(&dib_header_size.to_le_bytes());
+    bmp.extend_from_slice(&(w as i32).to_le_bytes());
+    bmp.extend_from_slice(&(h as i32).to_le_bytes());
+    bmp.extend_from_slice(&1u16.to_le_bytes()); // planes
+    bmp.extend_from_slice(&1u16.to_le_bytes()); // bits per pixel
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // compression (none)
+    bmp.extend_from_slice(&(pixel_data_size as u32).to_le_bytes());
+    bmp.extend_from_slice(&2835i32.to_le_bytes()); // h resolution (72 DPI)
+    bmp.extend_from_slice(&2835i32.to_le_bytes()); // v resolution
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // colors used
+    bmp.extend_from_slice(&0u32.to_le_bytes()); // important colors
+
+    // Color table: index 0 = black (0x00), index 1 = white (0xFF)
+    // In our framebuffer: bit 1 = black (On), bit 0 = white (Off)
+    // BMP: palette[0] for bit=0, palette[1] for bit=1
+    // So palette[0] = white, palette[1] = black
+    bmp.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0x00]); // palette[0] = white (bit 0 = Off)
+    bmp.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // palette[1] = black (bit 1 = On)
+
+    // Pixel data: BMP is bottom-to-top, our framebuffer is top-to-bottom
+    for row in (0..h as usize).rev() {
+        let fb_row_start = row * fb_stride;
+        let fb_row_end = fb_row_start + fb_stride;
+        if fb_row_end <= fb.len() {
+            bmp.extend_from_slice(&fb[fb_row_start..fb_row_end]);
+        } else {
+            bmp.extend_from_slice(&vec![0u8; bmp_stride]);
+        }
+        // Pad to bmp_stride if needed
+        if fb_stride < bmp_stride {
+            bmp.extend_from_slice(&vec![0u8; bmp_stride - fb_stride]);
+        }
+    }
+
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/bmp")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(axum::body::Body::from(bmp))
+        .unwrap()
+}
+
+// ---------------------------------------------------------------------------
 // Router builder
 // ---------------------------------------------------------------------------
 
@@ -794,6 +888,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route(API_RATE, post(rate_handler))
         .route(API_RESTART, post(restart_handler))
         .route(API_SHUTDOWN, post(shutdown_handler))
+        .route(API_DISPLAY, get(display_handler))
         .with_state(state)
 }
 
@@ -907,10 +1002,10 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
-<!-- 3. E-ink preview (TODO: render framebuffer as PNG) -->
+<!-- 3. E-ink preview -->
 <div class="card" id="card-eink" style="text-align:center">
 <div class="card-title">Live Display</div>
-<div style="color:#555;font-size:11px;padding:20px"><!-- TODO: implement /api/display.png framebuffer render -->[E-ink preview not yet implemented in Rust build]</div>
+<div style="padding:8px;background:#fff;display:inline-block;border-radius:4px"><img id="eink-img" src="/api/display.png" alt="e-ink" style="width:250px;height:122px;image-rendering:pixelated"></div>
 </div>
 
 <div class="grid-2">
@@ -1333,6 +1428,7 @@ setInterval(refreshRecovery, 15000);
 setInterval(refreshPersonality, 10000);
 setInterval(refreshSystem, 15000);
 setInterval(refreshCracked, 60000);
+setInterval(function(){ document.getElementById('eink-img').src='/api/display.png?t='+Date.now(); }, 5000);
 </script>
 </body>
 </html>

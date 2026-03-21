@@ -1,7 +1,6 @@
 //! AngryOxide subprocess management.
 //!
 //! Spawns, monitors, stops, and restarts the angryoxide binary.
-//! Implements TDM (time-division multiplexing): 25s attack, 5s pause.
 
 use log::{error, info, warn};
 use std::path::Path;
@@ -14,21 +13,10 @@ pub enum AoState {
     Stopped,
     /// Running normally.
     Running,
-    /// Paused (TDM scan phase).
-    Paused,
     /// Crashed, awaiting restart.
     Crashed,
     /// Permanently stopped after too many crashes.
     Failed,
-}
-
-/// TDM cycle phase.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TdmPhase {
-    /// AO is actively attacking (TX).
-    Attack,
-    /// AO is paused, bettercap can scan (RX).
-    Scan,
 }
 
 /// Configuration for the AO subprocess.
@@ -48,10 +36,6 @@ pub struct AoConfig {
     pub no_setup: bool,
     /// Run in headless mode.
     pub headless: bool,
-    /// TDM attack duration in seconds.
-    pub attack_duration_secs: u64,
-    /// TDM scan/pause duration in seconds.
-    pub scan_duration_secs: u64,
     /// Maximum crash count before giving up.
     pub max_crashes: u32,
     /// Base backoff seconds for exponential restart delay.
@@ -68,8 +52,6 @@ impl Default for AoConfig {
             dwell: 5,
             no_setup: true,
             headless: true,
-            attack_duration_secs: 25,
-            scan_duration_secs: 5,
             max_crashes: 10,
             base_backoff_secs: 5,
         }
@@ -80,8 +62,6 @@ impl Default for AoConfig {
 pub struct AoManager {
     pub config: AoConfig,
     pub state: AoState,
-    pub tdm_phase: TdmPhase,
-    tdm_timer: Instant,
     /// Child process handle (only on unix-like systems at runtime).
     #[cfg(unix)]
     process: Option<std::process::Child>,
@@ -105,8 +85,6 @@ impl AoManager {
         Self {
             config,
             state: AoState::Stopped,
-            tdm_phase: TdmPhase::Attack,
-            tdm_timer: Instant::now(),
             #[cfg(unix)]
             process: None,
             pid: 0,
@@ -157,8 +135,6 @@ impl AoManager {
                 self.state = AoState::Running;
                 self.pid = 0;
                 self.start_time = Some(Instant::now());
-                self.tdm_phase = TdmPhase::Attack;
-                self.tdm_timer = Instant::now();
                 return Ok(());
             }
             #[cfg(unix)]
@@ -182,8 +158,6 @@ impl AoManager {
                     self.process = Some(child);
                     self.state = AoState::Running;
                     self.start_time = Some(Instant::now());
-                    self.tdm_phase = TdmPhase::Attack;
-                    self.tdm_timer = Instant::now();
                     Ok(())
                 }
                 Err(e) => {
@@ -200,8 +174,6 @@ impl AoManager {
             self.state = AoState::Running;
             self.pid = 0;
             self.start_time = Some(Instant::now());
-            self.tdm_phase = TdmPhase::Attack;
-            self.tdm_timer = Instant::now();
             Ok(())
         }
     }
@@ -245,7 +217,7 @@ impl AoManager {
     /// Check if AO process is still alive; detect crashes.
     /// Returns true if AO crashed and was detected.
     pub fn check_health(&mut self) -> bool {
-        if self.state != AoState::Running && self.state != AoState::Paused {
+        if self.state != AoState::Running {
             return false;
         }
 
@@ -328,7 +300,7 @@ impl AoManager {
 
     /// Record a stable epoch (no crash). Resets crash counter after enough stable epochs.
     pub fn record_stable_epoch(&mut self) {
-        if self.state == AoState::Running || self.state == AoState::Paused {
+        if self.state == AoState::Running {
             self.stable_epochs += 1;
             // After 10 stable epochs, reset crash counter
             if self.stable_epochs >= 10 && self.crash_count > 0 {
@@ -339,37 +311,6 @@ impl AoManager {
                 self.crash_count = 0;
             }
         }
-    }
-
-    /// TDM cycle tick. Called each epoch to toggle attack/scan phases.
-    /// Returns the current phase after evaluation.
-    pub fn tdm_tick(&mut self) -> TdmPhase {
-        if self.state != AoState::Running && self.state != AoState::Paused {
-            return self.tdm_phase;
-        }
-
-        let elapsed = self.tdm_timer.elapsed().as_secs();
-        match self.tdm_phase {
-            TdmPhase::Attack => {
-                if elapsed >= self.config.attack_duration_secs {
-                    info!("TDM: switching to scan phase ({}s pause)", self.config.scan_duration_secs);
-                    self.tdm_phase = TdmPhase::Scan;
-                    self.tdm_timer = Instant::now();
-                    // In a real implementation, we'd SIGSTOP the AO process here
-                    self.state = AoState::Paused;
-                }
-            }
-            TdmPhase::Scan => {
-                if elapsed >= self.config.scan_duration_secs {
-                    info!("TDM: switching to attack phase ({}s attack)", self.config.attack_duration_secs);
-                    self.tdm_phase = TdmPhase::Attack;
-                    self.tdm_timer = Instant::now();
-                    // In a real implementation, we'd SIGCONT the AO process here
-                    self.state = AoState::Running;
-                }
-            }
-        }
-        self.tdm_phase
     }
 
     /// Get AO uptime as a formatted string.
@@ -397,7 +338,6 @@ impl AoManager {
         match self.state {
             AoState::Stopped => "STOPPED",
             AoState::Running => "RUNNING",
-            AoState::Paused => "PAUSED",
             AoState::Crashed => "CRASHED",
             AoState::Failed => "FAILED",
         }
@@ -462,8 +402,6 @@ mod tests {
         assert_eq!(cfg.dwell, 5);
         assert!(cfg.headless);
         assert!(cfg.no_setup);
-        assert_eq!(cfg.attack_duration_secs, 25);
-        assert_eq!(cfg.scan_duration_secs, 5);
     }
 
     #[test]
@@ -578,16 +516,6 @@ mod tests {
         ao.state = AoState::Running;
         ao.on_crash(); // crash 2 = max
         assert_eq!(ao.state, AoState::Failed);
-    }
-
-    #[test]
-    fn test_tdm_tick_stays_in_attack() {
-        let mut ao = AoManager::default();
-        ao.state = AoState::Running;
-        ao.tdm_timer = Instant::now(); // just started
-        let phase = ao.tdm_tick();
-        assert_eq!(phase, TdmPhase::Attack);
-        assert_eq!(ao.state, AoState::Running);
     }
 
     #[test]

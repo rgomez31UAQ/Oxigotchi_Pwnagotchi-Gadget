@@ -27,6 +27,7 @@ mod web;
 #[allow(dead_code)]
 mod wifi;
 
+use chrono::Timelike;
 use log::info;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -93,11 +94,19 @@ impl Daemon {
 
     /// Boot sequence: init display, probe hardware, scan existing captures, start AO.
     fn boot(&mut self) {
-        // Display boot screen
+        // Display boot screen with debug face (Feature 7: debug on boot)
+        let boot_face_key = self.epoch_loop.personality.variety.boot_face();
+        let boot_face = if boot_face_key == "debug" {
+            personality::Face::Debug
+        } else {
+            personality::Face::Awake
+        };
         self.screen.clear();
-        self.screen.draw_face(&personality::Face::Awake);
+        self.screen.draw_face(&boot_face);
         self.screen.draw_name(&self.config.name);
-        self.screen.draw_status("Booting...");
+        let welcome = format!("Hi! I'm {}! Starting v{}...",
+            self.config.name, env!("CARGO_PKG_VERSION"));
+        self.screen.draw_status(&welcome);
         self.screen.flush();
         info!("display initialized");
 
@@ -173,16 +182,11 @@ impl Daemon {
         // Try auto-restart if crashed
         self.ao.try_auto_restart();
 
-        // ---- TDM CYCLE ----
-        self.ao.tdm_tick();
-
         // ---- SCAN PHASE ----
         self.epoch_loop.phase = epoch::EpochPhase::Scan;
         self.recovery.log(recovery::DiagLevel::Info, "epoch scan start");
 
-        // Hop channels and scan
-        let channel = self.wifi.hop_channel();
-        result.channel = channel;
+        result.channel = 0; // AO handles channel hopping
         result.aps_seen = self.wifi.tracker.count() as u32;
 
         // Health check on WiFi
@@ -232,6 +236,37 @@ impl Daemon {
         self.epoch_loop.next_phase(); // -> Display
         self.epoch_loop.record_result(&result);
 
+        // ---- FACE VARIETY ENGINE ----
+        // Tick countdowns (milestones, friend, upload, capture face)
+        self.epoch_loop.personality.variety.tick_countdowns();
+
+        // Wire captures into variety engine for milestones + face cycling
+        if result.handshakes_captured > 0 {
+            let total = self.epoch_loop.personality.total_handshakes;
+            self.epoch_loop.personality.variety.on_capture(total);
+        } else {
+            // Tick idle counter if no handshakes this epoch
+            self.epoch_loop.personality.variety.tick_idle();
+        }
+
+        // Time-of-day and rare face are checked in current_face()
+        // via variety.current_override(). Update the variety engine's
+        // time-of-day state here.
+        let hour = chrono::Local::now().hour();
+        self.epoch_loop.personality.variety.current_hour = hour;
+
+        // Generate bull-themed status message (handles joke cycling)
+        self.epoch_loop.personality.generate_status();
+
+        // ---- PERIODIC XP SAVE (every 5 epochs) ----
+        self.epoch_loop.personality.xp.tick_epoch();
+        if self.epoch_loop.personality.xp.should_save() {
+            let mood = self.epoch_loop.personality.mood.value();
+            if let Err(e) = self.epoch_loop.personality.xp.save(mood) {
+                log::warn!("XP save failed: {e}");
+            }
+        }
+
         // Check battery and apply face overrides
         self.check_battery_overrides();
 
@@ -243,7 +278,7 @@ impl Daemon {
         }
 
         // Record stable epoch for AO
-        if self.ao.state == ao::AoState::Running || self.ao.state == ao::AoState::Paused {
+        if self.ao.state == ao::AoState::Running {
             self.ao.record_stable_epoch();
         }
 
@@ -360,9 +395,15 @@ impl Daemon {
         s.recovery_total = self.recovery.total_recoveries;
         s.recovery_soft_retries = self.recovery.soft_retry_count;
         s.recovery_hard_retries = self.recovery.hard_retry_count;
+
+        // Copy framebuffer for web display preview
+        s.screen_width = self.screen.fb.width;
+        s.screen_height = self.screen.fb.height;
+        s.screen_bytes = self.screen.fb.as_bytes().to_vec();
     }
 
     /// Update the e-ink display with current state.
+    /// Layout matches Python angryoxide.py: IP at y=95, bottom bar at y=112.
     fn update_display(&mut self) {
         self.screen.clear();
 
@@ -380,23 +421,43 @@ impl Daemon {
 
         // ---- NAME + STATUS (y=20) ----
         self.screen.draw_name(&self.config.name);
-        self.screen.draw_status(&self.epoch_loop.status_message());
+        let status = self.epoch_loop.personality.status_msg();
+        self.screen.draw_status(&status);
 
         // ---- FACE (y=34) ----
         let face = self.epoch_loop.current_face();
         self.screen.draw_face(&face);
 
+        // ---- IP DISPLAY (y=95) ----
+        let ip_str = self.network.display_ip_str(
+            self.bluetooth.ip_address.as_deref()
+        );
+        self.screen.draw_text(&ip_str, 0, 95);
+
         // ---- LINE 2 (y=108) ----
         self.screen.draw_hline(0, 108, display::DISPLAY_WIDTH);
 
-        // ---- BOTTOM BAR (y=109+) ----
-        self.screen.draw_labeled_value(
-            "PWND",
-            &m.handshakes.to_string(),
-            0,
-            109,
-        );
-        self.screen.draw_labeled_value("", "AUTO", 222, 112);
+        // ---- BOTTOM BAR (y=112) — matches Python layout ----
+        // Crash counter at (0, 112) — only if crashes occurred
+        if self.ao.crash_count > 0 {
+            let crash_str = format!("CRASH:{}", self.ao.crash_count);
+            self.screen.draw_text(&crash_str, 0, 112);
+        }
+
+        // PWND count
+        let pwnd_str = format!("PWND:{}", m.handshakes);
+        self.screen.draw_text(&pwnd_str, 70, 112);
+
+        // Assoc count at (166, 112)
+        let assoc_str = format!("A:{}", m.assocs_this_epoch);
+        self.screen.draw_text(&assoc_str, 166, 112);
+
+        // Deauth count at (189, 112)
+        let deauth_str = format!("D:{}", m.deauths_this_epoch);
+        self.screen.draw_text(&deauth_str, 189, 112);
+
+        // Mode at (222, 112)
+        self.screen.draw_text("RAGE", 222, 112);
 
         self.screen.flush();
     }
@@ -534,13 +595,12 @@ impl Daemon {
 #[tokio::main]
 async fn main() {
     env_logger::init();
+    let config = config::Config::load_or_default("/etc/pwnagotchi/config.toml");
     info!(
-        "Rusty Oxigotchi v{} starting — the bull is awake",
+        "Hi! I'm {}! Rusty Oxigotchi v{} starting — the bull is awake",
+        config.name,
         env!("CARGO_PKG_VERSION")
     );
-
-    let config = config::Config::load_or_default("/etc/pwnagotchi/config.toml");
-    info!("name: {}", config.name);
 
     // Create shared state for web server <-> daemon communication
     let shared_state = Arc::new(Mutex::new(web::DaemonState::new(&config.name)));
@@ -783,10 +843,9 @@ mod tests {
         for epoch in 0..3 {
             // ---- SCAN ----
             daemon.epoch_loop.phase = epoch::EpochPhase::Scan;
-            let channel = daemon.wifi.hop_channel();
 
             let mut result = epoch::EpochResult::default();
-            result.channel = channel;
+            result.channel = 0; // AO handles channel hopping
             result.aps_seen = (epoch + 1) * 2;
 
             // ---- ATTACK ----

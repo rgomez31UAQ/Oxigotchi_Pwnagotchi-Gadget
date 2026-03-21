@@ -65,6 +65,15 @@ impl Screen {
         let _ = Text::new(text, Point::new(125, 30), style).draw(&mut self.fb);
     }
 
+    /// Draw raw text (no label prefix) at a given (x, y) pixel position.
+    /// The y coordinate is the visual top of the text; baseline offset is added.
+    pub fn draw_text(&mut self, text: &str, x: i32, y: i32) {
+        let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
+        // FONT_6X10 baseline offset ~8px above baseline.
+        // y param is visual top, so baseline = y + 8.
+        let _ = Text::new(text, Point::new(x, y + 8), style).draw(&mut self.fb);
+    }
+
     /// Draw a "LABEL: value" pair at a given (x, y) pixel position.
     pub fn draw_labeled_value(&mut self, label: &str, value: &str, x: i32, y: i32) {
         let combined = format!("{}: {}", label, value);
@@ -209,14 +218,14 @@ mod tests {
 
     #[test]
     fn test_flush_no_panic() {
-        let screen = Screen::new(test_config());
+        let mut screen = Screen::new(test_config());
         screen.flush(); // Should be no-op on non-Pi
     }
 
     #[test]
     fn test_empty_framebuffer_flush() {
         // Flushing without any draws should succeed and produce an all-white buffer.
-        let screen = Screen::new(test_config());
+        let mut screen = Screen::new(test_config());
         assert_eq!(screen.fb.count_set_pixels(), 0);
         screen.flush(); // should not panic
     }

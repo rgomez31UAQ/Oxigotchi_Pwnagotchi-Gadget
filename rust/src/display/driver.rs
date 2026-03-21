@@ -35,6 +35,7 @@ pub const CMD_WRITE_RAM_RED: u8 = 0x26;
 pub const CMD_DISPLAY_UPDATE_CTRL2: u8 = 0x22;
 pub const CMD_MASTER_ACTIVATION: u8 = 0x20;
 pub const CMD_BORDER_WAVEFORM: u8 = 0x3C;
+pub const CMD_DISPLAY_UPDATE_CTRL1: u8 = 0x21;
 pub const CMD_TEMP_SENSOR: u8 = 0x18;
 pub const CMD_DEEP_SLEEP: u8 = 0x10;
 
@@ -68,8 +69,10 @@ pub enum SpiTransfer {
     Data(Vec<u8>),
     /// BUSY pin wait.
     WaitBusy,
-    /// Hardware reset pulse.
+    /// Hardware reset pulse (full: HIGH 20ms, LOW 2ms, HIGH 20ms).
     Reset,
+    /// Short reset pulse for partial refresh (LOW 1ms, HIGH, no trailing delay).
+    PartialReset,
 }
 
 // ── HAL trait (hardware abstraction) ────────────────────────────────
@@ -85,6 +88,8 @@ pub trait Ssd1680Hal {
     fn wait_busy(&self) -> Result<(), String>;
     /// Pulse the RST pin (high-low-high).
     fn hardware_reset(&mut self) -> Result<(), String>;
+    /// Short reset pulse for partial refresh (RST LOW 1ms, HIGH, no trailing delay).
+    fn partial_reset(&mut self) -> Result<(), String>;
 }
 
 // ── Mock HAL (all platforms) ────────────────────────────────────────
@@ -200,6 +205,11 @@ impl Ssd1680Hal for MockHal {
         self.transfers.borrow_mut().push(SpiTransfer::Reset);
         Ok(())
     }
+
+    fn partial_reset(&mut self) -> Result<(), String> {
+        self.transfers.borrow_mut().push(SpiTransfer::PartialReset);
+        Ok(())
+    }
 }
 
 // ── Real HAL (aarch64 only) ─────────────────────────────────────────
@@ -283,6 +293,15 @@ impl Ssd1680Hal for RppalHal {
         thread::sleep(Duration::from_millis(20));
         Ok(())
     }
+
+    fn partial_reset(&mut self) -> Result<(), String> {
+        use std::thread;
+        use std::time::Duration;
+        self.rst.set_low();
+        thread::sleep(Duration::from_millis(1));
+        self.rst.set_high();
+        Ok(())
+    }
 }
 
 // ── SSD1680 Driver ──────────────────────────────────────────────────
@@ -319,55 +338,46 @@ impl<H: Ssd1680Hal> Ssd1680Driver<H> {
     }
 
     /// Run the full SSD1680 initialization sequence.
+    /// Matches the Python epd2in13_V4.py init() byte-for-byte.
     pub fn init(&mut self) -> Result<(), String> {
         // Hardware reset
         self.hal.hardware_reset()?;
-
-        // Wait for controller ready
         self.hal.wait_busy()?;
 
         // Software reset
         self.hal.send_command(CMD_SW_RESET)?;
         self.hal.wait_busy()?;
 
-        // Driver output control: MUX gate lines = EPD_HEIGHT-1 = 249 = 0xF9
-        // Byte 0 = (height-1) & 0xFF = 0xF9
-        // Byte 1 = ((height-1) >> 8) & 0x01 = 0x00
-        // Byte 2 = gate scanning sequence (0x00 = G0->G249)
+        // Driver output control: MUX = 249
         self.hal.send_command(CMD_DRIVER_OUTPUT)?;
-        let mux = EPD_HEIGHT - 1; // 249
-        self.hal
-            .send_data(&[(mux & 0xFF) as u8, ((mux >> 8) & 0x01) as u8, 0x00])?;
+        self.hal.send_data(&[0xF9, 0x00, 0x00])?;
 
-        // Data entry mode setting: X increment, Y increment
-        // 0x03 = X+, Y+ (address counter auto-increments in X first, then Y)
+        // Data entry mode: X+, Y+
         self.hal.send_command(CMD_DATA_ENTRY_MODE)?;
         self.hal.send_data(&[0x03])?;
 
-        // Set RAM X address range: 0 to (EPD_WIDTH_BYTES - 1) = 0 to 15
+        // Set RAM window
         self.hal.send_command(CMD_SET_RAM_X_RANGE)?;
         self.hal
             .send_data(&[0x00, (EPD_WIDTH_BYTES - 1) as u8])?;
 
-        // Set RAM Y address range: 0 to (EPD_HEIGHT - 1) = 0 to 249
         self.hal.send_command(CMD_SET_RAM_Y_RANGE)?;
-        self.hal.send_data(&[
-            0x00,
-            0x00,
-            (mux & 0xFF) as u8,
-            ((mux >> 8) & 0x01) as u8,
-        ])?;
+        self.hal.send_data(&[0x00, 0x00, 0xF9, 0x00])?;
 
-        // Border waveform control: follow LUT (0x05)
+        // Set RAM cursor (Python does this BEFORE border/ctrl1/temp)
+        self.set_ram_cursor(0, 0)?;
+
+        // Border waveform control: follow LUT
         self.hal.send_command(CMD_BORDER_WAVEFORM)?;
         self.hal.send_data(&[0x05])?;
 
-        // Temperature sensor selection: internal sensor (0x80)
+        // Display update control 1: normal RAM, inverted source output
+        self.hal.send_command(CMD_DISPLAY_UPDATE_CTRL1)?;
+        self.hal.send_data(&[0x00, 0x80])?;
+
+        // Temperature sensor: internal
         self.hal.send_command(CMD_TEMP_SENSOR)?;
         self.hal.send_data(&[0x80])?;
-
-        // Set initial RAM counters to origin
-        self.set_ram_cursor(0, 0)?;
 
         self.hal.wait_busy()?;
 
@@ -431,6 +441,72 @@ impl<H: Ssd1680Hal> Ssd1680Driver<H> {
         Ok(())
     }
 
+    /// Write framebuffer to both BW and RED RAM, then do a full refresh.
+    /// Matches Python `displayPartBaseImage()` — called once after init
+    /// to establish the base image for subsequent partial updates.
+    pub fn flush_base(&mut self, fb: &FrameBuffer) -> Result<(), String> {
+        let spi_data = self.prepare_spi_data(fb);
+
+        self.set_ram_cursor(0, 0)?;
+        self.hal.send_command(CMD_WRITE_RAM_BW)?;
+        self.hal.send_data(&spi_data)?;
+
+        self.set_ram_cursor(0, 0)?;
+        self.hal.send_command(CMD_WRITE_RAM_RED)?;
+        self.hal.send_data(&spi_data)?;
+
+        // Full refresh
+        self.hal.send_command(CMD_DISPLAY_UPDATE_CTRL2)?;
+        self.hal.send_data(&[UPDATE_FULL])?;
+        self.hal.send_command(CMD_MASTER_ACTIVATION)?;
+
+        self.hal.wait_busy()?;
+
+        Ok(())
+    }
+
+    /// Partial refresh: short reset, re-init registers, write BW RAM only.
+    /// Matches Python `displayPartial()` — fast, no heavy flash.
+    pub fn flush_partial(&mut self, fb: &FrameBuffer) -> Result<(), String> {
+        let spi_data = self.prepare_spi_data(fb);
+
+        // Short hardware reset (Python: RST LOW 1ms, HIGH)
+        self.hal.partial_reset()?;
+
+        // Border waveform for partial mode (0x80, different from init's 0x05)
+        self.hal.send_command(CMD_BORDER_WAVEFORM)?;
+        self.hal.send_data(&[0x80])?;
+
+        // Re-send basic config (needed after reset)
+        self.hal.send_command(CMD_DRIVER_OUTPUT)?;
+        self.hal.send_data(&[0xF9, 0x00, 0x00])?;
+
+        self.hal.send_command(CMD_DATA_ENTRY_MODE)?;
+        self.hal.send_data(&[0x03])?;
+
+        self.hal.send_command(CMD_SET_RAM_X_RANGE)?;
+        self.hal
+            .send_data(&[0x00, (EPD_WIDTH_BYTES - 1) as u8])?;
+
+        self.hal.send_command(CMD_SET_RAM_Y_RANGE)?;
+        self.hal.send_data(&[0x00, 0x00, 0xF9, 0x00])?;
+
+        self.set_ram_cursor(0, 0)?;
+
+        // Write BW RAM only (partial doesn't touch RED RAM)
+        self.hal.send_command(CMD_WRITE_RAM_BW)?;
+        self.hal.send_data(&spi_data)?;
+
+        // Trigger partial update
+        self.hal.send_command(CMD_DISPLAY_UPDATE_CTRL2)?;
+        self.hal.send_data(&[UPDATE_PARTIAL])?;
+        self.hal.send_command(CMD_MASTER_ACTIVATION)?;
+
+        self.hal.wait_busy()?;
+
+        Ok(())
+    }
+
     /// Prepare the SPI byte array from the logical framebuffer.
     ///
     /// Our FrameBuffer is 250 wide x 122 tall (landscape, row-major, MSB-first,
@@ -452,32 +528,24 @@ impl<H: Ssd1680Hal> Ssd1680Driver<H> {
         let mut out = vec![0xFFu8; total]; // 0xFF = all white in SSD1680
 
         // The logical framebuffer is fb.width=250 x fb.height=122.
-        // SSD1680 scans: for each Y line (0..249), for each X byte (0..15),
-        //   bits 7..0 map to pixel columns 0..7 within that byte.
-        // Physical pixel at (phys_x, phys_y) is stored at:
-        //   byte_idx = phys_y * stride + phys_x / 8
-        //   bit_idx  = 7 - (phys_x % 8)
+        // Python's getbuffer() does PIL rotate(90, expand=True) which maps:
+        //   portrait(px, py) = landscape(249-py, px)
+        // With pwnagotchi rotation=180 applied first:
+        //   portrait(px, py) = original(py, 121-px)
         //
-        // For landscape display (rotated 90 CCW from portrait):
-        //   logical (lx, ly) -> physical (px, py):
-        //     px = ly
-        //     py = lx
-        //   So lx = py, ly = px.
-        //
-        // For 180-degree rotation of the landscape image:
-        //   We flip both axes of the logical image before transposing.
-        //   logical_rotated (lx, ly) = (fb.width-1-lx, fb.height-1-ly)
-        //   Then transpose as above.
+        // We match this by reading logical pixels for each physical position:
+        //   rotation 0:   (lx, ly) = (249-py, px)
+        //   rotation 180: (lx, ly) = (py, 121-px)
 
         for py in 0..phys_h {
             for px in 0..phys_w {
-                // Map physical -> logical
+                // Map physical -> logical (matches Python getbuffer rotate(90))
                 let (lx, ly) = if self.rotation == 180 {
-                    // Rotated 180: flip both axes
-                    (fb.width - 1 - py, fb.height - 1 - px)
+                    // Matches Python: pwnagotchi rotation=180 + getbuffer rotate(90)
+                    (py, fb.height - 1 - px)
                 } else {
-                    // No rotation
-                    (py, px)
+                    // Matches Python: getbuffer rotate(90) only
+                    (fb.width - 1 - py, px)
                 };
 
                 if lx >= fb.width || ly >= fb.height {
@@ -509,10 +577,27 @@ impl<H: Ssd1680Hal> Ssd1680Driver<H> {
 /// On non-aarch64 platforms this is a no-op.
 #[cfg(target_arch = "aarch64")]
 pub fn flush_to_hardware(fb: &FrameBuffer, config: &DisplayConfig) -> Result<(), String> {
-    let hal = RppalHal::new()?;
-    let mut driver = Ssd1680Driver::new(hal, config.rotation);
-    driver.init()?;
-    driver.flush(fb, RefreshMode::Full)?;
+    use std::sync::Mutex;
+
+    static DRIVER: Mutex<Option<Ssd1680Driver<RppalHal>>> = Mutex::new(None);
+
+    let mut guard = DRIVER.lock().map_err(|e| format!("driver lock: {e}"))?;
+
+    match guard.as_mut() {
+        None => {
+            // First call: full init + base image (both RAMs + full refresh)
+            let hal = RppalHal::new()?;
+            let mut driver = Ssd1680Driver::new(hal, config.rotation);
+            driver.init()?;
+            driver.flush_base(fb)?;
+            *guard = Some(driver);
+        }
+        Some(driver) => {
+            // Subsequent calls: partial refresh (fast, no heavy flash)
+            driver.flush_partial(fb)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -570,14 +655,30 @@ mod tests {
             CMD_DATA_ENTRY_MODE,
             CMD_SET_RAM_X_RANGE,
             CMD_SET_RAM_Y_RANGE,
-            CMD_BORDER_WAVEFORM,
-            CMD_TEMP_SENSOR,
-            CMD_SET_RAM_X_COUNTER,
+            CMD_SET_RAM_X_COUNTER, // cursor before border (matches Python)
             CMD_SET_RAM_Y_COUNTER,
+            CMD_BORDER_WAVEFORM,
+            CMD_DISPLAY_UPDATE_CTRL1, // 0x21: normal RAM, inverted source
+            CMD_TEMP_SENSOR,
         ];
         assert_eq!(
             cmds, expected,
-            "init commands must be in SSD1680 datasheet order"
+            "init commands must match Python waveshare driver order"
+        );
+    }
+
+    #[test]
+    fn test_init_display_update_ctrl1() {
+        let mut drv = Ssd1680Driver::new(MockHal::new(), 0);
+        drv.init().unwrap();
+        let data = drv
+            .hal
+            .data_after_command(CMD_DISPLAY_UPDATE_CTRL1)
+            .unwrap();
+        assert_eq!(
+            data,
+            vec![0x00, 0x80],
+            "display update ctrl1 should be [0x00, 0x80] (normal RAM, inverted source)"
         );
     }
 
@@ -706,16 +807,16 @@ mod tests {
         fb.set_pixel(0, 0, BinaryColor::On);
         let data = drv.prepare_spi_data(&fb);
 
-        // Logical (0, 0) -> physical (px=0, py=0), byte 0, bit 7 cleared
+        // Logical (0, 0) rotation=0 -> lx=249-py, ly=px -> py=249, px=0
+        // byte 249*16=3984, bit 7
         assert_eq!(
-            data[0],
+            data[3984],
             0x7F, // 0xFF with bit 7 cleared
-            "pixel at origin should clear bit 7 of byte 0"
+            "pixel at origin should map to physical (0, 249)"
         );
 
-        for i in 1..16 {
-            assert_eq!(data[i], 0xFF, "byte {} should be untouched", i);
-        }
+        // First scanline byte 0 should be untouched
+        assert_eq!(data[0], 0xFF, "physical scanline 0 byte 0 should be untouched");
     }
 
     #[test]
@@ -738,14 +839,17 @@ mod tests {
             fb.set_pixel(x, 0, BinaryColor::On);
         }
         let data = drv.prepare_spi_data(&fb);
-        // logical (0..7, 0) -> physical (px=0, py=0..7)
-        for py in 0..8 {
+        // logical (x, 0) rotation=0 -> py=249-x, px=0
+        // Pixels at scanlines 249, 248, ..., 242, each at byte 0 bit 7
+        for x in 0..8u32 {
+            let py = 249 - x as usize;
             let byte_idx = py * 16;
             assert_eq!(
                 data[byte_idx] & 0x80,
                 0,
-                "physical scanline {}: bit 7 should be cleared (black pixel)",
-                py
+                "scanline {}: bit 7 should be cleared (black pixel from logical ({}, 0))",
+                py,
+                x
             );
         }
     }
@@ -789,7 +893,8 @@ mod tests {
         let mut fb = make_fb();
         fb.set_pixel(0, 0, BinaryColor::On);
         let data = drv.prepare_spi_data(&fb);
-        assert_eq!(data[0] & 0x80, 0x00, "rotation 0: (0,0) -> phys (0,0)");
+        // rotation 0: (0,0) -> phys (px=0, py=249), byte 249*16=3984, bit 7
+        assert_eq!(data[3984] & 0x80, 0x00, "rotation 0: (0,0) -> phys (0,249)");
     }
 
     #[test]
@@ -799,14 +904,12 @@ mod tests {
         fb.set_pixel(0, 0, BinaryColor::On);
         let data_180 = drv.prepare_spi_data(&fb);
 
-        // 180 rotation: logical (0,0) -> physical (px=121, py=249)
-        // px=121 -> byte 15, bit 7-(121%8) = 7-1 = 6
-        let byte_idx = 249 * 16 + 15;
-        let bit = 6;
+        // rotation 180: (0,0) -> lx=py, ly=121-px -> py=0, px=121
+        // phys (121, 0): byte 0*16 + 121/8 = 15, bit 7-(121%8) = 6
         assert_eq!(
-            data_180[byte_idx] & (1 << bit),
+            data_180[15] & (1 << 6),
             0,
-            "rotation 180: logical (0,0) should map to physical (121, 249)"
+            "rotation 180: logical (0,0) should map to physical (121, 0)"
         );
     }
 
@@ -1052,13 +1155,12 @@ mod tests {
         fb.set_pixel(249, 121, BinaryColor::On);
         let data = drv.prepare_spi_data(&fb);
 
-        // logical (249, 121) -> physical (px=121, py=249)
-        let byte_idx = 249 * 16 + 15;
-        let bit = 6;
+        // rotation 0: lx=249-py=249, ly=px=121 -> py=0, px=121
+        // byte = 0*16 + 121/8 = 15, bit = 7-(121%8) = 6
         assert_eq!(
-            data[byte_idx] & (1 << bit),
+            data[15] & (1 << 6),
             0,
-            "pixel at logical (249,121) should be black at physical (121,249)"
+            "pixel at logical (249,121) should be black at physical (121, 0)"
         );
     }
 
@@ -1071,14 +1173,17 @@ mod tests {
         }
         let data = drv.prepare_spi_data(&fb);
 
-        // Each logical pixel (x, 0) -> physical (px=0, py=x)
-        for py in 0..250usize {
+        // rotation 0: logical (x, 0) -> py=249-x, px=0
+        // Each scanline py has pixel at px=0 (byte 0, bit 7)
+        for x in 0..250usize {
+            let py = 249 - x;
             let byte_idx = py * 16;
             assert_eq!(
                 data[byte_idx] & 0x80,
                 0,
-                "scanline {}: pixel column 0 should be black",
-                py
+                "scanline {}: pixel column 0 should be black (from logical ({}, 0))",
+                py,
+                x
             );
             for bi in 1..15 {
                 assert_eq!(data[py * 16 + bi], 0xFF);
@@ -1110,5 +1215,118 @@ mod tests {
             .filter(|c| **c == CMD_MASTER_ACTIVATION)
             .count();
         assert_eq!(activation_count, 2, "should have two display update cycles");
+    }
+
+    // ================================================================
+    // Test group 11: flush_base and flush_partial
+    // ================================================================
+
+    #[test]
+    fn test_flush_base_writes_both_rams() {
+        let mut drv = Ssd1680Driver::new(MockHal::new(), 0);
+        drv.init().unwrap();
+        let pre_len = drv.hal.snapshot().len();
+        drv.flush_base(&make_fb()).unwrap();
+        let snap = drv.hal.snapshot();
+        let flush_cmds: Vec<u8> = snap[pre_len..]
+            .iter()
+            .filter_map(|t| match t {
+                SpiTransfer::Command(c) => Some(*c),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            flush_cmds.contains(&CMD_WRITE_RAM_BW),
+            "flush_base must write BW RAM"
+        );
+        assert!(
+            flush_cmds.contains(&CMD_WRITE_RAM_RED),
+            "flush_base must write RED RAM"
+        );
+    }
+
+    #[test]
+    fn test_flush_base_triggers_full_update() {
+        let mut drv = Ssd1680Driver::new(MockHal::new(), 0);
+        drv.init().unwrap();
+        drv.flush_base(&make_fb()).unwrap();
+        let all = drv.hal.all_data_after_command(CMD_DISPLAY_UPDATE_CTRL2);
+        let last = all.last().unwrap();
+        assert_eq!(
+            last,
+            &vec![UPDATE_FULL],
+            "flush_base should trigger full update (0xF7)"
+        );
+    }
+
+    #[test]
+    fn test_flush_partial_starts_with_partial_reset() {
+        let mut drv = Ssd1680Driver::new(MockHal::new(), 0);
+        drv.init().unwrap();
+        let pre_len = drv.hal.snapshot().len();
+        drv.flush_partial(&make_fb()).unwrap();
+        let snap = drv.hal.snapshot();
+        assert_eq!(
+            snap[pre_len],
+            SpiTransfer::PartialReset,
+            "flush_partial must start with partial reset"
+        );
+    }
+
+    #[test]
+    fn test_flush_partial_uses_border_0x80() {
+        let mut drv = Ssd1680Driver::new(MockHal::new(), 0);
+        drv.init().unwrap();
+        let pre_len = drv.hal.snapshot().len();
+        drv.flush_partial(&make_fb()).unwrap();
+        let snap = drv.hal.snapshot();
+        let flush_transfers = &snap[pre_len..];
+        let border_idx = flush_transfers
+            .iter()
+            .position(|t| *t == SpiTransfer::Command(CMD_BORDER_WAVEFORM))
+            .expect("flush_partial must send border waveform command");
+        assert_eq!(
+            flush_transfers[border_idx + 1],
+            SpiTransfer::Data(vec![0x80]),
+            "partial refresh border should be 0x80"
+        );
+    }
+
+    #[test]
+    fn test_flush_partial_writes_bw_ram_only() {
+        let mut drv = Ssd1680Driver::new(MockHal::new(), 0);
+        drv.init().unwrap();
+        let pre_len = drv.hal.snapshot().len();
+        drv.flush_partial(&make_fb()).unwrap();
+        let snap = drv.hal.snapshot();
+        let flush_cmds: Vec<u8> = snap[pre_len..]
+            .iter()
+            .filter_map(|t| match t {
+                SpiTransfer::Command(c) => Some(*c),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            flush_cmds.contains(&CMD_WRITE_RAM_BW),
+            "flush_partial must write BW RAM"
+        );
+        assert!(
+            !flush_cmds.contains(&CMD_WRITE_RAM_RED),
+            "flush_partial must NOT write RED RAM"
+        );
+    }
+
+    #[test]
+    fn test_flush_partial_triggers_partial_update() {
+        let mut drv = Ssd1680Driver::new(MockHal::new(), 0);
+        drv.init().unwrap();
+        drv.flush_partial(&make_fb()).unwrap();
+        let all = drv.hal.all_data_after_command(CMD_DISPLAY_UPDATE_CTRL2);
+        let last = all.last().unwrap();
+        assert_eq!(
+            last,
+            &vec![UPDATE_PARTIAL],
+            "flush_partial should trigger partial update (0xFF)"
+        );
     }
 }
