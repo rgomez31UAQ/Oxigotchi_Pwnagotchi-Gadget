@@ -1729,6 +1729,19 @@ class AngryOxide(plugins.Plugin):
             except Exception:
                 pass
 
+    def _draw_wifi_icon(self, canvas, x, y, color=0):
+        """Draw a tiny WiFi icon (3 arcs + dot) at (x, y) on a PIL ImageDraw canvas.
+        Icon is roughly 10x8 pixels. Color 0=black on white background."""
+        try:
+            # Dot at bottom center
+            canvas.rectangle([x + 4, y + 6, x + 5, y + 7], fill=color)
+            # Small arc
+            canvas.arc([x + 2, y + 3, x + 8, y + 9], start=225, end=315, fill=color)
+            # Medium arc
+            canvas.arc([x + 0, y + 1, x + 10, y + 11], start=225, end=315, fill=color)
+        except Exception:
+            pass
+
     def on_ui_update(self, ui):
         with ui._lock:
             # Move mode indicator to bottom-right every update
@@ -1786,9 +1799,17 @@ class AngryOxide(plugins.Plugin):
             except Exception:
                 pass
 
-            # Show AP count in top bar (parsed from AO stdout)
+            # Show WiFi icon + AP count in top bar
             try:
-                ui.set('ao_aps', 'AP:%d' % self._ao_ap_count)
+                ui.set('ao_aps', '  %d' % self._ao_ap_count)
+                # Draw WiFi icon before the number
+                canvas = getattr(ui, '_canvas', None)
+                if canvas is None:
+                    canvas = getattr(getattr(ui, '_state', None), '_canvas', None)
+                if canvas:
+                    from PIL import ImageDraw
+                    draw = ImageDraw.Draw(canvas)
+                    self._draw_wifi_icon(draw, 140, 0)
             except Exception:
                 pass
 
