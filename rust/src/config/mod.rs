@@ -78,7 +78,7 @@ impl Default for DisplayConfig {
         Self {
             enabled: true,
             display_type: "waveshare_4".into(),
-            rotation: 0,
+            rotation: 180,
         }
     }
 }
@@ -243,7 +243,7 @@ name = "DejaVuSansMono"
         assert!(cfg.whitelist.is_empty());
         assert!(cfg.display.enabled);
         assert_eq!(cfg.display.display_type, "waveshare_4");
-        assert_eq!(cfg.display.rotation, 0);
+        assert_eq!(cfg.display.rotation, 180);
     }
 
     #[test]

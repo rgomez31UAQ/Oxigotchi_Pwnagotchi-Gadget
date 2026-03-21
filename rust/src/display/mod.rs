@@ -75,10 +75,11 @@ impl Screen {
     }
 
     /// Draw a "LABEL: value" pair at a given (x, y) pixel position.
+    /// The y coordinate is the visual top of the text; baseline offset is added.
     pub fn draw_labeled_value(&mut self, label: &str, value: &str, x: i32, y: i32) {
         let combined = format!("{}: {}", label, value);
         let style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-        let _ = Text::new(&combined, Point::new(x, y), style).draw(&mut self.fb);
+        let _ = Text::new(&combined, Point::new(x, y + 8), style).draw(&mut self.fb);
     }
 
     /// Draw a horizontal line (1px tall) for layout dividers.

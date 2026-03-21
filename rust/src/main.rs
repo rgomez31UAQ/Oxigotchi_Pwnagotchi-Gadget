@@ -575,7 +575,29 @@ impl Daemon {
 #[tokio::main]
 async fn main() {
     env_logger::init();
-    let config = config::Config::load_or_default("/etc/pwnagotchi/config.toml");
+    // Load oxigotchi config, or migrate from pwnagotchi config on first run
+    let config = if std::path::Path::new("/etc/oxigotchi/config.toml").exists() {
+        config::Config::load_or_default("/etc/oxigotchi/config.toml")
+    } else if std::path::Path::new("/etc/pwnagotchi/config.toml").exists() {
+        info!("migrating settings from /etc/pwnagotchi/config.toml");
+        let mut cfg = config::Config::load_or_default("/etc/pwnagotchi/config.toml");
+        // Keep pwnagotchi's whitelist, display, attack settings
+        // but use our own name and identity
+        cfg.main.name = "oxigotchi".into();
+        cfg.name = "oxigotchi".into();
+        // Save migrated config so we don't re-migrate
+        if let Err(e) = std::fs::create_dir_all("/etc/oxigotchi") {
+            log::warn!("could not create /etc/oxigotchi: {e}");
+        }
+        if let Ok(toml_str) = toml::to_string_pretty(&cfg) {
+            if let Err(e) = std::fs::write("/etc/oxigotchi/config.toml", &toml_str) {
+                log::warn!("could not save config: {e}");
+            }
+        }
+        cfg
+    } else {
+        config::Config::defaults()
+    };
     info!(
         "Hi! I'm {}! Rusty Oxigotchi v{} starting — the bull is awake",
         config.name,

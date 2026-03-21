@@ -45,7 +45,9 @@ pub const UPDATE_FULL: u8 = 0xF7;
 pub const UPDATE_PARTIAL: u8 = 0xFF;
 
 /// Maximum time (in milliseconds) to wait for BUSY pin to go low.
-pub const BUSY_TIMEOUT_MS: u64 = 5_000;
+/// Python driver has no timeout at all — full refresh can take 2-3s,
+/// cold start can take longer. 15s is generous but safe.
+pub const BUSY_TIMEOUT_MS: u64 = 15_000;
 
 // ── Refresh mode ────────────────────────────────────────────────────
 
@@ -310,6 +312,9 @@ impl Ssd1680Hal for RppalHal {
 ///
 /// Generic over the HAL backend so tests can use `MockHal` while the Pi
 /// uses `RppalHal`.
+/// Number of partial refreshes before forcing a full refresh to clear ghosting.
+pub const FULL_REFRESH_INTERVAL: u32 = 10;
+
 pub struct Ssd1680Driver<H: Ssd1680Hal> {
     pub hal: H,
     /// Display width in the logical coordinate system (after rotation).
@@ -319,6 +324,8 @@ pub struct Ssd1680Driver<H: Ssd1680Hal> {
     /// Rotation in degrees (0, 180). Only 0 and 180 are supported for
     /// the 2.13" V4 since the SSD1680 scanline direction is fixed.
     pub rotation: u16,
+    /// Counter for partial refreshes since last full refresh.
+    pub partial_count: u32,
 }
 
 impl<H: Ssd1680Hal> Ssd1680Driver<H> {
@@ -334,6 +341,7 @@ impl<H: Ssd1680Hal> Ssd1680Driver<H> {
             width: EPD_HEIGHT,  // 250 (landscape)
             height: EPD_WIDTH,  // 122 (landscape)
             rotation: if rotation == 180 { 180 } else { 0 },
+            partial_count: 0,
         }
     }
 
@@ -438,6 +446,21 @@ impl<H: Ssd1680Hal> Ssd1680Driver<H> {
     pub fn deep_sleep(&mut self) -> Result<(), String> {
         self.hal.send_command(CMD_DEEP_SLEEP)?;
         self.hal.send_data(&[0x01])?; // Mode 1: retain RAM
+        Ok(())
+    }
+
+    /// Clear the display to white. Matches Python `Clear(0xFF)`.
+    /// Must be called after init() and before flush_base() to establish
+    /// clean e-ink state and border.
+    pub fn clear(&mut self) -> Result<(), String> {
+        let white = vec![0xFFu8; (EPD_WIDTH_BYTES * EPD_HEIGHT) as usize];
+        self.set_ram_cursor(0, 0)?;
+        self.hal.send_command(CMD_WRITE_RAM_BW)?;
+        self.hal.send_data(&white)?;
+        self.hal.send_command(CMD_DISPLAY_UPDATE_CTRL2)?;
+        self.hal.send_data(&[UPDATE_FULL])?;
+        self.hal.send_command(CMD_MASTER_ACTIVATION)?;
+        self.hal.wait_busy()?;
         Ok(())
     }
 
@@ -578,23 +601,37 @@ impl<H: Ssd1680Hal> Ssd1680Driver<H> {
 #[cfg(target_arch = "aarch64")]
 pub fn flush_to_hardware(fb: &FrameBuffer, config: &DisplayConfig) -> Result<(), String> {
     use std::sync::Mutex;
+    use std::time::Instant;
 
     static DRIVER: Mutex<Option<Ssd1680Driver<RppalHal>>> = Mutex::new(None);
 
     let mut guard = DRIVER.lock().map_err(|e| format!("driver lock: {e}"))?;
 
+    let start = Instant::now();
     match guard.as_mut() {
         None => {
-            // First call: full init + base image (both RAMs + full refresh)
+            // First call: full init + clear + base image (matches Python boot)
+            log::info!("display: first flush — init + clear + base (rotation={})", config.rotation);
             let hal = RppalHal::new()?;
             let mut driver = Ssd1680Driver::new(hal, config.rotation);
             driver.init()?;
+            driver.clear()?;
             driver.flush_base(fb)?;
+            log::info!("display: init OK ({:.0}ms)", start.elapsed().as_millis());
             *guard = Some(driver);
         }
         Some(driver) => {
-            // Subsequent calls: partial refresh (fast, no heavy flash)
-            driver.flush_partial(fb)?;
+            if driver.partial_count >= FULL_REFRESH_INTERVAL {
+                // Periodic full refresh to clear ghosting (no re-init, just write both RAMs)
+                log::info!("display: full refresh to clear ghosting (after {} partials)", driver.partial_count);
+                driver.flush_base(fb)?;
+                driver.partial_count = 0;
+                log::info!("display: full refresh OK ({:.0}ms)", start.elapsed().as_millis());
+            } else {
+                driver.flush_partial(fb)?;
+                driver.partial_count += 1;
+                log::info!("display: partial refresh {}/{} OK ({:.0}ms)", driver.partial_count, FULL_REFRESH_INTERVAL, start.elapsed().as_millis());
+            }
         }
     }
 
