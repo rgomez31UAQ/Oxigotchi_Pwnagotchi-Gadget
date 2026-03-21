@@ -1698,7 +1698,7 @@ class AngryOxide(plugins.Plugin):
                 color=BLACK,
                 label='',
                 value='',
-                position=(60, 112),
+                position=(0, 95),
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
