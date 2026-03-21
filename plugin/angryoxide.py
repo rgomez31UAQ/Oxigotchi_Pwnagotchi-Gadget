@@ -1193,6 +1193,17 @@ class AngryOxide(plugins.Plugin):
             return url
         return ''
 
+    def _get_wpasec_status(self):
+        """Check if WPA-SEC is enabled in config.toml."""
+        try:
+            import toml
+            with open('/etc/pwnagotchi/config.toml', 'r') as f:
+                config = toml.load(f)
+            wpa = config.get('main', {}).get('plugins', {}).get('wpa-sec', {})
+            return wpa.get('enabled', False) and bool(wpa.get('api_key', ''))
+        except Exception:
+            return False
+
     def on_webhook(self, path, request):
         from flask import jsonify, Response
 
@@ -1279,6 +1290,7 @@ class AngryOxide(plugins.Plugin):
                 'usb0_ip': usb0_ip,
                 'bnep0_ip': bnep0_ip,
                 'discord_webhook': self._discord_webhook or '',
+                'wpasec_enabled': self._get_wpasec_status(),
                 # Override cumulative to prevent theme from showing false cracked count
                 # (fix_exp.py on Pi injected total_crackable counting .22000 files as "cracked")
                 'cumulative': {
@@ -1562,6 +1574,32 @@ class AngryOxide(plugins.Plugin):
             self.options['discord_webhook'] = self._discord_webhook
             self._save_state()
             return jsonify({'status': 'ok'})
+
+        if request.method == 'POST' and path == '/api/wpasec':
+            data = get_body()
+            api_key = data.get('api_key', '').strip()
+            try:
+                import toml
+                config_path = '/etc/pwnagotchi/config.toml'
+                with open(config_path, 'r') as f:
+                    config = toml.load(f)
+                if 'main' not in config:
+                    config['main'] = {}
+                if 'plugins' not in config['main']:
+                    config['main']['plugins'] = {}
+                if 'wpa-sec' not in config['main']['plugins']:
+                    config['main']['plugins']['wpa-sec'] = {}
+                config['main']['plugins']['wpa-sec']['enabled'] = bool(api_key)
+                config['main']['plugins']['wpa-sec']['api_key'] = api_key
+                with open(config_path, 'w') as f:
+                    toml.dump(config, f)
+                logging.info("[angryoxide] WPA-SEC %s (key %s)",
+                             'enabled' if api_key else 'disabled',
+                             api_key[:8] + '...' if len(api_key) > 8 else '(empty)')
+                return jsonify({'status': 'ok', 'enabled': bool(api_key)})
+            except Exception as e:
+                logging.error("[angryoxide] WPA-SEC config save failed: %s", e)
+                return jsonify({'status': 'error', 'message': str(e)})
 
         if request.method == 'GET' and path == '/api/bt-visibility':
             try:
@@ -2091,6 +2129,15 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <div style="margin-top:12px;padding-top:10px;border-top:1px solid #0f3460">
+<div style="font-size:12px;color:#888;margin-bottom:4px">WPA-SEC (Auto Cracking)</div>
+<div class="list-input-row">
+<input type="text" id="wpasec-key" placeholder="WPA-SEC API key" style="font-size:11px">
+<button onclick="saveWpaSec()" style="font-size:11px">Save</button>
+</div>
+<div id="wpasec-status" style="font-size:10px;color:#888;margin-top:4px"></div>
+</div>
+
+<div style="margin-top:12px;padding-top:10px;border-top:1px solid #0f3460">
 <div style="font-size:12px;color:#888;margin-bottom:4px">Discord Notifications</div>
 <div class="list-input-row">
 <input type="text" id="discord-webhook" placeholder="Discord webhook URL" style="font-size:11px">
@@ -2302,6 +2349,18 @@ function switchMode(mode) {
         else toast('Error: ' + (res.message || 'failed'));
     }).catch(function(){toast('Mode switch failed')});
 }
+function saveWpaSec() {
+    var key = document.getElementById('wpasec-key').value.trim();
+    api('POST', '/api/wpasec', {api_key: key}).then(function(r){
+        if (r.status === 'ok') {
+            document.getElementById('wpasec-status').textContent = key ? 'API key saved. Uploads enabled.' : 'Uploads disabled.';
+            document.getElementById('wpasec-status').style.color = key ? '#00d4aa' : '#888';
+            toast(key ? 'WPA-SEC enabled' : 'WPA-SEC disabled');
+        } else {
+            toast('Error: ' + (r.message || 'failed'));
+        }
+    });
+}
 function saveDiscordWebhook() {
     var url = document.getElementById('discord-webhook').value.trim();
     api('POST', '/api/discord-webhook', {url: url}).then(function(r){
@@ -2340,6 +2399,12 @@ function refreshStatus() {
         document.getElementById('s-bnep0-ip').textContent = d.bnep0_ip || 'down';
         document.getElementById('s-bnep0-ip').style.color = d.bnep0_ip ? '#00d4aa' : '#666';
         document.getElementById('stopped-banner').style.display = d.stopped_permanently ? 'block' : 'none';
+        // WPA-SEC status
+        var ws = document.getElementById('wpasec-status');
+        if (ws) {
+            ws.textContent = d.wpasec_enabled ? 'Enabled - uploads active' : 'Disabled - enter API key to enable';
+            ws.style.color = d.wpasec_enabled ? '#00d4aa' : '#888';
+        }
         // sync attacks
         var attacks = d.attacks || {};
         ['deauth','pmkid','csa','disassoc','anon_reassoc','rogue_m2'].forEach(function(k){
