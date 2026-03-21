@@ -959,6 +959,10 @@ class AngryOxide(plugins.Plugin):
             self._peers_patched = True
             logging.info("[angryoxide] patched agent._update_peers with safe wrapper")
 
+        # Periodic state save every 10 epochs — survives crashes/battery death
+        if hasattr(epoch_data, 'epoch') and epoch_data.epoch % 10 == 0:
+            self._save_state()
+
         # In PWN mode, skip all AO-specific epoch logic (health checks,
         # capture scanning, AO face/status overrides). Let bettercap and
         # pwnagotchi core manage the display without AO interference.
