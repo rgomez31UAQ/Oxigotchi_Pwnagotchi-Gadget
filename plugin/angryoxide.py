@@ -352,12 +352,17 @@ class AngryOxide(plugins.Plugin):
             import threading
             threading.Timer(30.0, self._restore_delayed_plugins).start()
 
-        # Set awake bull face on boot — only in AO mode.
-        # In PWN mode with png=false, let pwnagotchi core handle faces
-        # (text kaomoji like "(◕‿‿◕)"), don't override with PNG bull face.
+        # Set welcome message and face based on mode
         if self._is_ao_mode():
             try:
                 agent._view.set('face', self._face('awake'))
+                agent._view.set('status', "Hi! I'm Oxigotchi! Starting v2.2.0...")
+                agent._view.update()
+            except Exception:
+                pass
+        else:
+            try:
+                agent._view.set('status', "Hi! I'm Pwnagotchi! Starting v3.0-rust...")
                 agent._view.update()
             except Exception:
                 pass
