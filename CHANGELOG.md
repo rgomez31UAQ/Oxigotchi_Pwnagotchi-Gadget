@@ -17,7 +17,7 @@ See [docs/RUST_REWRITE_PLAN.md](docs/RUST_REWRITE_PLAN.md) for the full sprint p
 - **Kernel module blacklist**: `blacklist bcm2835_v4l2` in `/etc/modprobe.d/blacklist-camera.conf` prevents camera/video modules from loading, eliminating VCHI errors and saving RAM.
 - **Handshake directory consolidation**: `/root/handshakes` symlinked to `/etc/pwnagotchi/handshakes/` — single canonical directory for all captures.
 - **Rootfs sentinel**: `/var/lib/.rootfs-expanded` created to silence resize-rootfs.service false failures.
-- **263/263 tests passing** (up from 262)
+- **480/480 tests passing** (281 Python + 199 Rust)
 
 ### Fixed
 - **Blind epochs (H1)**: AO plugin now emits `association`, `deauth`, and `handshake` events for every AO capture, feeding the pwnagotchi AI accurate reward signals. Synthetic AP heartbeat (`AO-active`) injected when AP list empty prevents false blind restart.

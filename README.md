@@ -287,7 +287,7 @@ With PiSugar 3 (1200mAh): 3-4 hours active. The bull face warns at 20% and 15%.
 
 ## Maintenance & Support
 
-This project is provided **as-is**. It's stable, tested (263 unit tests passing, overnight soak test, 28,000-frame injection stress test), and production-ready.
+This project is provided **as-is**. It's stable, tested (480 unit tests passing — 281 Python + 199 Rust — overnight soak test, 28,000-frame injection stress test), and production-ready.
 
 **I will not be maintaining this project actively.** No issue tracking, no PR reviews. The code is GPL-3.0 — fork it, modify it, make it yours.
 

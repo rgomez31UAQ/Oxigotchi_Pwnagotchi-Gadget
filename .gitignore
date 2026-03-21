@@ -15,4 +15,9 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Build artifacts
 rust/target/
+
+# Claude Code
+.claude/

@@ -1,0 +1,8 @@
+# Force LF line endings for all text files (Pi runs Linux)
+* text=auto eol=lf
+
+# Binary files
+*.png binary
+*.bin binary
+*.clm_blob binary
+*.img binary
