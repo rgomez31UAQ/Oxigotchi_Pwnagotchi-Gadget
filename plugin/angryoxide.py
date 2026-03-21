@@ -53,64 +53,80 @@ class AngryOxide(plugins.Plugin):
     ]
     _DELAY_STATE_FILE = '/home/pi/delayed_plugins.json'
 
-    # Two-part bull jokes: (question, punchline)
+    # Two-part bull jokes keyed by face name: (question, punchline)
     # Question shows for 2 epochs, punchline for 3 epochs (5 total ~2.5 min)
-    BULL_JOKES = [
-        ("Why did the bull become a musician?", "...He had great horns!"),
-        ("What do you call a bull who tells jokes?", "...Laughing stock!"),
-        ("Why don't bulls use smartphones?", "...Too many bull-etins!"),
-        ("What's a bull's favorite subject?", "...Bull-gebra!"),
-        ("Why did the bull go to the gym?", "...To beef up his signal!"),
-        ("What do you call a sleeping bull?", "...A bulldozer!"),
-        ("Why did the bull cross the road?", "...To get to the udder side!"),
-        ("What do you call a bull in a china shop?", "...A bandwidth destroyer!"),
-        ("Why was the bull so good at WiFi?", "...He had great coverage!"),
-        ("What do bulls say at the rodeo?", "...Let's mooo-ve it!"),
-        ("Why was the bull so calm?", "...No beef today."),
-        ("What do you call a rich bull?", "...A stock broker!"),
-        ("Why did the bull sit down?", "...Pasture bedtime!"),
-        ("Why did the bull fail the test?", "...Kept charging ahead!"),
-        ("What do you call a bull in a china shop?", "...A demolition expert!"),
-        ("Why did the bull get promoted?", "...He really took charge!"),
-        ("What's a bull's least favorite weather?", "...A cowld front!"),
-        ("Why was the young bull bad at poker?", "...Too easy to read his tells!"),
-        ("What do bulls do on weekends?", "...Hit the moo-vies!"),
-        ("Why did the bull start a podcast?", "...Strong opinions and louder breathing!"),
-        ("What do you call a bull with style?", "...Fashionable beef!"),
-        ("Why did the bull cross the road?", "...To prove he wasn't chicken!"),
-        ("What's a bull's favorite workout?", "...Charge-io!"),
-        ("Why was the bull kicked out of the library?", "...Too much snorting!"),
-        ("Why did the bull bring a suitcase?", "...Ready to hoof it!"),
-        ("What do you call a bull that can sing?", "...A moo-sician's rival!"),
-        ("Why did the bull stare at the gate?", "...He hated being fenced in!"),
-        ("What's a bull's favorite app?", "...Anything with more followers!"),
-        ("Why was the bull bad at hide-and-seek?", "...Always stood out in the herd!"),
-        ("What do bulls order at breakfast?", "...Corn flakes and confidence!"),
-        ("Why did the bull join the gym?", "...To get beefier!"),
-        ("What do you call a polite bull?", "...Well-horned!"),
-        ("Why did the bull avoid arguments?", "...Didn't want any beef!"),
-        ("What's a bull's favorite job?", "...Anything in stock management!"),
-        ("Why did the bull wear a tie?", "...Big meeting in the pasture!"),
-        ("What do you call a bull that paints?", "...Pablo Picowso!"),
-        ("Why did the bull get a map?", "...He kept losing his herd!"),
-        ("What's a bull's favorite party move?", "...Charging in late!"),
-        ("Why did the bull become a chef?", "...He loved grilling!"),
-        ("What do you call a bull with no manners?", "...Rude beef!"),
-        ("Why was the bull always invited?", "...He brought the energy!"),
-        ("What's a bull's favorite game?", "...Truth or dairy!"),
-        ("Why did the bull go to school?", "...To improve his cow-culus!"),
-        ("What do you call a tiny bull?", "...A bulldot!"),
-        ("Why did the bull start gardening?", "...Wanted a better pasture!"),
-        ("What's a bull's favorite instrument?", "...The horn section!"),
-        ("Why was the bull so confident?", "...Outstanding in his field!"),
-        ("What do you call a bull detective?", "...Sherlock Horns!"),
-        ("Why did the bull get sunglasses?", "...Too much spotlight in the arena!"),
-        ("What's a bull's favorite snack?", "...Chips and dip... mostly dip!"),
-        ("Why did the bull open a gym?", "...To help others get shredded beef!"),
-        ("What do you call a bull who loves gossip?", "...A moo-s spreader!"),
-        ("Why did the bull get detention?", "...Too much bull in class!"),
-        ("What's a bull's dream car?", "...A Lamborghini!"),
-    ]
+    BULL_JOKES = {
+        'bored': [
+            ("Why did the bull become a musician?", "...He had great horns!"),
+            ("What's a bull's favorite subject?", "...Bull-gebra!"),
+            ("Why don't bulls use smartphones?", "...Too many bull-etins!"),
+            ("What do bulls do on weekends?", "...Hit the moo-vies!"),
+            ("Why did the bull stare at the gate?", "...He hated being fenced in!"),
+            ("What do bulls order at breakfast?", "...Corn flakes and confidence!"),
+            ("Why did the bull start gardening?", "...Wanted a better pasture!"),
+            ("Why was the bull bad at hide-and-seek?", "...Always stood out in the herd!"),
+        ],
+        'happy': [
+            ("Why was the bull so calm?", "...No beef today."),
+            ("What do you call a rich bull?", "...A stock broker!"),
+            ("Why was the bull so confident?", "...Outstanding in his field!"),
+            ("Why did the bull avoid arguments?", "...Didn't want any beef!"),
+            ("Why was the bull always invited?", "...He brought the energy!"),
+        ],
+        'cool': [
+            ("What do you call a bull with style?", "...Fashionable beef!"),
+            ("Why did the bull get sunglasses?", "...Too much spotlight in the arena!"),
+            ("What do you call a polite bull?", "...Well-horned!"),
+            ("What's a bull's dream car?", "...A Lamborghini!"),
+            ("What do you call a bull detective?", "...Sherlock Horns!"),
+        ],
+        'excited': [
+            ("Why did the bull get promoted?", "...He really took charge!"),
+            ("What's a bull's favorite workout?", "...Charge-io!"),
+            ("What's a bull's favorite party move?", "...Charging in late!"),
+            ("Why did the bull fail the test?", "...Kept charging ahead!"),
+            ("Why did the bull become a chef?", "...He loved grilling!"),
+        ],
+        'angry': [
+            ("What do you call a bull in a china shop?", "...A demolition expert!"),
+            ("Why was the bull kicked out of the library?", "...Too much snorting!"),
+            ("What do you call a bull with no manners?", "...Rude beef!"),
+            ("Why did the bull get detention?", "...Too much bull in class!"),
+            ("What do you call a bull who loves gossip?", "...A moo-s spreader!"),
+        ],
+        'sad': [
+            ("What's a bull's least favorite weather?", "...A cowld front!"),
+            ("Why was the young bull bad at poker?", "...Too easy to read his tells!"),
+            ("Why did the bull bring a suitcase?", "...Ready to hoof it!"),
+            ("Why did the bull get a map?", "...He kept losing his herd!"),
+        ],
+        'lonely': [
+            ("What's a bull's favorite app?", "...Anything with more followers!"),
+            ("Why did the bull cross the road?", "...To prove he wasn't chicken!"),
+            ("What do you call a bull that can sing?", "...A moo-sician's rival!"),
+        ],
+        'sleep': [
+            ("What do you call a sleeping bull?", "...A bulldozer!"),
+            ("Why did the bull sit down?", "...Pasture bedtime!"),
+        ],
+        'motivated': [
+            ("Why did the bull wear a tie?", "...Big meeting in the pasture!"),
+            ("Why did the bull join the gym?", "...To get beefier!"),
+            ("Why did the bull open a gym?", "...To help others get shredded beef!"),
+            ("What's a bull's favorite game?", "...Truth or dairy!"),
+        ],
+        'smart': [
+            ("What do you call a bull that paints?", "...Pablo Picowso!"),
+            ("Why did the bull go to school?", "...To improve his cow-culus!"),
+            ("What's a bull's favorite instrument?", "...The horn section!"),
+            ("What's a bull's favorite snack?", "...Chips and dip... mostly dip!"),
+        ],
+        'debug': [
+            ("Why did the bull start a podcast?", "...Strong opinions and louder breathing!"),
+            ("What's a bull's favorite job?", "...Anything in stock management!"),
+            ("What do you call a tiny bull?", "...A bulldot!"),
+        ],
+    }
 
     # Bull/cow themed status messages keyed by face name
     BULL_MESSAGES = {
@@ -362,7 +378,8 @@ class AngryOxide(plugins.Plugin):
         # Two-part joke state
         self._joke_phase = 0         # 0 = question, 1 = punchline
         self._joke_epochs_left = 0   # epochs remaining in current phase
-        self._joke_index = -1        # index into BULL_JOKES (-1 = no joke active)
+        self._joke_index = -1        # index into face joke list (-1 = no joke active)
+        self._joke_face = None       # which face's joke pool is active
 
     def _face(self, name):
         """Return face path for PNG mode, or fall back to text faces."""
@@ -397,10 +414,11 @@ class AngryOxide(plugins.Plugin):
         return fallback.get(name, faces.AWAKE)
 
     def _bull_status(self, face_name, priority=0):
-        """Pick a bull-themed status message for the given face.
+        """Pick a bull-themed status message (or joke) for the given face.
 
         Uses slow cycling: status text stays for at least 3 epochs before
         changing, unless a higher-priority event forces an immediate change.
+        ~30% chance to show a two-part joke instead of a regular message.
 
         Priority levels:
             0 = idle / random / time-of-day (low — respects 3-epoch hold)
@@ -416,6 +434,15 @@ class AngryOxide(plugins.Plugin):
         # High-priority events always force a new message immediately
         force_change = (priority >= 2)
 
+        # If a joke is mid-cycle, keep it going (don't interrupt question/punchline)
+        # But high-priority events (captures, milestones) break the joke
+        if not force_change and (self._joke_epochs_left > 0 or (self._joke_phase == 0 and self._joke_index >= 0)):
+            joke_text = self._bull_joke(face_name)
+            if joke_text:
+                self._current_status = joke_text
+                self._current_status_priority = priority
+                return joke_text
+
         # Check if we should keep the current status (slow cycling)
         if (not force_change
                 and self._current_status in messages
@@ -424,7 +451,16 @@ class AngryOxide(plugins.Plugin):
             self._status_display_epochs += 1
             return self._current_status
 
-        # Time to pick a new message
+        # Time to pick a new message — 30% chance for a joke if face has jokes
+        if face_name in self.BULL_JOKES and random.random() < 0.30:
+            joke_text = self._bull_joke(face_name)
+            if joke_text:
+                self._current_status = joke_text
+                self._status_display_epochs = 1
+                self._current_status_priority = priority
+                return joke_text
+
+        # Regular message
         new_status = random.choice(messages)
         # Avoid repeating the same message back-to-back if possible
         if len(messages) > 1 and new_status == self._current_status:
@@ -434,8 +470,8 @@ class AngryOxide(plugins.Plugin):
         self._current_status_priority = priority
         return new_status
 
-    def _bull_joke(self):
-        """Return the current part of a two-part bull joke.
+    def _bull_joke(self, face_name='bored'):
+        """Return the current part of a two-part bull joke for the given face.
 
         Jokes cycle: question for 2 epochs, then punchline for 3 epochs.
         Total = 5 epochs (~2.5 minutes). After the punchline finishes,
@@ -443,13 +479,21 @@ class AngryOxide(plugins.Plugin):
 
         Returns the joke text to display, or None if no jokes available.
         """
-        if not self.BULL_JOKES:
+        jokes = self.BULL_JOKES.get(face_name, self.BULL_JOKES.get('bored', []))
+        if not jokes:
             return None
+
+        # If face changed mid-joke, reset and pick from new pool
+        if self._joke_face != face_name:
+            self._joke_phase = 0
+            self._joke_epochs_left = 0
+            self._joke_index = -1
+            self._joke_face = face_name
 
         # If a joke is actively being displayed, continue it
         if self._joke_epochs_left > 0:
             self._joke_epochs_left -= 1
-            joke = self.BULL_JOKES[self._joke_index]
+            joke = jokes[self._joke_index]
             return joke[self._joke_phase]
 
         # Current phase exhausted — advance
@@ -457,20 +501,20 @@ class AngryOxide(plugins.Plugin):
             # Question phase just ended, switch to punchline
             self._joke_phase = 1
             self._joke_epochs_left = 2  # 3 total: this epoch + 2 remaining
-            joke = self.BULL_JOKES[self._joke_index]
+            joke = jokes[self._joke_index]
             return joke[1]
 
         # Punchline done (or no joke active yet) — pick a new joke
-        new_index = random.randrange(len(self.BULL_JOKES))
+        new_index = random.randrange(len(jokes))
         # Avoid repeating the same joke back-to-back
-        if len(self.BULL_JOKES) > 1 and new_index == self._joke_index:
+        if len(jokes) > 1 and new_index == self._joke_index:
             new_index = random.choice(
-                [i for i in range(len(self.BULL_JOKES)) if i != self._joke_index]
+                [i for i in range(len(jokes)) if i != self._joke_index]
             )
         self._joke_index = new_index
         self._joke_phase = 0
         self._joke_epochs_left = 1  # 2 total: this epoch + 1 remaining
-        return self.BULL_JOKES[new_index][0]
+        return jokes[new_index][0]
 
     def _get_battery_level(self):
         """Read battery percentage from PiSugar. Returns int or None."""
@@ -1463,6 +1507,7 @@ class AngryOxide(plugins.Plugin):
                 self._joke_phase = 0
                 self._joke_epochs_left = 0
                 self._joke_index = -1
+                self._joke_face = None
             else:
                 self._idle_epochs += 1
 
@@ -1646,12 +1691,12 @@ class AngryOxide(plugins.Plugin):
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
-            # IP display indicator above CRASH (rotating USB/BT addresses)
+            # IP display indicator above bottom line
             ui.add_element('ao_ip', LabeledValue(
                 color=BLACK,
                 label='',
                 value='',
-                position=(0, 112),
+                position=(0, 95),
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
@@ -1660,7 +1705,7 @@ class AngryOxide(plugins.Plugin):
                 color=BLACK,
                 label='',
                 value='',
-                position=(70, 112),
+                position=(0, 109),
                 label_font=fonts.Small,
                 text_font=fonts.Small
             ))
