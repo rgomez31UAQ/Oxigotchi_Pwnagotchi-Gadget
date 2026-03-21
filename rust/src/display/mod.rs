@@ -1,5 +1,4 @@
 pub mod buffer;
-#[cfg(target_arch = "aarch64")]
 pub mod driver;
 
 use crate::config::DisplayConfig;
@@ -90,15 +89,8 @@ impl Screen {
     /// On non-aarch64 platforms this is a no-op.
     /// Logs errors instead of panicking — the display can fail transiently.
     pub fn flush(&self) {
-        #[cfg(target_arch = "aarch64")]
-        {
-            if let Err(e) = driver::flush_to_hardware(&self.fb, &self.config) {
-                log::error!("display flush failed: {e}");
-            }
-        }
-        #[cfg(not(target_arch = "aarch64"))]
-        {
-            log::debug!("flush: no-op on non-Pi platform");
+        if let Err(e) = driver::flush_to_hardware(&self.fb, &self.config) {
+            log::error!("display flush failed: {e}");
         }
     }
 }

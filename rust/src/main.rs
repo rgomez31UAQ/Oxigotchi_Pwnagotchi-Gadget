@@ -19,6 +19,8 @@ mod personality;
 #[allow(dead_code)]
 mod pisugar;
 #[allow(dead_code)]
+mod network;
+#[allow(dead_code)]
 mod recovery;
 #[allow(dead_code)]
 mod web;
@@ -46,6 +48,7 @@ struct Daemon {
     captures: capture::CaptureManager,
     bluetooth: bluetooth::BtTether,
     battery: pisugar::PiSugar,
+    network: network::NetworkManager,
     recovery: recovery::RecoveryManager,
     watchdog: recovery::Watchdog,
     ao: ao::AoManager,
@@ -66,6 +69,7 @@ impl Daemon {
         let captures = capture::CaptureManager::new(CAPTURE_DIR);
         let bluetooth = bluetooth::BtTether::default();
         let battery = pisugar::PiSugar::default();
+        let network = network::NetworkManager::new();
         let recovery = recovery::RecoveryManager::default();
         let watchdog = recovery::Watchdog::new(true, 60);
         let ao = ao::AoManager::default();
@@ -79,6 +83,7 @@ impl Daemon {
             captures,
             bluetooth,
             battery,
+            network,
             recovery,
             watchdog,
             ao,
@@ -130,6 +135,17 @@ impl Daemon {
             }
         }
 
+        // USB RNDIS network setup
+        self.network.probe();
+        if self.network.usb0_state != network::Usb0State::Absent {
+            match self.network.apply_ip_config() {
+                Ok(()) => info!("USB network configured: {}", self.network.status_str()),
+                Err(e) => log::warn!("USB network setup failed: {e}"),
+            }
+        } else {
+            info!("usb0 not present, skipping network setup");
+        }
+
         // Start AngryOxide subprocess
         match self.ao.start() {
             Ok(()) => info!("AO started: PID {}", self.ao.pid),
@@ -179,6 +195,11 @@ impl Daemon {
             let action = self.recovery.process_health(health);
             self.handle_recovery_action(action);
         }
+
+        // ---- NETWORK HEALTH CHECK ----
+        self.network.health_check();
+        // Rotate IP display each epoch
+        self.network.rotate_display();
 
         // ---- ATTACK PHASE ----
         self.epoch_loop.next_phase(); // -> Attack
@@ -319,11 +340,26 @@ impl Daemon {
         s.battery_available = self.battery.available;
 
         s.wifi_state = format!("{:?}", self.wifi.state);
+        s.wifi_aps_tracked = self.wifi.tracker.count();
+
+        s.bt_state = self.bluetooth.status_str().to_string();
+        s.bt_connected = self.bluetooth.state == bluetooth::BtState::Connected;
+        s.bt_ip = self.bluetooth.ip_address.clone().unwrap_or_default();
+        s.bt_internet_available = self.bluetooth.internet_available;
+        s.bt_retry_count = self.bluetooth.retry_count;
 
         s.ao_state = self.ao.state_str().to_string();
         s.ao_pid = self.ao.pid;
         s.ao_crash_count = self.ao.crash_count;
         s.ao_uptime = self.ao.uptime_str();
+
+        s.xp = self.epoch_loop.personality.xp.xp;
+        s.level = self.epoch_loop.personality.xp.level;
+
+        s.recovery_state = format!("{:?}", self.recovery.state);
+        s.recovery_total = self.recovery.total_recoveries;
+        s.recovery_soft_retries = self.recovery.soft_retry_count;
+        s.recovery_hard_retries = self.recovery.hard_retry_count;
     }
 
     /// Update the e-ink display with current state.
@@ -400,6 +436,10 @@ impl Daemon {
         match action {
             recovery::RecoveryAction::None => {}
             recovery::RecoveryAction::SoftRecover => {
+                if self.recovery.cooldown_active() {
+                    log::warn!("recovery cooldown active, skipping soft recovery");
+                    return;
+                }
                 info!("attempting soft WiFi recovery");
                 self.epoch_loop.personality.set_override(personality::Face::WifiDown);
                 match self.wifi.stop_monitor() {
@@ -408,15 +448,31 @@ impl Daemon {
                     }
                     Err(e) => log::error!("soft recovery failed: {e}"),
                 }
+                self.recovery.record_recovery();
             }
             recovery::RecoveryAction::HardRecover => {
-                info!("attempting hard WiFi recovery (GPIO power cycle)");
-                self.epoch_loop.personality.set_override(personality::Face::FwCrash);
-                match recovery::gpio_power_cycle_wifi(self.recovery.config.gpio_cycle_delay_ms) {
-                    Ok(()) => info!("GPIO power cycle complete, restarting monitor"),
-                    Err(e) => log::error!("GPIO power cycle failed: {e}"),
+                if self.recovery.cooldown_active() {
+                    log::warn!("recovery cooldown active, skipping hard recovery");
+                    return;
                 }
+                info!("attempting hard WiFi recovery (full GPIO power cycle)");
+                self.epoch_loop.personality.set_override(personality::Face::FwCrash);
+                match recovery::execute_gpio_recovery(self.recovery.config.gpio_cycle_delay_ms) {
+                    Ok(true) => info!("GPIO recovery succeeded, wlan0 is back"),
+                    Ok(false) => log::error!("GPIO recovery failed: wlan0 did not return"),
+                    Err(e) => log::error!("GPIO recovery error: {e}"),
+                }
+                self.recovery.record_recovery();
                 let _ = self.wifi.start_monitor();
+            }
+            recovery::RecoveryAction::Reboot => {
+                log::error!("WiFi recovery exhausted after max retries, rebooting");
+                self.epoch_loop.personality.set_override(personality::Face::Broken);
+                self.recovery.log(
+                    recovery::DiagLevel::Error,
+                    "all recovery attempts exhausted -- rebooting",
+                );
+                let _ = recovery::trigger_reboot();
             }
             recovery::RecoveryAction::GiveUp => {
                 log::error!("WiFi recovery exhausted, giving up");
@@ -447,11 +503,18 @@ impl Daemon {
     /// Build web attack stats.
     #[allow(dead_code)]
     fn build_attack_stats(&self) -> web::AttackStats {
+        let s = self.shared_state.lock().unwrap();
         web::AttackStats {
             total_attacks: self.attacks.total_attacks,
             total_handshakes: self.attacks.total_handshakes,
             attack_rate: ATTACK_RATE,
             deauths_this_epoch: self.epoch_loop.metrics.deauths_this_epoch,
+            deauth: s.attack_deauth,
+            pmkid: s.attack_pmkid,
+            csa: s.attack_csa,
+            disassoc: s.attack_disassoc,
+            anon_reassoc: s.attack_anon_reassoc,
+            rogue_m2: s.attack_rogue_m2,
         }
     }
 

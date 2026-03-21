@@ -97,7 +97,7 @@ impl EpochLoop {
             self.metrics.handshakes += result.handshakes_captured;
             self.metrics.blind_epochs = 0;
             for _ in 0..result.handshakes_captured {
-                self.personality.on_handshake();
+                let _ = self.personality.on_handshake();
             }
         } else {
             self.metrics.blind_epochs += 1;
@@ -105,7 +105,7 @@ impl EpochLoop {
         }
 
         if result.aps_seen > 0 {
-            self.personality.on_aps_seen(result.aps_seen);
+            let _ = self.personality.on_aps_seen(result.aps_seen);
         }
     }
 

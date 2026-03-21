@@ -3,11 +3,11 @@
 //! Reads the pwnagotchi-compatible `config.toml` and exposes typed fields
 //! for the daemon to consume.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Top-level configuration, matching pwnagotchi's TOML format.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Main section (name, whitelist, etc.).
     #[serde(default = "default_main")]
@@ -29,7 +29,7 @@ pub struct Config {
 }
 
 /// The `[main]` TOML section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MainConfig {
     /// Device name displayed on screen and in the web dashboard.
     #[serde(default = "default_name")]
@@ -37,10 +37,13 @@ pub struct MainConfig {
     /// SSIDs or BSSIDs to never attack.
     #[serde(default)]
     pub whitelist: Vec<String>,
+    /// Language code (e.g. "en").
+    #[serde(default = "default_lang")]
+    pub lang: String,
 }
 
 /// The `[ui]` TOML section.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct UiConfig {
     /// Whether to invert the display colors.
     #[serde(default)]
@@ -57,7 +60,7 @@ pub struct UiConfig {
 }
 
 /// The `[ui.display]` TOML section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DisplayConfig {
     /// Whether the display is enabled at all.
     #[serde(default = "default_true")]
@@ -81,7 +84,7 @@ impl Default for DisplayConfig {
 }
 
 /// The `[ui.font]` TOML section.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FontConfig {
     /// Font family name.
     #[serde(default = "default_font_name")]
@@ -100,7 +103,12 @@ fn default_main() -> MainConfig {
     MainConfig {
         name: default_name(),
         whitelist: Vec::new(),
+        lang: default_lang(),
     }
+}
+
+fn default_lang() -> String {
+    "en".into()
 }
 
 fn deserialize_fps<'de, D>(deserializer: D) -> Result<u32, D::Error>
@@ -186,7 +194,7 @@ impl Config {
     }
 
     /// Copy nested fields into top-level convenience fields.
-    fn populate_shortcuts(&mut self) {
+    pub(crate) fn populate_shortcuts(&mut self) {
         self.name = self.main.name.clone();
         self.whitelist = self.main.whitelist.clone();
         self.display = self.ui.display.clone();

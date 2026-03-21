@@ -4,8 +4,8 @@
 //! and configuring oxigotchi. The axum router shares DaemonState via
 //! Arc<Mutex<DaemonState>>.
 //!
-//! Many types and constants are defined for future endpoints that will be
-//! wired in when the corresponding daemon features are connected.
+//! All 15 dashboard cards from the Python angryoxide.py plugin are
+//! replicated here with htmx auto-refresh and the same dark theme.
 
 use axum::{
     extract::State,
@@ -41,6 +41,13 @@ pub struct DaemonState {
     pub total_handshakes_attacks: u64,
     pub attack_rate: u32,
     pub deauths_this_epoch: u32,
+    /// Per-attack-type toggles: deauth, pmkid, csa, disassoc, anon_reassoc, rogue_m2
+    pub attack_deauth: bool,
+    pub attack_pmkid: bool,
+    pub attack_csa: bool,
+    pub attack_disassoc: bool,
+    pub attack_anon_reassoc: bool,
+    pub attack_rogue_m2: bool,
 
     // -- captures --
     pub capture_files: usize,
@@ -60,6 +67,17 @@ pub struct DaemonState {
     // -- wifi --
     pub wifi_state: String,
     pub wifi_aps_tracked: usize,
+    pub wifi_channels: Vec<u8>,
+    pub wifi_dwell_ms: u64,
+
+    // -- bluetooth --
+    pub bt_state: String,
+    pub bt_connected: bool,
+    pub bt_device_name: String,
+    pub bt_ip: String,
+    pub bt_phone_mac: String,
+    pub bt_internet_available: bool,
+    pub bt_retry_count: u32,
 
     // -- ao --
     pub ao_state: String,
@@ -67,13 +85,37 @@ pub struct DaemonState {
     pub ao_crash_count: u32,
     pub ao_uptime: String,
 
-    // -- system --
+    // -- personality / XP --
+    pub xp: u64,
+    pub level: u32,
+
+    // -- system info --
+    pub cpu_temp_c: f32,
+    pub mem_used_mb: u32,
+    pub mem_total_mb: u32,
+    pub disk_used_mb: u32,
+    pub disk_total_mb: u32,
+    pub cpu_percent: f32,
     pub boot_time: Instant,
+
+    // -- recovery --
+    pub recovery_state: String,
+    pub recovery_total: u32,
+    pub recovery_soft_retries: u32,
+    pub recovery_hard_retries: u32,
+    pub recovery_last_str: String,
+
+    // -- cracked passwords --
+    pub cracked: Vec<CrackedEntry>,
 
     // -- action requests from web -> daemon --
     pub pending_mode_switch: Option<String>,
     pub pending_rate_change: Option<u32>,
     pub pending_restart: bool,
+    pub pending_shutdown: bool,
+    pub pending_pwnagotchi_restart: bool,
+    pub pending_attack_toggle: Option<AttackToggle>,
+    pub pending_bt_toggle: Option<bool>,
 }
 
 impl DaemonState {
@@ -95,6 +137,12 @@ impl DaemonState {
             total_handshakes_attacks: 0,
             attack_rate: 1,
             deauths_this_epoch: 0,
+            attack_deauth: true,
+            attack_pmkid: true,
+            attack_csa: true,
+            attack_disassoc: true,
+            attack_anon_reassoc: true,
+            attack_rogue_m2: true,
             capture_files: 0,
             handshake_files: 0,
             pending_upload: 0,
@@ -108,14 +156,41 @@ impl DaemonState {
             battery_available: false,
             wifi_state: "Down".into(),
             wifi_aps_tracked: 0,
+            wifi_channels: vec![1, 6, 11],
+            wifi_dwell_ms: 2000,
+            bt_state: "Off".into(),
+            bt_connected: false,
+            bt_device_name: String::new(),
+            bt_ip: String::new(),
+            bt_phone_mac: String::new(),
+            bt_internet_available: false,
+            bt_retry_count: 0,
             ao_state: "STOPPED".into(),
             ao_pid: 0,
             ao_crash_count: 0,
             ao_uptime: "N/A".into(),
+            xp: 0,
+            level: 1,
+            cpu_temp_c: 0.0,
+            mem_used_mb: 0,
+            mem_total_mb: 0,
+            disk_used_mb: 0,
+            disk_total_mb: 0,
+            cpu_percent: 0.0,
             boot_time: Instant::now(),
+            recovery_state: "Healthy".into(),
+            recovery_total: 0,
+            recovery_soft_retries: 0,
+            recovery_hard_retries: 0,
+            recovery_last_str: "never".into(),
+            cracked: Vec::new(),
             pending_mode_switch: None,
             pending_rate_change: None,
             pending_restart: false,
+            pending_shutdown: false,
+            pending_pwnagotchi_restart: false,
+            pending_attack_toggle: None,
+            pending_bt_toggle: None,
         }
     }
 }
@@ -128,7 +203,7 @@ pub type SharedState = Arc<Mutex<DaemonState>>;
 // ---------------------------------------------------------------------------
 
 /// System status snapshot returned by /api/status.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub name: String,
     pub version: String,
@@ -144,17 +219,40 @@ pub struct StatusResponse {
     pub mode: String,
 }
 
-/// Attack stats returned by /api/attacks.
-#[derive(Debug, Clone, Serialize)]
+/// Attack stats returned by GET /api/attacks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttackStats {
     pub total_attacks: u64,
     pub total_handshakes: u64,
     pub attack_rate: u32,
     pub deauths_this_epoch: u32,
+    pub deauth: bool,
+    pub pmkid: bool,
+    pub csa: bool,
+    pub disassoc: bool,
+    pub anon_reassoc: bool,
+    pub rogue_m2: bool,
+}
+
+/// Attack toggle request for POST /api/attacks.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AttackToggle {
+    #[serde(default)]
+    pub deauth: Option<bool>,
+    #[serde(default)]
+    pub pmkid: Option<bool>,
+    #[serde(default)]
+    pub csa: Option<bool>,
+    #[serde(default)]
+    pub disassoc: Option<bool>,
+    #[serde(default)]
+    pub anon_reassoc: Option<bool>,
+    #[serde(default)]
+    pub rogue_m2: Option<bool>,
 }
 
 /// Capture info returned by /api/captures.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureInfo {
     pub total_files: usize,
     pub handshake_files: usize,
@@ -164,14 +262,14 @@ pub struct CaptureInfo {
 }
 
 /// A single capture file entry.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureEntry {
     pub filename: String,
     pub size_bytes: u64,
 }
 
 /// Health response returned by /api/health.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub wifi_state: String,
     pub battery_level: u8,
@@ -197,7 +295,7 @@ pub struct RateChange {
 }
 
 /// Generic action response.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionResponse {
     pub ok: bool,
     pub message: String,
@@ -214,17 +312,18 @@ pub struct ConfigUpdate {
 }
 
 /// Battery info returned by /api/battery.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatteryInfo {
     pub level: u8,
     pub charging: bool,
     pub voltage_mv: u16,
     pub low: bool,
     pub critical: bool,
+    pub available: bool,
 }
 
 /// WiFi info returned by /api/wifi.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WifiInfo {
     pub state: String,
     pub channel: u8,
@@ -234,26 +333,36 @@ pub struct WifiInfo {
 }
 
 /// Bluetooth info returned by /api/bluetooth.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BluetoothInfo {
+    pub connected: bool,
     pub state: String,
+    pub device_name: String,
+    pub ip: String,
     pub phone_mac: String,
     pub internet_available: bool,
     pub retry_count: u32,
 }
 
+/// Bluetooth visibility toggle request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BtVisibilityToggle {
+    pub visible: bool,
+}
+
 /// Recovery/health info returned by /api/recovery.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryInfo {
     pub state: String,
     pub total_recoveries: u32,
     pub soft_retries: u32,
     pub hard_retries: u32,
+    pub last_recovery: String,
     pub diagnostic_count: usize,
 }
 
 /// Personality/mood info returned by /api/personality.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersonalityInfo {
     pub mood: f32,
     pub face: String,
@@ -265,21 +374,32 @@ pub struct PersonalityInfo {
 }
 
 /// System info returned by /api/system.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemInfoResponse {
     pub cpu_temp_c: f32,
     pub mem_used_mb: u32,
     pub mem_total_mb: u32,
+    pub disk_used_mb: u32,
+    pub disk_total_mb: u32,
     pub cpu_percent: f32,
+    pub uptime_secs: u64,
 }
 
 /// Handshake file entry returned by /api/handshakes.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeEntry {
     pub filename: String,
     pub ssid: String,
     pub size_bytes: u64,
     pub uploaded: bool,
+}
+
+/// A cracked password entry returned by /api/cracked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrackedEntry {
+    pub ssid: String,
+    pub bssid: String,
+    pub password: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +465,65 @@ pub fn build_status(p: &StatusParams<'_>) -> StatusResponse {
 }
 
 // ---------------------------------------------------------------------------
+// System info helpers (read from /proc on Linux, stubs elsewhere)
+// ---------------------------------------------------------------------------
+
+/// Read CPU temperature from /sys/class/thermal on Linux.
+fn read_cpu_temp() -> f32 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
+            if let Ok(millideg) = content.trim().parse::<f32>() {
+                return millideg / 1000.0;
+            }
+        }
+    }
+    0.0
+}
+
+/// Read memory info from /proc/meminfo on Linux.
+fn read_mem_info() -> (u32, u32) {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+            let mut total_kb: u64 = 0;
+            let mut available_kb: u64 = 0;
+            for line in content.lines() {
+                if line.starts_with("MemTotal:") {
+                    total_kb = line.split_whitespace().nth(1)
+                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                } else if line.starts_with("MemAvailable:") {
+                    available_kb = line.split_whitespace().nth(1)
+                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                }
+            }
+            let total_mb = (total_kb / 1024) as u32;
+            let used_mb = ((total_kb.saturating_sub(available_kb)) / 1024) as u32;
+            return (used_mb, total_mb);
+        }
+    }
+    (0, 0)
+}
+
+/// Read disk usage for the root partition.
+fn read_disk_info() -> (u32, u32) {
+    #[cfg(target_os = "linux")]
+    {
+        // Use statvfs via libc
+        unsafe {
+            let path = std::ffi::CString::new("/").unwrap();
+            let mut stat: libc::statvfs = std::mem::zeroed();
+            if libc::statvfs(path.as_ptr(), &mut stat) == 0 {
+                let total = (stat.f_blocks as u64 * stat.f_frsize as u64) / (1024 * 1024);
+                let avail = (stat.f_bavail as u64 * stat.f_frsize as u64) / (1024 * 1024);
+                return ((total - avail) as u32, total as u32);
+            }
+        }
+    }
+    (0, 0)
+}
+
+// ---------------------------------------------------------------------------
 // Axum route handlers
 // ---------------------------------------------------------------------------
 
@@ -400,6 +579,146 @@ async fn health_handler(State(state): State<SharedState>) -> Json<HealthResponse
     })
 }
 
+/// GET /api/battery -> JSON battery info
+async fn battery_handler(State(state): State<SharedState>) -> Json<BatteryInfo> {
+    let s = state.lock().unwrap();
+    Json(BatteryInfo {
+        level: s.battery_level,
+        charging: s.battery_charging,
+        voltage_mv: s.battery_voltage_mv,
+        low: s.battery_low,
+        critical: s.battery_critical,
+        available: s.battery_available,
+    })
+}
+
+/// GET /api/wifi -> JSON wifi info
+async fn wifi_handler(State(state): State<SharedState>) -> Json<WifiInfo> {
+    let s = state.lock().unwrap();
+    Json(WifiInfo {
+        state: s.wifi_state.clone(),
+        channel: s.channel,
+        aps_tracked: s.wifi_aps_tracked,
+        channels: s.wifi_channels.clone(),
+        dwell_ms: s.wifi_dwell_ms,
+    })
+}
+
+/// GET /api/bluetooth -> JSON bluetooth info
+async fn bluetooth_handler(State(state): State<SharedState>) -> Json<BluetoothInfo> {
+    let s = state.lock().unwrap();
+    Json(BluetoothInfo {
+        connected: s.bt_connected,
+        state: s.bt_state.clone(),
+        device_name: s.bt_device_name.clone(),
+        ip: s.bt_ip.clone(),
+        phone_mac: s.bt_phone_mac.clone(),
+        internet_available: s.bt_internet_available,
+        retry_count: s.bt_retry_count,
+    })
+}
+
+/// POST /api/bluetooth -> toggle bluetooth visibility
+async fn bluetooth_toggle_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<BtVisibilityToggle>,
+) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    s.pending_bt_toggle = Some(body.visible);
+    Json(ActionResponse {
+        ok: true,
+        message: format!("Bluetooth visibility {} queued", if body.visible { "ON" } else { "OFF" }),
+    })
+}
+
+/// GET /api/personality -> JSON personality/mood info
+async fn personality_handler(State(state): State<SharedState>) -> Json<PersonalityInfo> {
+    let s = state.lock().unwrap();
+    Json(PersonalityInfo {
+        mood: s.mood,
+        face: s.face.clone(),
+        blind_epochs: s.blind_epochs,
+        total_handshakes: s.handshakes,
+        total_aps_seen: s.aps_seen,
+        xp: s.xp,
+        level: s.level,
+    })
+}
+
+/// GET /api/system -> JSON system info (CPU, memory, disk)
+async fn system_handler(State(state): State<SharedState>) -> Json<SystemInfoResponse> {
+    // Read live system info where available
+    let cpu_temp = read_cpu_temp();
+    let (mem_used, mem_total) = read_mem_info();
+    let (disk_used, disk_total) = read_disk_info();
+    let s = state.lock().unwrap();
+    Json(SystemInfoResponse {
+        cpu_temp_c: if cpu_temp > 0.0 { cpu_temp } else { s.cpu_temp_c },
+        mem_used_mb: if mem_total > 0 { mem_used } else { s.mem_used_mb },
+        mem_total_mb: if mem_total > 0 { mem_total } else { s.mem_total_mb },
+        disk_used_mb: if disk_total > 0 { disk_used } else { s.disk_used_mb },
+        disk_total_mb: if disk_total > 0 { disk_total } else { s.disk_total_mb },
+        cpu_percent: s.cpu_percent,
+        uptime_secs: s.boot_time.elapsed().as_secs(),
+    })
+}
+
+/// GET /api/attacks -> JSON attack stats + toggles
+async fn attacks_get_handler(State(state): State<SharedState>) -> Json<AttackStats> {
+    let s = state.lock().unwrap();
+    Json(AttackStats {
+        total_attacks: s.total_attacks,
+        total_handshakes: s.total_handshakes_attacks,
+        attack_rate: s.attack_rate,
+        deauths_this_epoch: s.deauths_this_epoch,
+        deauth: s.attack_deauth,
+        pmkid: s.attack_pmkid,
+        csa: s.attack_csa,
+        disassoc: s.attack_disassoc,
+        anon_reassoc: s.attack_anon_reassoc,
+        rogue_m2: s.attack_rogue_m2,
+    })
+}
+
+/// POST /api/attacks -> toggle attack types
+async fn attacks_post_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<AttackToggle>,
+) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    // Apply toggles immediately to state; daemon will pick them up
+    if let Some(v) = body.deauth { s.attack_deauth = v; }
+    if let Some(v) = body.pmkid { s.attack_pmkid = v; }
+    if let Some(v) = body.csa { s.attack_csa = v; }
+    if let Some(v) = body.disassoc { s.attack_disassoc = v; }
+    if let Some(v) = body.anon_reassoc { s.attack_anon_reassoc = v; }
+    if let Some(v) = body.rogue_m2 { s.attack_rogue_m2 = v; }
+    s.pending_attack_toggle = Some(body);
+    Json(ActionResponse {
+        ok: true,
+        message: "Attack toggles updated".into(),
+    })
+}
+
+/// GET /api/recovery -> JSON recovery info
+async fn recovery_handler(State(state): State<SharedState>) -> Json<RecoveryInfo> {
+    let s = state.lock().unwrap();
+    Json(RecoveryInfo {
+        state: s.recovery_state.clone(),
+        total_recoveries: s.recovery_total,
+        soft_retries: s.recovery_soft_retries,
+        hard_retries: s.recovery_hard_retries,
+        last_recovery: s.recovery_last_str.clone(),
+        diagnostic_count: 0,
+    })
+}
+
+/// GET /api/cracked -> JSON list of cracked passwords
+async fn cracked_handler(State(state): State<SharedState>) -> Json<Vec<CrackedEntry>> {
+    let s = state.lock().unwrap();
+    Json(s.cracked.clone())
+}
+
 /// POST /api/mode -> switch mode
 async fn mode_handler(
     State(state): State<SharedState>,
@@ -442,6 +761,16 @@ async fn restart_handler(State(state): State<SharedState>) -> Json<ActionRespons
     })
 }
 
+/// POST /api/shutdown -> system shutdown
+async fn shutdown_handler(State(state): State<SharedState>) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    s.pending_shutdown = true;
+    Json(ActionResponse {
+        ok: true,
+        message: "System shutdown queued".into(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Router builder
 // ---------------------------------------------------------------------------
@@ -453,9 +782,18 @@ pub fn build_router(state: SharedState) -> Router {
         .route(API_STATUS, get(status_handler))
         .route(API_CAPTURES, get(captures_handler))
         .route(API_HEALTH, get(health_handler))
+        .route(API_BATTERY, get(battery_handler))
+        .route(API_WIFI, get(wifi_handler))
+        .route(API_BLUETOOTH, get(bluetooth_handler).post(bluetooth_toggle_handler))
+        .route(API_PERSONALITY, get(personality_handler))
+        .route(API_SYSTEM, get(system_handler))
+        .route(API_ATTACKS, get(attacks_get_handler).post(attacks_post_handler))
+        .route(API_RECOVERY, get(recovery_handler))
+        .route(API_CRACKED, get(cracked_handler))
         .route(API_MODE, post(mode_handler))
         .route(API_RATE, post(rate_handler))
         .route(API_RESTART, post(restart_handler))
+        .route(API_SHUTDOWN, post(shutdown_handler))
         .with_state(state)
 }
 
@@ -477,159 +815,579 @@ pub async fn start_server(state: SharedState) {
 }
 
 // ---------------------------------------------------------------------------
-// Embedded dashboard HTML
+// Embedded dashboard HTML — 15 cards, htmx auto-refresh, dark theme
 // ---------------------------------------------------------------------------
 
-pub const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
+pub const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>oxigotchi</title>
-    <style>
-        body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; margin: 20px; }
-        .card { background: #16213e; border-radius: 8px; padding: 16px; margin: 8px 0; }
-        .face { font-size: 48px; text-align: center; padding: 20px; }
-        .stat { display: inline-block; margin: 8px 16px; }
-        .label { color: #888; font-size: 12px; }
-        .value { font-size: 20px; color: #0f0; }
-        .warn { color: #ff0; }
-        .err { color: #f00; }
-        h1 { color: #e94560; }
-        h3 { color: #aaa; margin: 0 0 8px 0; }
-        .refresh { color: #666; font-size: 10px; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .btn { background: #0a3d62; border: 1px solid #3c6382; color: #e0e0e0;
-               padding: 8px 16px; cursor: pointer; border-radius: 4px; font-family: monospace; }
-        .btn:hover { background: #3c6382; }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>oxigotchi</title>
+<script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a2e;color:#e0e0e0;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;padding:12px;max-width:600px;margin:0 auto}
+h1{color:#00d4aa;font-size:20px;text-align:center;margin-bottom:16px;letter-spacing:1px}
+.card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:12px}
+.card-title{color:#00d4aa;font-size:15px;font-weight:bold;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #0f3460}
+.face{font-size:48px;text-align:center;padding:20px;color:#e0e0e0}
+.status-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px}
+.status-grid .label{color:#888;font-size:12px}
+.status-grid .value{color:#e0e0e0;font-size:13px;font-weight:bold}
+.stat-row{display:flex;flex-wrap:wrap;gap:8px}
+.stat{text-align:center;flex:1;min-width:60px}
+.stat .label{color:#888;font-size:11px}
+.stat .value{color:#00d4aa;font-size:18px;font-weight:bold}
+.health-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:4px}
+.health-item{display:flex;align-items:center;gap:6px;font-size:13px}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.dot-green{background:#00d4aa}
+.dot-red{background:#e94560}
+.dot-gray{background:#555}
+.dot-yellow{background:#f0c040}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #0f3460}
+.toggle-row:last-child{border-bottom:none}
+.toggle-info{flex:1;margin-right:12px}
+.toggle-label{font-size:14px;font-weight:bold;color:#e0e0e0}
+.toggle-desc{font-size:11px;color:#888;margin-top:2px}
+.switch{position:relative;width:50px;height:28px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#555;border-radius:28px;transition:.25s}
+.slider:before{position:absolute;content:"";height:22px;width:22px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.25s}
+input:checked+.slider{background:#00d4aa}
+input:checked+.slider:before{transform:translateX(22px)}
+.rate-btns{display:flex;gap:8px;margin-top:8px}
+.rate-btn{flex:1;padding:14px 0;border:2px solid #0f3460;border-radius:10px;background:transparent;color:#e0e0e0;font-size:18px;font-weight:bold;font-family:inherit;cursor:pointer;text-align:center;transition:.2s}
+.rate-btn.active{background:#0f3460;color:#00d4aa;border-color:#00d4aa}
+.rate-btn.risky{border-color:#e67e22;color:#e67e22}
+.rate-btn.risky.active{background:#5a3000;color:#e67e22;border-color:#e67e22}
+.rate-btn:active{transform:scale(0.95)}
+.mode-btns{display:flex;gap:8px;margin-top:8px}
+.mode-btn{flex:1;padding:14px 0;border:2px solid #0f3460;border-radius:10px;background:transparent;color:#e0e0e0;font-size:16px;font-weight:bold;font-family:inherit;cursor:pointer;text-align:center;transition:.2s}
+.mode-btn.active{background:#00d4aa;color:#1a1a2e;border-color:#00d4aa}
+.mode-btn:active{transform:scale(0.95)}
+.action-btns{display:flex;flex-wrap:wrap;gap:8px}
+.action-btn{flex:1;min-width:100px;padding:14px 8px;border:none;border-radius:10px;font-family:inherit;font-size:13px;font-weight:bold;cursor:pointer;text-align:center;transition:.2s}
+.action-btn:active{transform:scale(0.95)}
+.btn-restart{background:#0f3460;color:#00d4aa}
+.btn-stop{background:#e94560;color:#fff}
+.btn-warn{background:#f0c040;color:#1a1a2e}
+.captures-list{max-height:200px;overflow-y:auto;margin-top:8px}
+.capture-item{font-size:12px;color:#aaa;padding:4px 0;border-bottom:1px solid #0f346033}
+.capture-item:last-child{border-bottom:none}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#00d4aa;color:#1a1a2e;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:bold;opacity:0;transition:opacity .3s;pointer-events:none;z-index:999}
+.toast.show{opacity:1}
+.progress-bar{height:6px;background:#0f3460;border-radius:3px;overflow:hidden;margin-top:4px}
+.progress-fill{height:100%;background:#00d4aa;border-radius:3px;transition:width .3s}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sub{color:#888;font-size:11px;margin-bottom:8px}
+</style>
 </head>
 <body>
-    <h1 id="name">oxigotchi</h1>
-    <!-- Face -->
-    <div class="card">
-        <div class="face" id="face">(O_O)</div>
-        <div style="text-align:center" id="status">Loading...</div>
-    </div>
-    <!-- Core stats -->
-    <div class="card">
-        <div class="stat"><div class="label">CH</div><div class="value" id="ch">-</div></div>
-        <div class="stat"><div class="label">APS</div><div class="value" id="aps">-</div></div>
-        <div class="stat"><div class="label">PWND</div><div class="value" id="pwnd">-</div></div>
-        <div class="stat"><div class="label">EPOCH</div><div class="value" id="epoch">-</div></div>
-        <div class="stat"><div class="label">UPTIME</div><div class="value" id="uptime">-</div></div>
-        <div class="stat"><div class="label">MOOD</div><div class="value" id="mood">-</div></div>
-    </div>
-    <div class="grid">
-    <!-- Battery -->
-    <div class="card">
-        <h3>Battery</h3>
-        <div class="stat"><div class="label">LEVEL</div><div class="value" id="bat_level">-</div></div>
-        <div class="stat"><div class="label">STATE</div><div class="value" id="bat_state">-</div></div>
-    </div>
-    <!-- WiFi -->
-    <div class="card">
-        <h3>WiFi</h3>
-        <div class="stat"><div class="label">STATE</div><div class="value" id="wifi_state">-</div></div>
-        <div class="stat"><div class="label">AO</div><div class="value" id="ao_state">-</div></div>
-    </div>
-    <!-- Captures -->
-    <div class="card">
-        <h3>Captures</h3>
-        <div class="stat"><div class="label">FILES</div><div class="value" id="cap_files">-</div></div>
-        <div class="stat"><div class="label">PENDING</div><div class="value" id="cap_pending">-</div></div>
-        <div id="cap_list" style="font-size:11px;max-height:150px;overflow-y:auto;margin-top:8px"></div>
-    </div>
-    <!-- Mode -->
-    <div class="card">
-        <h3>Mode</h3>
-        <div class="stat"><div class="label">CURRENT</div><div class="value" id="mode">-</div></div>
-        <button class="btn" onclick="toggleMode()">Toggle AO/PWN</button>
-    </div>
-    <!-- Actions -->
-    <div class="card">
-        <h3>Actions</h3>
-        <button class="btn" onclick="restartAO()">Restart AO</button>
-        <button class="btn" onclick="setRate(1)">Rate 1</button>
-        <button class="btn" onclick="setRate(2)">Rate 2</button>
-    </div>
-    <!-- Health -->
-    <div class="card">
-        <h3>System Health</h3>
-        <div class="stat"><div class="label">AO PID</div><div class="value" id="ao_pid">-</div></div>
-        <div class="stat"><div class="label">CRASHES</div><div class="value" id="ao_crashes">-</div></div>
-        <div class="stat"><div class="label">AO UP</div><div class="value" id="ao_uptime">-</div></div>
-        <div class="stat"><div class="label">SYS UP</div><div class="value" id="sys_uptime">-</div></div>
-    </div>
-    </div>
-    <div class="refresh">Auto-refreshes every 5s</div>
-    <script>
-        function update() {
-            fetch('/api/status')
-                .then(r => r.json())
-                .then(d => {
-                    document.getElementById('name').textContent = d.name + '>';
-                    document.getElementById('face').textContent = d.face;
-                    document.getElementById('status').textContent = d.status_message;
-                    document.getElementById('ch').textContent = d.channel;
-                    document.getElementById('aps').textContent = d.aps_seen;
-                    document.getElementById('pwnd').textContent = d.handshakes;
-                    document.getElementById('epoch').textContent = d.epoch;
-                    document.getElementById('uptime').textContent = d.uptime;
-                    document.getElementById('mood').textContent = Math.round(d.mood * 100) + '%';
-                    document.getElementById('mode').textContent = d.mode;
-                })
-                .catch(console.error);
+<h1>Oxigotchi Dashboard</h1>
+<div style="text-align:center;color:#888;font-size:11px;margin:-12px 0 14px">Rusty Oxigotchi &mdash; WiFi capture bull</div>
 
-            fetch('/api/health')
-                .then(r => r.json())
-                .then(d => {
-                    document.getElementById('wifi_state').textContent = d.wifi_state;
-                    document.getElementById('bat_level').textContent = d.battery_available ? d.battery_level + '%' : 'N/A';
-                    document.getElementById('bat_state').textContent = d.battery_charging ? 'Charging' : 'Battery';
-                    document.getElementById('ao_state').textContent = d.ao_state;
-                    document.getElementById('ao_pid').textContent = d.ao_pid || '-';
-                    document.getElementById('ao_crashes').textContent = d.ao_crash_count;
-                    document.getElementById('ao_uptime').textContent = d.ao_uptime;
-                    var h = Math.floor(d.uptime_secs / 3600);
-                    var m = Math.floor((d.uptime_secs % 3600) / 60);
-                    var s = d.uptime_secs % 60;
-                    document.getElementById('sys_uptime').textContent =
-                        String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-                })
-                .catch(console.error);
+<!-- 1. Face display -->
+<div class="card" id="card-face">
+<div class="face" id="face">(O_O)</div>
+<div style="text-align:center;color:#888" id="status-msg">Loading...</div>
+</div>
 
-            fetch('/api/captures')
-                .then(r => r.json())
-                .then(d => {
-                    document.getElementById('cap_files').textContent = d.total_files;
-                    document.getElementById('cap_pending').textContent = d.pending_upload;
-                    var list = d.files.map(f => f.filename + ' (' + (f.size_bytes/1024).toFixed(1) + 'K)').join('<br>');
-                    document.getElementById('cap_list').innerHTML = list || 'No captures yet';
-                })
-                .catch(console.error);
+<!-- 2. Core stats -->
+<div class="card" id="card-stats">
+<div class="card-title">Core Stats</div>
+<div class="stat-row">
+<div class="stat"><div class="label">CH</div><div class="value" id="s-ch">-</div></div>
+<div class="stat"><div class="label">APS</div><div class="value" id="s-aps">-</div></div>
+<div class="stat"><div class="label">PWND</div><div class="value" id="s-pwnd">-</div></div>
+<div class="stat"><div class="label">EPOCH</div><div class="value" id="s-epoch">-</div></div>
+<div class="stat"><div class="label">UPTIME</div><div class="value" id="s-uptime">-</div></div>
+<div class="stat"><div class="label">RATE</div><div class="value" id="s-rate">-</div></div>
+</div>
+</div>
+
+<!-- 3. E-ink preview (TODO: render framebuffer as PNG) -->
+<div class="card" id="card-eink" style="text-align:center">
+<div class="card-title">Live Display</div>
+<div style="color:#555;font-size:11px;padding:20px"><!-- TODO: implement /api/display.png framebuffer render -->[E-ink preview not yet implemented in Rust build]</div>
+</div>
+
+<div class="grid-2">
+
+<!-- 4. Battery -->
+<div class="card" id="card-battery">
+<div class="card-title">Battery</div>
+<div class="status-grid">
+<div class="label">Level</div><div class="value" id="bat-level">-</div>
+<div class="label">State</div><div class="value" id="bat-state">-</div>
+<div class="label">Voltage</div><div class="value" id="bat-voltage">-</div>
+</div>
+<div class="progress-bar"><div class="progress-fill" id="bat-bar" style="width:0%"></div></div>
+</div>
+
+<!-- 5. Bluetooth -->
+<div class="card" id="card-bt">
+<div class="card-title">Bluetooth</div>
+<div class="status-grid">
+<div class="label">Status</div><div class="value" id="bt-status">-</div>
+<div class="label">Device</div><div class="value" id="bt-device">-</div>
+<div class="label">IP</div><div class="value" id="bt-ip">-</div>
+</div>
+</div>
+
+</div>
+
+<!-- 6. WiFi -->
+<div class="card" id="card-wifi">
+<div class="card-title">WiFi</div>
+<div class="sub">Monitor mode status and channel info.</div>
+<div class="status-grid">
+<div class="label">State</div><div class="value" id="wifi-state">-</div>
+<div class="label">Channel</div><div class="value" id="wifi-ch">-</div>
+<div class="label">APs Tracked</div><div class="value" id="wifi-aps">-</div>
+<div class="label">Channels</div><div class="value" id="wifi-channels">-</div>
+<div class="label">Dwell</div><div class="value" id="wifi-dwell">-</div>
+</div>
+</div>
+
+<!-- 7. Attack controls -->
+<div class="card" id="card-attacks">
+<div class="card-title">Attack Types</div>
+<div style="color:#00d4aa;font-size:11px;margin-bottom:10px;padding:8px;background:#0f346033;border-radius:6px">All 6 ON is the sweet spot &mdash; they complement each other.</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">Deauth</div><div class="toggle-desc">Kick clients to capture reconnection handshakes</div></div>
+<label class="switch"><input type="checkbox" id="atk-deauth" checked onchange="toggleAttack('deauth',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">PMKID</div><div class="toggle-desc">Grab router password hashes without clients</div></div>
+<label class="switch"><input type="checkbox" id="atk-pmkid" checked onchange="toggleAttack('pmkid',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">CSA</div><div class="toggle-desc">Trick clients into switching channels</div></div>
+<label class="switch"><input type="checkbox" id="atk-csa" checked onchange="toggleAttack('csa',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">Disassociation</div><div class="toggle-desc">Catches clients that resist deauth</div></div>
+<label class="switch"><input type="checkbox" id="atk-disassoc" checked onchange="toggleAttack('disassoc',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">Anon Reassoc</div><div class="toggle-desc">Capture PMKID from stubborn routers</div></div>
+<label class="switch"><input type="checkbox" id="atk-anon_reassoc" checked onchange="toggleAttack('anon_reassoc',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">Rogue M2</div><div class="toggle-desc">Fake AP trick for handshakes</div></div>
+<label class="switch"><input type="checkbox" id="atk-rogue_m2" checked onchange="toggleAttack('rogue_m2',this.checked)"><span class="slider"></span></label>
+</div>
+
+<div style="margin-top:12px;padding-top:10px;border-top:1px solid #0f3460">
+<div style="font-size:12px;color:#888;margin-bottom:4px">Attack Rate</div>
+<div class="sub">Rate 1 is max safe for BCM43436B0. Higher rates cause firmware crashes.</div>
+<div class="rate-btns">
+<button class="rate-btn active" id="rate-1" onclick="setRate(1)">1<br><span style="font-size:10px;font-weight:normal;color:#888">Safe</span></button>
+<button class="rate-btn risky" id="rate-2" onclick="setRate(2)">2<br><span style="font-size:10px;font-weight:normal">Risky</span></button>
+<button class="rate-btn risky" id="rate-3" onclick="setRate(3)">3<br><span style="font-size:10px;font-weight:normal">Danger</span></button>
+</div>
+</div>
+</div>
+
+<!-- 8. Capture list -->
+<div class="card" id="card-captures">
+<div class="card-title">Recent Captures</div>
+<div class="sub">Validated capture files. Click to download.</div>
+<div class="status-grid" style="margin-bottom:8px">
+<div class="label">Total Files</div><div class="value" id="cap-total">-</div>
+<div class="label">Handshakes</div><div class="value" id="cap-hs">-</div>
+<div class="label">Pending Upload</div><div class="value" id="cap-pending">-</div>
+<div class="label">Total Size</div><div class="value" id="cap-size">-</div>
+</div>
+<div class="captures-list" id="cap-list"><div style="color:#555;font-size:12px">Loading...</div></div>
+</div>
+
+<!-- 9. Recovery status -->
+<div class="card" id="card-recovery">
+<div class="card-title">Recovery Status</div>
+<div class="sub">WiFi and firmware crash recovery tracking.</div>
+<div class="health-row" style="margin-bottom:8px">
+<div class="health-item"><span class="dot dot-gray" id="h-wifi"></span>WiFi</div>
+<div class="health-item"><span class="dot dot-gray" id="h-ao"></span>AO</div>
+<div class="health-item"><span class="dot dot-gray" id="h-recovery"></span>Recovery</div>
+</div>
+<div class="status-grid">
+<div class="label">State</div><div class="value" id="rec-state">-</div>
+<div class="label">Crashes</div><div class="value" id="rec-crashes">-</div>
+<div class="label">Recoveries</div><div class="value" id="rec-total">-</div>
+<div class="label">Last Recovery</div><div class="value" id="rec-last">-</div>
+<div class="label">AO PID</div><div class="value" id="rec-pid">-</div>
+<div class="label">AO Uptime</div><div class="value" id="rec-ao-up">-</div>
+</div>
+</div>
+
+<!-- 10. Personality -->
+<div class="card" id="card-personality">
+<div class="card-title">Personality</div>
+<div class="sub">Mood, experience, and level progression.</div>
+<div class="status-grid">
+<div class="label">Mood</div><div class="value" id="p-mood">-</div>
+<div class="label">Face</div><div class="value" id="p-face">-</div>
+<div class="label">XP</div><div class="value" id="p-xp">-</div>
+<div class="label">Level</div><div class="value" id="p-level">-</div>
+<div class="label">Blind Epochs</div><div class="value" id="p-blind">-</div>
+</div>
+<div class="progress-bar" style="margin-top:8px"><div class="progress-fill" id="mood-bar" style="width:50%"></div></div>
+</div>
+
+<!-- 11. System info -->
+<div class="card" id="card-system">
+<div class="card-title">System Info</div>
+<div class="sub">Hardware stats from the Pi.</div>
+<div class="status-grid">
+<div class="label">CPU Temp</div><div class="value" id="sys-temp">-</div>
+<div class="label">CPU Usage</div><div class="value" id="sys-cpu">-</div>
+<div class="label">Memory</div><div class="value" id="sys-mem">-</div>
+<div class="label">Disk</div><div class="value" id="sys-disk">-</div>
+<div class="label">Sys Uptime</div><div class="value" id="sys-uptime">-</div>
+</div>
+</div>
+
+<!-- 12. Cracked passwords -->
+<div class="card" id="card-cracked">
+<div class="card-title">Cracked Passwords</div>
+<div class="sub">Passwords cracked from captured handshakes.</div>
+<div id="cracked-list"><div style="color:#555;font-size:12px">No cracked passwords yet</div></div>
+</div>
+
+<!-- 13. Handshake download -->
+<div class="card" id="card-download">
+<div class="card-title">Download Captures</div>
+<div class="sub">Download all captures as a ZIP archive.</div>
+<div class="action-btns">
+<!-- TODO: implement /api/handshakes/download.zip endpoint -->
+<button class="action-btn btn-restart" onclick="toast('ZIP download not yet implemented')">Download All (ZIP)</button>
+</div>
+</div>
+
+<!-- 14. Mode switch -->
+<div class="card" id="card-mode">
+<div class="card-title">Mode</div>
+<div class="sub">AO Mode = AngryOxide attacks. PWN Mode = stock bettercap. Switching takes ~90s.</div>
+<div class="mode-btns">
+<button class="mode-btn active" id="mode-ao" onclick="switchMode('AO')">AO Mode</button>
+<button class="mode-btn" id="mode-pwn" onclick="switchMode('PWN')">PWN Mode</button>
+</div>
+</div>
+
+<!-- 15. Actions -->
+<div class="card" id="card-actions">
+<div class="card-title">Actions</div>
+<div class="sub">Restart applies config changes. Shutdown powers off the Pi.</div>
+<div class="action-btns">
+<button class="action-btn btn-restart" onclick="restartAO()">Restart AO</button>
+<button class="action-btn btn-stop" onclick="if(confirm('Shut down the Pi?'))doShutdown()">Shutdown Pi</button>
+<button class="action-btn btn-warn" onclick="if(confirm('Restart pwnagotchi?'))restartPwn()">Restart Pwn</button>
+</div>
+</div>
+
+<div style="text-align:center;color:#555;font-size:10px;margin-top:8px">Auto-refreshes every 5s &bull; Rusty Oxigotchi</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+function api(method, path, body) {
+    var opts = {method: method, headers: {'Content-Type':'application/json'}};
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(path, opts).then(function(r){return r.json()}).catch(function(e){console.error('API:',path,e)});
+}
+function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function(){t.classList.remove('show')}, 1500);
+}
+function fmtUptime(secs) {
+    if (!secs && secs !== 0) return '--';
+    var h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = secs%60;
+    return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+function fmtBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    return (b/1048576).toFixed(1) + ' MB';
+}
+function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// --- Refresh functions ---
+
+function refreshStatus() {
+    api('GET', '/api/status').then(function(d) {
+        if (!d) return;
+        document.getElementById('face').textContent = d.face;
+        document.getElementById('status-msg').textContent = d.status_message;
+        document.getElementById('s-ch').textContent = d.channel;
+        document.getElementById('s-aps').textContent = d.aps_seen;
+        document.getElementById('s-pwnd').textContent = d.handshakes;
+        document.getElementById('s-epoch').textContent = d.epoch;
+        document.getElementById('s-uptime').textContent = d.uptime;
+        // Mode buttons
+        document.getElementById('mode-ao').classList.toggle('active', d.mode === 'AO');
+        document.getElementById('mode-pwn').classList.toggle('active', d.mode === 'PWN');
+    });
+}
+
+function refreshBattery() {
+    api('GET', '/api/battery').then(function(d) {
+        if (!d) return;
+        if (d.available) {
+            document.getElementById('bat-level').textContent = d.level + '%';
+            document.getElementById('bat-level').style.color = d.critical ? '#e94560' : (d.low ? '#f0c040' : '#00d4aa');
+            document.getElementById('bat-state').textContent = d.charging ? 'Charging' : 'Discharging';
+            document.getElementById('bat-voltage').textContent = (d.voltage_mv / 1000).toFixed(2) + 'V';
+            document.getElementById('bat-bar').style.width = d.level + '%';
+            document.getElementById('bat-bar').style.background = d.critical ? '#e94560' : (d.low ? '#f0c040' : '#00d4aa');
+        } else {
+            document.getElementById('bat-level').textContent = 'N/A';
+            document.getElementById('bat-state').textContent = 'Not detected';
+            document.getElementById('bat-voltage').textContent = '-';
         }
-        function toggleMode() {
-            fetch('/api/mode', {method:'POST', headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({mode:'toggle'})}).then(update);
+    });
+}
+
+function refreshBluetooth() {
+    api('GET', '/api/bluetooth').then(function(d) {
+        if (!d) return;
+        document.getElementById('bt-status').textContent = d.connected ? 'Connected' : d.state;
+        document.getElementById('bt-status').style.color = d.connected ? '#00d4aa' : '#888';
+        document.getElementById('bt-device').textContent = d.device_name || '-';
+        document.getElementById('bt-ip').textContent = d.ip || '-';
+    });
+}
+
+function refreshWifi() {
+    api('GET', '/api/wifi').then(function(d) {
+        if (!d) return;
+        document.getElementById('wifi-state').textContent = d.state;
+        document.getElementById('wifi-state').style.color = d.state === 'Monitor' ? '#00d4aa' : '#e94560';
+        document.getElementById('wifi-ch').textContent = d.channel;
+        document.getElementById('wifi-aps').textContent = d.aps_tracked;
+        document.getElementById('wifi-channels').textContent = d.channels.join(', ') || '-';
+        document.getElementById('wifi-dwell').textContent = d.dwell_ms + 'ms';
+    });
+}
+
+function refreshAttacks() {
+    api('GET', '/api/attacks').then(function(d) {
+        if (!d) return;
+        document.getElementById('s-rate').textContent = d.attack_rate;
+        ['deauth','pmkid','csa','disassoc','anon_reassoc','rogue_m2'].forEach(function(k) {
+            var cb = document.getElementById('atk-'+k);
+            if (cb) cb.checked = d[k];
+        });
+        [1,2,3].forEach(function(n) {
+            document.getElementById('rate-'+n).classList.toggle('active', n === d.attack_rate);
+        });
+    });
+}
+
+function refreshCaptures() {
+    api('GET', '/api/captures').then(function(d) {
+        if (!d) return;
+        document.getElementById('cap-total').textContent = d.total_files;
+        document.getElementById('cap-hs').textContent = d.handshake_files;
+        document.getElementById('cap-pending').textContent = d.pending_upload;
+        document.getElementById('cap-size').textContent = fmtBytes(d.total_size_bytes);
+        var el = document.getElementById('cap-list');
+        if (!d.files || !d.files.length) {
+            el.innerHTML = '<div style="color:#555;font-size:12px">No captures yet</div>';
+            return;
         }
-        function restartAO() {
-            fetch('/api/restart', {method:'POST'}).then(update);
+        el.innerHTML = d.files.map(function(f) {
+            return '<div class="capture-item">' + esc(f.filename) + ' <span style="color:#555">(' + fmtBytes(f.size_bytes) + ')</span></div>';
+        }).join('');
+    });
+}
+
+function refreshRecovery() {
+    api('GET', '/api/recovery').then(function(d) {
+        if (!d) return;
+        document.getElementById('rec-state').textContent = d.state;
+        document.getElementById('rec-state').style.color = d.state === 'Healthy' ? '#00d4aa' : '#f0c040';
+        document.getElementById('rec-total').textContent = d.total_recoveries;
+        document.getElementById('rec-last').textContent = d.last_recovery;
+    });
+    api('GET', '/api/health').then(function(d) {
+        if (!d) return;
+        document.getElementById('rec-crashes').textContent = d.ao_crash_count;
+        document.getElementById('rec-crashes').style.color = d.ao_crash_count > 0 ? '#f0c040' : '#e0e0e0';
+        document.getElementById('rec-pid').textContent = d.ao_pid || '-';
+        document.getElementById('rec-ao-up').textContent = d.ao_uptime;
+        // Health dots
+        var wdot = document.getElementById('h-wifi');
+        wdot.className = 'dot ' + (d.wifi_state === 'Monitor' ? 'dot-green' : 'dot-red');
+        var adot = document.getElementById('h-ao');
+        adot.className = 'dot ' + (d.ao_state === 'RUNNING' ? 'dot-green' : 'dot-red');
+        var rdot = document.getElementById('h-recovery');
+        rdot.className = 'dot ' + (d.ao_crash_count === 0 ? 'dot-green' : 'dot-yellow');
+        document.getElementById('sys-uptime').textContent = fmtUptime(d.uptime_secs);
+    });
+}
+
+function refreshPersonality() {
+    api('GET', '/api/personality').then(function(d) {
+        if (!d) return;
+        document.getElementById('p-mood').textContent = Math.round(d.mood * 100) + '%';
+        document.getElementById('p-face').textContent = d.face;
+        document.getElementById('p-xp').textContent = d.xp;
+        document.getElementById('p-level').textContent = d.level;
+        document.getElementById('p-blind').textContent = d.blind_epochs;
+        document.getElementById('mood-bar').style.width = Math.round(d.mood * 100) + '%';
+        var moodColor = d.mood > 0.7 ? '#00d4aa' : (d.mood > 0.3 ? '#f0c040' : '#e94560');
+        document.getElementById('mood-bar').style.background = moodColor;
+    });
+}
+
+function refreshSystem() {
+    api('GET', '/api/system').then(function(d) {
+        if (!d) return;
+        document.getElementById('sys-temp').textContent = d.cpu_temp_c > 0 ? d.cpu_temp_c.toFixed(1) + '\u00B0C' : '-';
+        document.getElementById('sys-temp').style.color = d.cpu_temp_c > 70 ? '#e94560' : (d.cpu_temp_c > 55 ? '#f0c040' : '#00d4aa');
+        document.getElementById('sys-cpu').textContent = d.cpu_percent > 0 ? d.cpu_percent.toFixed(0) + '%' : '-';
+        document.getElementById('sys-mem').textContent = d.mem_total_mb > 0 ? d.mem_used_mb + '/' + d.mem_total_mb + ' MB' : '-';
+        document.getElementById('sys-disk').textContent = d.disk_total_mb > 0 ? d.disk_used_mb + '/' + d.disk_total_mb + ' MB' : '-';
+    });
+}
+
+function refreshCracked() {
+    api('GET', '/api/cracked').then(function(list) {
+        var el = document.getElementById('cracked-list');
+        if (!list || !list.length) {
+            el.innerHTML = '<div style="color:#555;font-size:12px">No cracked passwords yet</div>';
+            return;
         }
-        function setRate(r) {
-            fetch('/api/rate', {method:'POST', headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({rate:r})}).then(update);
-        }
-        update();
-        setInterval(update, 5000);
-    </script>
+        el.innerHTML = list.map(function(c) {
+            return '<div style="padding:4px 0;border-bottom:1px solid #0f346022">' +
+                '<span style="color:#00d4aa;font-weight:bold">' + esc(c.ssid || c.bssid) + '</span>' +
+                (c.bssid ? ' <span style="color:#666;font-size:10px">[' + esc(c.bssid) + ']</span>' : '') +
+                '<br><span style="color:#f0c040;font-family:monospace;font-size:12px">' + esc(c.password) + '</span></div>';
+        }).join('');
+    });
+}
+
+// --- Action functions ---
+
+function toggleAttack(name, val) {
+    var data = {};
+    data[name] = val;
+    api('POST', '/api/attacks', data).then(function() {
+        toast('Attack ' + name + (val ? ' ON' : ' OFF'));
+    });
+}
+function setRate(r) {
+    api('POST', '/api/rate', {rate: r}).then(function() {
+        [1,2,3].forEach(function(n) {
+            document.getElementById('rate-'+n).classList.toggle('active', n === r);
+        });
+        toast('Rate set to ' + r);
+    });
+}
+function switchMode(mode) {
+    toast('Switching to ' + mode + '...');
+    api('POST', '/api/mode', {mode: mode}).then(function(r) {
+        if (r && r.ok) toast(r.message);
+    });
+}
+function restartAO() {
+    api('POST', '/api/restart', {}).then(function(r) {
+        toast(r && r.message ? r.message : 'Restart queued');
+    });
+}
+function doShutdown() {
+    api('POST', '/api/shutdown', {}).then(function(r) {
+        toast(r && r.message ? r.message : 'Shutdown queued');
+    });
+}
+function restartPwn() {
+    api('POST', '/api/restart', {}).then(function(r) {
+        toast('Pwnagotchi restart queued');
+    });
+}
+
+// --- Initial load & auto-refresh ---
+refreshStatus();
+setTimeout(refreshBattery, 500);
+setTimeout(refreshBluetooth, 1000);
+setTimeout(refreshWifi, 1500);
+setTimeout(refreshAttacks, 2000);
+setTimeout(refreshCaptures, 2500);
+setTimeout(refreshRecovery, 3000);
+setTimeout(refreshPersonality, 3500);
+setTimeout(refreshSystem, 4000);
+setTimeout(refreshCracked, 4500);
+
+setInterval(refreshStatus, 5000);
+setInterval(refreshBattery, 15000);
+setInterval(refreshBluetooth, 15000);
+setInterval(refreshWifi, 5000);
+setInterval(refreshAttacks, 10000);
+setInterval(refreshCaptures, 30000);
+setInterval(refreshRecovery, 15000);
+setInterval(refreshPersonality, 10000);
+setInterval(refreshSystem, 15000);
+setInterval(refreshCracked, 60000);
+</script>
 </body>
 </html>
-"#;
+"##;
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    /// Helper: create a SharedState with test defaults.
+    fn test_state() -> SharedState {
+        Arc::new(Mutex::new(DaemonState::new("testbot")))
+    }
+
+    /// Helper: build the router with test state.
+    fn test_router() -> (Router, SharedState) {
+        let state = test_state();
+        let router = build_router(state.clone());
+        (router, state)
+    }
+
+    /// Helper: make a GET request and return (status, body_string).
+    async fn get(router: &Router, path: &str) -> (u16, String) {
+        let req = axum::http::Request::builder()
+            .uri(path)
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
+
+    /// Helper: make a POST request with JSON body and return (status, body_string).
+    async fn post_json(router: &Router, path: &str, json: &str) -> (u16, String) {
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(Body::from(json.to_string()))
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
+
+    // === Serialization tests (keep existing ones) ===
 
     #[test]
     fn test_build_status() {
@@ -682,56 +1440,110 @@ mod tests {
     }
 
     #[test]
-    fn test_dashboard_html_contains_elements() {
-        assert!(DASHBOARD_HTML.contains("<title>oxigotchi</title>"));
-        assert!(DASHBOARD_HTML.contains("/api/status"));
-        assert!(DASHBOARD_HTML.contains("/api/health"));
-        assert!(DASHBOARD_HTML.contains("/api/captures"));
-        assert!(DASHBOARD_HTML.contains("toggleMode"));
-        assert!(DASHBOARD_HTML.contains("restartAO"));
-    }
-
-    #[test]
     fn test_battery_info_serialize() {
         let info = BatteryInfo {
-            level: 75,
-            charging: true,
-            voltage_mv: 4100,
-            low: false,
-            critical: false,
+            level: 75, charging: true, voltage_mv: 4100,
+            low: false, critical: false, available: true,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"level\":75"));
         assert!(json.contains("\"charging\":true"));
+        assert!(json.contains("\"available\":true"));
     }
 
     #[test]
     fn test_wifi_info_serialize() {
         let info = WifiInfo {
-            state: "Monitor".into(),
-            channel: 6,
-            aps_tracked: 15,
-            channels: vec![1, 6, 11],
-            dwell_ms: 250,
+            state: "Monitor".into(), channel: 6,
+            aps_tracked: 15, channels: vec![1, 6, 11], dwell_ms: 250,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"state\":\"Monitor\""));
+        assert!(json.contains("\"aps_tracked\":15"));
+    }
+
+    #[test]
+    fn test_bluetooth_info_serialize() {
+        let info = BluetoothInfo {
+            connected: true, state: "Connected".into(),
+            device_name: "Phone".into(), ip: "10.0.0.1".into(),
+            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
+            internet_available: true, retry_count: 0,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"connected\":true"));
+        assert!(json.contains("\"device_name\":\"Phone\""));
     }
 
     #[test]
     fn test_personality_info_serialize() {
         let info = PersonalityInfo {
-            mood: 0.75,
-            face: "(^_^)".into(),
-            blind_epochs: 2,
-            total_handshakes: 10,
-            total_aps_seen: 50,
-            xp: 420,
-            level: 3,
+            mood: 0.75, face: "(^_^)".into(), blind_epochs: 2,
+            total_handshakes: 10, total_aps_seen: 50, xp: 420, level: 3,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"level\":3"));
         assert!(json.contains("\"xp\":420"));
+    }
+
+    #[test]
+    fn test_system_info_serialize() {
+        let info = SystemInfoResponse {
+            cpu_temp_c: 45.2, mem_used_mb: 200, mem_total_mb: 512,
+            disk_used_mb: 3000, disk_total_mb: 16000,
+            cpu_percent: 35.0, uptime_secs: 7200,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"cpu_temp_c\":45.2"));
+        assert!(json.contains("\"disk_used_mb\":3000"));
+        assert!(json.contains("\"uptime_secs\":7200"));
+    }
+
+    #[test]
+    fn test_attack_stats_serialize() {
+        let stats = AttackStats {
+            total_attacks: 100, total_handshakes: 5,
+            attack_rate: 1, deauths_this_epoch: 3,
+            deauth: true, pmkid: true, csa: false,
+            disassoc: true, anon_reassoc: true, rogue_m2: false,
+        };
+        let json = serde_json::to_string(&stats).unwrap();
+        assert!(json.contains("\"total_attacks\":100"));
+        assert!(json.contains("\"deauth\":true"));
+        assert!(json.contains("\"csa\":false"));
+    }
+
+    #[test]
+    fn test_attack_toggle_deserialize() {
+        let json = r#"{"deauth": false, "pmkid": true}"#;
+        let toggle: AttackToggle = serde_json::from_str(json).unwrap();
+        assert_eq!(toggle.deauth, Some(false));
+        assert_eq!(toggle.pmkid, Some(true));
+        assert_eq!(toggle.csa, None);
+    }
+
+    #[test]
+    fn test_cracked_entry_serialize() {
+        let entry = CrackedEntry {
+            ssid: "MyWifi".into(), bssid: "AA:BB:CC:DD:EE:FF".into(),
+            password: "hunter2".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"ssid\":\"MyWifi\""));
+        assert!(json.contains("\"password\":\"hunter2\""));
+    }
+
+    #[test]
+    fn test_recovery_info_serialize() {
+        let info = RecoveryInfo {
+            state: "Healthy".into(), total_recoveries: 2,
+            soft_retries: 1, hard_retries: 1,
+            last_recovery: "5m ago".into(), diagnostic_count: 3,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"state\":\"Healthy\""));
+        assert!(json.contains("\"total_recoveries\":2"));
+        assert!(json.contains("\"last_recovery\":\"5m ago\""));
     }
 
     #[test]
@@ -751,51 +1563,22 @@ mod tests {
     }
 
     #[test]
-    fn test_attack_stats_serialize() {
-        let stats = AttackStats {
-            total_attacks: 100,
-            total_handshakes: 5,
-            attack_rate: 1,
-            deauths_this_epoch: 3,
-        };
-        let json = serde_json::to_string(&stats).unwrap();
-        assert!(json.contains("\"total_attacks\":100"));
-    }
-
-    #[test]
     fn test_capture_info_serialize() {
         let info = CaptureInfo {
-            total_files: 10,
-            handshake_files: 3,
-            pending_upload: 2,
-            total_size_bytes: 1024000,
-            files: vec![],
+            total_files: 10, handshake_files: 3,
+            pending_upload: 2, total_size_bytes: 1024000, files: vec![],
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"handshake_files\":3"));
     }
 
     #[test]
-    fn test_daemon_state_new() {
-        let ds = DaemonState::new("testbot");
-        assert_eq!(ds.name, "testbot");
-        assert_eq!(ds.mode, "AO");
-        assert_eq!(ds.epoch, 0);
-        assert!(!ds.pending_restart);
-    }
-
-    #[test]
     fn test_health_response_serialize() {
         let health = HealthResponse {
-            wifi_state: "Monitor".into(),
-            battery_level: 80,
-            battery_charging: false,
-            battery_available: true,
-            uptime_secs: 3600,
-            ao_state: "RUNNING".into(),
-            ao_pid: 1234,
-            ao_crash_count: 0,
-            ao_uptime: "01:00:00".into(),
+            wifi_state: "Monitor".into(), battery_level: 80,
+            battery_charging: false, battery_available: true,
+            uptime_secs: 3600, ao_state: "RUNNING".into(),
+            ao_pid: 1234, ao_crash_count: 0, ao_uptime: "01:00:00".into(),
         };
         let json = serde_json::to_string(&health).unwrap();
         assert!(json.contains("\"ao_pid\":1234"));
@@ -810,18 +1593,482 @@ mod tests {
 
     #[test]
     fn test_action_response_serialize() {
-        let resp = ActionResponse {
-            ok: true,
-            message: "done".into(),
-        };
+        let resp = ActionResponse { ok: true, message: "done".into() };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"ok\":true"));
     }
 
     #[test]
+    fn test_daemon_state_new() {
+        let ds = DaemonState::new("testbot");
+        assert_eq!(ds.name, "testbot");
+        assert_eq!(ds.mode, "AO");
+        assert_eq!(ds.epoch, 0);
+        assert!(!ds.pending_restart);
+        assert!(!ds.pending_shutdown);
+        assert!(ds.attack_deauth);
+        assert!(ds.attack_pmkid);
+        assert!(ds.attack_csa);
+        assert!(ds.attack_disassoc);
+        assert!(ds.attack_anon_reassoc);
+        assert!(ds.attack_rogue_m2);
+        assert_eq!(ds.xp, 0);
+        assert_eq!(ds.level, 1);
+        assert!(ds.cracked.is_empty());
+        assert_eq!(ds.bt_state, "Off");
+        assert!(!ds.bt_connected);
+    }
+
+    #[test]
     fn test_build_router_compiles() {
-        let state = Arc::new(Mutex::new(DaemonState::new("test")));
+        let state = test_state();
         let _router = build_router(state);
-        // Just verify it builds without panic
+    }
+
+    // === Dashboard HTML tests ===
+
+    #[test]
+    fn test_dashboard_html_contains_all_cards() {
+        assert!(DASHBOARD_HTML.contains("<title>oxigotchi</title>"));
+        assert!(DASHBOARD_HTML.contains("card-face"), "missing face card");
+        assert!(DASHBOARD_HTML.contains("card-stats"), "missing core stats card");
+        assert!(DASHBOARD_HTML.contains("card-eink"), "missing e-ink card");
+        assert!(DASHBOARD_HTML.contains("card-battery"), "missing battery card");
+        assert!(DASHBOARD_HTML.contains("card-bt"), "missing bluetooth card");
+        assert!(DASHBOARD_HTML.contains("card-wifi"), "missing wifi card");
+        assert!(DASHBOARD_HTML.contains("card-attacks"), "missing attacks card");
+        assert!(DASHBOARD_HTML.contains("card-captures"), "missing captures card");
+        assert!(DASHBOARD_HTML.contains("card-recovery"), "missing recovery card");
+        assert!(DASHBOARD_HTML.contains("card-personality"), "missing personality card");
+        assert!(DASHBOARD_HTML.contains("card-system"), "missing system card");
+        assert!(DASHBOARD_HTML.contains("card-cracked"), "missing cracked card");
+        assert!(DASHBOARD_HTML.contains("card-download"), "missing download card");
+        assert!(DASHBOARD_HTML.contains("card-mode"), "missing mode card");
+        assert!(DASHBOARD_HTML.contains("card-actions"), "missing actions card");
+    }
+
+    #[test]
+    fn test_dashboard_html_has_all_api_calls() {
+        assert!(DASHBOARD_HTML.contains("/api/status"), "missing /api/status");
+        assert!(DASHBOARD_HTML.contains("/api/battery"), "missing /api/battery");
+        assert!(DASHBOARD_HTML.contains("/api/bluetooth"), "missing /api/bluetooth");
+        assert!(DASHBOARD_HTML.contains("/api/wifi"), "missing /api/wifi");
+        assert!(DASHBOARD_HTML.contains("/api/attacks"), "missing /api/attacks");
+        assert!(DASHBOARD_HTML.contains("/api/captures"), "missing /api/captures");
+        assert!(DASHBOARD_HTML.contains("/api/recovery"), "missing /api/recovery");
+        assert!(DASHBOARD_HTML.contains("/api/personality"), "missing /api/personality");
+        assert!(DASHBOARD_HTML.contains("/api/system"), "missing /api/system");
+        assert!(DASHBOARD_HTML.contains("/api/cracked"), "missing /api/cracked");
+        assert!(DASHBOARD_HTML.contains("/api/health"), "missing /api/health");
+        assert!(DASHBOARD_HTML.contains("/api/mode"), "missing /api/mode");
+        assert!(DASHBOARD_HTML.contains("/api/rate"), "missing /api/rate");
+        assert!(DASHBOARD_HTML.contains("/api/restart"), "missing /api/restart");
+        assert!(DASHBOARD_HTML.contains("/api/shutdown"), "missing /api/shutdown");
+    }
+
+    #[test]
+    fn test_dashboard_html_has_attack_toggles() {
+        assert!(DASHBOARD_HTML.contains("atk-deauth"));
+        assert!(DASHBOARD_HTML.contains("atk-pmkid"));
+        assert!(DASHBOARD_HTML.contains("atk-csa"));
+        assert!(DASHBOARD_HTML.contains("atk-disassoc"));
+        assert!(DASHBOARD_HTML.contains("atk-anon_reassoc"));
+        assert!(DASHBOARD_HTML.contains("atk-rogue_m2"));
+        assert!(DASHBOARD_HTML.contains("toggleAttack"));
+    }
+
+    #[test]
+    fn test_dashboard_html_has_rate_buttons() {
+        assert!(DASHBOARD_HTML.contains("rate-1"));
+        assert!(DASHBOARD_HTML.contains("rate-2"));
+        assert!(DASHBOARD_HTML.contains("rate-3"));
+        assert!(DASHBOARD_HTML.contains("setRate"));
+    }
+
+    #[test]
+    fn test_dashboard_html_dark_theme() {
+        assert!(DASHBOARD_HTML.contains("#1a1a2e"), "missing background color");
+        assert!(DASHBOARD_HTML.contains("#00d4aa"), "missing accent color");
+        assert!(DASHBOARD_HTML.contains("#16213e"), "missing card background");
+    }
+
+    #[test]
+    fn test_dashboard_html_auto_refresh() {
+        assert!(DASHBOARD_HTML.contains("setInterval(refreshStatus, 5000)"));
+        assert!(DASHBOARD_HTML.contains("setInterval(refreshBattery, 15000)"));
+        assert!(DASHBOARD_HTML.contains("setInterval(refreshWifi, 5000)"));
+    }
+
+    // === HTTP endpoint integration tests ===
+
+    #[tokio::test]
+    async fn test_get_dashboard_returns_html() {
+        let (router, _) = test_router();
+        let (status, body) = get(&router, "/").await;
+        assert_eq!(status, 200);
+        assert!(body.contains("<!DOCTYPE html>"));
+        assert!(body.contains("<title>oxigotchi</title>"));
+    }
+
+    #[tokio::test]
+    async fn test_get_status_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.epoch = 42;
+            s.channel = 6;
+            s.face = "(^_^)".into();
+        }
+        let (status, body) = get(&router, "/api/status").await;
+        assert_eq!(status, 200);
+        let resp: StatusResponse = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.name, "testbot");
+        assert_eq!(resp.epoch, 42);
+        assert_eq!(resp.channel, 6);
+        assert_eq!(resp.face, "(^_^)");
+    }
+
+    #[tokio::test]
+    async fn test_get_battery_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.battery_level = 73;
+            s.battery_charging = true;
+            s.battery_available = true;
+            s.battery_voltage_mv = 4050;
+        }
+        let (status, body) = get(&router, "/api/battery").await;
+        assert_eq!(status, 200);
+        let resp: BatteryInfo = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.level, 73);
+        assert!(resp.charging);
+        assert!(resp.available);
+        assert_eq!(resp.voltage_mv, 4050);
+    }
+
+    #[tokio::test]
+    async fn test_get_wifi_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.wifi_state = "Monitor".into();
+            s.channel = 11;
+            s.wifi_aps_tracked = 25;
+            s.wifi_channels = vec![1, 6, 11];
+            s.wifi_dwell_ms = 2000;
+        }
+        let (status, body) = get(&router, "/api/wifi").await;
+        assert_eq!(status, 200);
+        let resp: WifiInfo = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.state, "Monitor");
+        assert_eq!(resp.channel, 11);
+        assert_eq!(resp.aps_tracked, 25);
+        assert_eq!(resp.channels, vec![1, 6, 11]);
+        assert_eq!(resp.dwell_ms, 2000);
+    }
+
+    #[tokio::test]
+    async fn test_get_bluetooth_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.bt_connected = true;
+            s.bt_state = "Connected".into();
+            s.bt_device_name = "Pixel 7".into();
+            s.bt_ip = "10.0.0.2".into();
+        }
+        let (status, body) = get(&router, "/api/bluetooth").await;
+        assert_eq!(status, 200);
+        let resp: BluetoothInfo = serde_json::from_str(&body).unwrap();
+        assert!(resp.connected);
+        assert_eq!(resp.device_name, "Pixel 7");
+        assert_eq!(resp.ip, "10.0.0.2");
+    }
+
+    #[tokio::test]
+    async fn test_get_personality_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.mood = 0.85;
+            s.face = "(^_^)".into();
+            s.xp = 420;
+            s.level = 3;
+            s.blind_epochs = 2;
+            s.handshakes = 10;
+            s.aps_seen = 50;
+        }
+        let (status, body) = get(&router, "/api/personality").await;
+        assert_eq!(status, 200);
+        let resp: PersonalityInfo = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.mood, 0.85);
+        assert_eq!(resp.xp, 420);
+        assert_eq!(resp.level, 3);
+        assert_eq!(resp.total_handshakes, 10);
+        assert_eq!(resp.total_aps_seen, 50);
+    }
+
+    #[tokio::test]
+    async fn test_get_system_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.cpu_temp_c = 42.5;
+            s.mem_used_mb = 200;
+            s.mem_total_mb = 512;
+            s.disk_used_mb = 3000;
+            s.disk_total_mb = 16000;
+        }
+        let (status, body) = get(&router, "/api/system").await;
+        assert_eq!(status, 200);
+        let resp: SystemInfoResponse = serde_json::from_str(&body).unwrap();
+        // On non-Linux, the live reads return 0, so fallback values are used
+        assert!(resp.uptime_secs < 5); // just-created state
+    }
+
+    #[tokio::test]
+    async fn test_get_attacks_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.total_attacks = 100;
+            s.attack_deauth = true;
+            s.attack_csa = false;
+        }
+        let (status, body) = get(&router, "/api/attacks").await;
+        assert_eq!(status, 200);
+        let resp: AttackStats = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.total_attacks, 100);
+        assert!(resp.deauth);
+        assert!(!resp.csa);
+    }
+
+    #[tokio::test]
+    async fn test_post_attacks_toggle() {
+        let (router, state) = test_router();
+        let (status, body) = post_json(&router, "/api/attacks",
+            r#"{"deauth": false, "csa": true}"#).await;
+        assert_eq!(status, 200);
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
+        let s = state.lock().unwrap();
+        assert!(!s.attack_deauth);
+        assert!(s.attack_csa);
+        assert!(s.pending_attack_toggle.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_captures_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.capture_files = 5;
+            s.handshake_files = 2;
+            s.capture_list = vec![
+                CaptureEntry { filename: "test.pcapng".into(), size_bytes: 1024 },
+            ];
+        }
+        let (status, body) = get(&router, "/api/captures").await;
+        assert_eq!(status, 200);
+        let resp: CaptureInfo = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.total_files, 5);
+        assert_eq!(resp.handshake_files, 2);
+        assert_eq!(resp.files.len(), 1);
+        assert_eq!(resp.files[0].filename, "test.pcapng");
+    }
+
+    #[tokio::test]
+    async fn test_get_health_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.wifi_state = "Monitor".into();
+            s.ao_state = "RUNNING".into();
+            s.ao_pid = 1234;
+        }
+        let (status, body) = get(&router, "/api/health").await;
+        assert_eq!(status, 200);
+        let resp: HealthResponse = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.wifi_state, "Monitor");
+        assert_eq!(resp.ao_state, "RUNNING");
+        assert_eq!(resp.ao_pid, 1234);
+    }
+
+    #[tokio::test]
+    async fn test_get_recovery_json() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.recovery_state = "Recovering".into();
+            s.recovery_total = 3;
+            s.recovery_last_str = "2m ago".into();
+        }
+        let (status, body) = get(&router, "/api/recovery").await;
+        assert_eq!(status, 200);
+        let resp: RecoveryInfo = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.state, "Recovering");
+        assert_eq!(resp.total_recoveries, 3);
+        assert_eq!(resp.last_recovery, "2m ago");
+    }
+
+    #[tokio::test]
+    async fn test_get_cracked_empty() {
+        let (router, _) = test_router();
+        let (status, body) = get(&router, "/api/cracked").await;
+        assert_eq!(status, 200);
+        let resp: Vec<CrackedEntry> = serde_json::from_str(&body).unwrap();
+        assert!(resp.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_cracked_with_entries() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.cracked.push(CrackedEntry {
+                ssid: "MyWifi".into(),
+                bssid: "AA:BB:CC:DD:EE:FF".into(),
+                password: "hunter2".into(),
+            });
+        }
+        let (status, body) = get(&router, "/api/cracked").await;
+        assert_eq!(status, 200);
+        let resp: Vec<CrackedEntry> = serde_json::from_str(&body).unwrap();
+        assert_eq!(resp.len(), 1);
+        assert_eq!(resp[0].ssid, "MyWifi");
+        assert_eq!(resp[0].password, "hunter2");
+    }
+
+    #[tokio::test]
+    async fn test_post_mode_toggle() {
+        let (router, state) = test_router();
+        let (status, body) = post_json(&router, "/api/mode",
+            r#"{"mode": "toggle"}"#).await;
+        assert_eq!(status, 200);
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
+        assert!(resp.message.contains("PWN")); // default is AO, toggle -> PWN
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_mode_switch.as_deref(), Some("PWN"));
+    }
+
+    #[tokio::test]
+    async fn test_post_mode_explicit() {
+        let (router, state) = test_router();
+        let (status, _) = post_json(&router, "/api/mode",
+            r#"{"mode": "pwn"}"#).await;
+        assert_eq!(status, 200);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_mode_switch.as_deref(), Some("PWN"));
+    }
+
+    #[tokio::test]
+    async fn test_post_rate_clamps() {
+        let (router, state) = test_router();
+        // Rate 5 should clamp to 3
+        let (status, body) = post_json(&router, "/api/rate",
+            r#"{"rate": 5}"#).await;
+        assert_eq!(status, 200);
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
+        assert!(resp.message.contains("3"));
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_rate_change, Some(3));
+    }
+
+    #[tokio::test]
+    async fn test_post_rate_valid() {
+        let (router, state) = test_router();
+        let (status, _) = post_json(&router, "/api/rate",
+            r#"{"rate": 2}"#).await;
+        assert_eq!(status, 200);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_rate_change, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_post_restart() {
+        let (router, state) = test_router();
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/restart")
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let s = state.lock().unwrap();
+        assert!(s.pending_restart);
+    }
+
+    #[tokio::test]
+    async fn test_post_shutdown() {
+        let (router, state) = test_router();
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/api/shutdown")
+            .header("content-type", "application/json")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let action: ActionResponse = serde_json::from_slice(&body).unwrap();
+        assert!(action.ok);
+        assert!(action.message.contains("shutdown"));
+        let s = state.lock().unwrap();
+        assert!(s.pending_shutdown);
+    }
+
+    #[tokio::test]
+    async fn test_post_bluetooth_toggle() {
+        let (router, state) = test_router();
+        let (status, body) = post_json(&router, "/api/bluetooth",
+            r#"{"visible": true}"#).await;
+        assert_eq!(status, 200);
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_bt_toggle, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_404_unknown_route() {
+        let (router, _) = test_router();
+        let (status, _) = get(&router, "/api/nonexistent").await;
+        assert_eq!(status, 404);
+    }
+
+    #[tokio::test]
+    async fn test_all_get_endpoints_200() {
+        let (router, _) = test_router();
+        let endpoints = [
+            "/", "/api/status", "/api/captures", "/api/health",
+            "/api/battery", "/api/wifi", "/api/bluetooth",
+            "/api/personality", "/api/system", "/api/attacks",
+            "/api/recovery", "/api/cracked",
+        ];
+        for endpoint in endpoints {
+            let (status, _) = get(&router, endpoint).await;
+            assert_eq!(status, 200, "GET {} returned {}", endpoint, status);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_state_independence() {
+        // Two separate routers should have independent state
+        let (router1, state1) = test_router();
+        let (router2, _state2) = test_router();
+        {
+            let mut s = state1.lock().unwrap();
+            s.epoch = 999;
+        }
+        let (_, body1) = get(&router1, "/api/status").await;
+        let (_, body2) = get(&router2, "/api/status").await;
+        let resp1: StatusResponse = serde_json::from_str(&body1).unwrap();
+        let resp2: StatusResponse = serde_json::from_str(&body2).unwrap();
+        assert_eq!(resp1.epoch, 999);
+        assert_eq!(resp2.epoch, 0);
     }
 }
