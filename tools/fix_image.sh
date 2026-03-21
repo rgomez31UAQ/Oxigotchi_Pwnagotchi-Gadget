@@ -158,7 +158,7 @@ BLOG
 sudo cp /tmp/bootlog.sh $PI/usr/local/bin/bootlog.sh
 sudo chmod +x $PI/usr/local/bin/bootlog.sh
 
-echo "=== 11. Bootlog service ==="
+echo "=== 11. Bootlog service (async — non-blocking) ==="
 cat > /tmp/bootlog.service <<'BLS'
 [Unit]
 Description=Boot diagnostics and self-healing
@@ -166,8 +166,8 @@ After=local-fs.target boot-firmware.mount network.target
 Wants=local-fs.target
 
 [Service]
-Type=oneshot
-ExecStart=/usr/local/bin/bootlog.sh
+Type=simple
+ExecStart=/bin/bash -c "/usr/local/bin/bootlog.sh &"
 RemainAfterExit=yes
 TimeoutStartSec=60
 
@@ -274,8 +274,8 @@ Description=USB0 IP fallback
 After=NetworkManager.service
 
 [Service]
-Type=oneshot
-ExecStart=/usr/local/bin/usb0-fallback.sh
+Type=simple
+ExecStart=/bin/bash -c "sleep 30; if ! ip addr show usb0 | grep -q 10.0.0.2; then ip addr add 10.0.0.2/24 dev usb0 2>/dev/null; ip link set usb0 up 2>/dev/null; fi; if ! ip addr show usb0 | grep -q 192.168.137.2; then ip addr add 192.168.137.2/24 dev usb0 2>/dev/null; fi"
 RemainAfterExit=yes
 
 [Install]
@@ -284,7 +284,10 @@ UFB
 sudo cp /tmp/usb0-fallback.service $PI/etc/systemd/system/usb0-fallback.service
 sudo ln -sf /etc/systemd/system/usb0-fallback.service $PI/etc/systemd/system/multi-user.target.wants/usb0-fallback.service
 
-echo "=== 26. Clean journal logs from old boots ==="
+echo "=== 26. Disable fix-ndev (superseded by wifi-recovery.service) ==="
+sudo rm -f $PI/etc/systemd/system/multi-user.target.wants/fix-ndev.service 2>/dev/null
+
+echo "=== 27. Clean journal logs from old boots ==="
 sudo rm -rf $PI/var/log/journal/* 2>/dev/null
 
 echo ""

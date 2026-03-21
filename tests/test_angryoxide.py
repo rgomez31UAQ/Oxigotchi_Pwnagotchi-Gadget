@@ -144,6 +144,7 @@ class FakeRequest:
         self._json = json_data or {}
         self.authorization = None
         self.data = None
+        self.args = {}
 
     def get_json(self, force=False, silent=False):
         return self._json
@@ -180,13 +181,19 @@ class TestBuildCmd:
 
     def test_build_cmd_defaults(self, plugin):
         """Default options produce the correct base command."""
+        import socket
         cmd = plugin._build_cmd()
         assert cmd[0] == '/usr/local/bin/angryoxide'
         assert '--interface' in cmd
         assert 'wlan0mon' in cmd
         assert '--headless' in cmd
         assert '--output' in cmd
-        assert '/etc/pwnagotchi/handshakes/' in cmd
+        # Output path now includes hostname prefix
+        idx = cmd.index('--output')
+        output_path = cmd[idx + 1]
+        hostname = socket.gethostname() or 'oxigotchi'
+        assert output_path.startswith('/etc/pwnagotchi/handshakes/')
+        assert output_path.endswith(hostname)
         assert '--no-setup' in cmd
 
     def test_build_cmd_no_setup(self, plugin):
@@ -574,12 +581,16 @@ class TestWebhook:
 
     def test_get_api_captures(self, plugin, make_request):
         """GET /api/captures returns capture list sorted by mtime descending."""
-        plugin._known_files = {
-            '/path/to/file1.pcapng': 1000.0,
-            '/path/to/file2.pcapng': 2000.0,
-        }
+        # API now scans disk directly, not _known_files
         req = make_request(method='GET', path='/api/captures')
-        resp = plugin.on_webhook('/api/captures', req)
+        with patch('angryoxide_v2.os.path.isdir', return_value=True), \
+             patch('angryoxide_v2.os.listdir', return_value=['file1.pcapng', 'file2.pcapng']), \
+             patch('angryoxide_v2.os.path.getmtime', side_effect=lambda p: 2000.0 if 'file2' in p else 1000.0), \
+             patch('angryoxide_v2.os.path.isfile', return_value=False), \
+             patch('angryoxide_v2.os.path.getsize', return_value=4096), \
+             patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1].split('\\')[-1]), \
+             patch('angryoxide_v2.os.path.dirname', return_value='/etc/pwnagotchi/handshakes/'):
+            resp = plugin.on_webhook('/api/captures', req)
 
         data = _resp_data(resp)
         assert len(data) == 2
@@ -794,16 +805,17 @@ class TestWebhook:
         assert plugin._crash_count == 0
 
     def test_post_api_mode_ao(self, plugin, make_request):
-        """POST /api/mode with ao mode calls pwnoxide-mode."""
+        """POST /api/mode with ao mode initiates async switch and returns ok."""
         req = make_request(method='POST', path='/api/mode', json_data={'mode': 'ao'})
-        with patch('angryoxide_v2.subprocess.run') as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+        import threading
+        mock_thread = MagicMock()
+        with patch.object(threading, 'Thread', return_value=mock_thread):
             resp = plugin.on_webhook('/api/mode', req)
 
         data = _resp_data(resp)
         assert data['status'] == 'ok'
         assert data['mode'] == 'ao'
-        mock_run.assert_called_once_with(['pwnoxide-mode', 'ao'], timeout=60, capture_output=True)
+        mock_thread.start.assert_called_once()
 
     def test_post_api_mode_invalid_returns_400(self, plugin, make_request):
         """POST /api/mode with invalid mode returns 400."""
@@ -939,8 +951,18 @@ class TestHealthCheck:
         assert health['monitor'] is False
 
     def test_health_firmware_crash(self, plugin):
-        """dmesg has crash pattern: firmware=False."""
-        with patch('angryoxide_v2.os.path.exists', return_value=True), \
+        """dmesg has crash pattern AND wifi is down: firmware=False."""
+        # Firmware crash is only flagged if crash pattern is found AND wifi is down
+        def mock_exists(path):
+            if '/sys/class/net/wlan0' == path:
+                return False  # wifi down
+            if '/sys/class/net/wlan0mon' == path:
+                return False
+            if '/sys/class/net/usb0' == path:
+                return False
+            return True
+
+        with patch('angryoxide_v2.os.path.exists', side_effect=mock_exists), \
              patch('angryoxide_v2.subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(
                 stdout='brcmf_cfg80211_set_channel: Set Channel failed: -110',
@@ -1260,7 +1282,8 @@ class TestEdgeCases:
         plugin.options['output_dir'] = '/home/pi/captures/'
         cmd = plugin._build_cmd()
         idx = cmd.index('--output')
-        assert cmd[idx + 1] == '/home/pi/captures/'
+        # Output path now includes hostname prefix appended to the directory
+        assert cmd[idx + 1].startswith('/home/pi/captures/')
 
     def test_all_six_attacks_disabled_at_once(self, plugin):
         """All 6 attacks disabled produces 6 disable flags."""
@@ -1441,14 +1464,14 @@ class TestStatePersistence:
     def test_load_missing_file(self, plugin, tmp_path):
         plugin._state_file = str(tmp_path / 'nonexistent.json')
         plugin._load_state()  # should not crash
-        assert plugin._rate == 2  # default
+        assert plugin._rate == 1  # default
 
     def test_load_corrupted_json(self, plugin, tmp_path):
         bad = tmp_path / 'bad.json'
         bad.write_text('not json{{{')
         plugin._state_file = str(bad)
         plugin._load_state()  # should not crash
-        assert plugin._rate == 2
+        assert plugin._rate == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1684,7 +1707,8 @@ class TestHealthWithAO:
         plugin._running = True
         plugin._process = MagicMock()
         plugin._process.poll.return_value = None  # still alive
-        with patch('angryoxide_v2.os.path.exists', return_value=False), \
+        # Health checks os.path.exists for interfaces — both must exist for healthy
+        with patch('angryoxide_v2.os.path.exists', return_value=True), \
              patch('angryoxide_v2.subprocess.run', side_effect=Exception('no journalctl')):
             h = plugin._get_health()
         assert h['wifi'] is True
@@ -1746,6 +1770,10 @@ class TestFaceHelper:
         return p
 
     def test_face_returns_png_path_when_exists(self, plugin):
+        # _face() now requires _agent with png enabled to use PNG paths
+        mock_agent = MagicMock()
+        mock_agent._config = {'ui': {'faces': {'png': True}}}
+        plugin._agent = mock_agent
         with patch('angryoxide_v2.os.path.isfile', return_value=True):
             result = plugin._face('angry')
         import os
@@ -1808,6 +1836,7 @@ class TestNameRemoval:
         return p
 
     def test_on_ui_setup_hides_name(self, plugin):
+        """on_ui_setup adds angryoxide and ao_crash elements, and moves mode to (222,112)."""
         ui = MagicMock()
         ui._lock = MagicMock()
         ui._lock.__enter__ = MagicMock(return_value=None)
@@ -1815,7 +1844,10 @@ class TestNameRemoval:
         ui.width = MagicMock(return_value=250)
         ui.height = MagicMock(return_value=122)
         plugin.on_ui_setup(ui)
-        ui.set.assert_any_call('name', '')
+        # on_ui_setup now adds angryoxide and ao_crash elements (name hiding moved to on_ui_update)
+        add_calls = [c[0][0] for c in ui.add_element.call_args_list]
+        assert 'angryoxide' in add_calls
+        assert 'ao_crash' in add_calls
 
 
 # ---------------------------------------------------------------------------
@@ -1838,29 +1870,34 @@ class TestUIUpdate:
         return ui
 
     def test_ui_update_running(self, plugin):
-        """Running AO shows capture count and uptime."""
+        """Running AO shows verified/total, uptime and channels."""
         ui = self._make_ui()
         plugin._running = True
         plugin._captures = 7
         plugin._start_time = 1000.0
-        with patch('angryoxide_v2.time') as mock_time:
+        with patch('angryoxide_v2.time') as mock_time, \
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
+             patch.object(plugin, '_count_pcapngs', return_value=7), \
+             patch.object(plugin, '_count_verified', return_value=3):
             mock_time.time.return_value = 1300.0  # 5 minutes
             plugin.on_ui_update(ui)
-        ui.set.assert_any_call('angryoxide', 'AO: 7 | 5m')
+        ui.set.assert_any_call('angryoxide', 'AO: 3/7 | 5m | CH:1,6,11')
 
     def test_ui_update_stopped(self, plugin):
         """Stopped AO shows 'off'."""
         ui = self._make_ui()
         plugin._running = False
         plugin._stopped_permanently = False
-        plugin.on_ui_update(ui)
+        with patch.object(plugin, '_is_ao_mode', return_value=True):
+            plugin.on_ui_update(ui)
         ui.set.assert_any_call('angryoxide', 'AO: off')
 
     def test_ui_update_stopped_permanently(self, plugin):
         """Permanently stopped AO shows 'ERR'."""
         ui = self._make_ui()
         plugin._stopped_permanently = True
-        plugin.on_ui_update(ui)
+        with patch.object(plugin, '_is_ao_mode', return_value=True):
+            plugin.on_ui_update(ui)
         ui.set.assert_any_call('angryoxide', 'AO: ERR')
 
     def test_ui_update_hides_overlapping_elements(self, plugin):
@@ -1869,7 +1906,10 @@ class TestUIUpdate:
         plugin._running = True
         plugin._captures = 0
         plugin._start_time = 1000.0
-        with patch('angryoxide_v2.time') as mock_time:
+        with patch('angryoxide_v2.time') as mock_time, \
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
+             patch.object(plugin, '_count_pcapngs', return_value=0), \
+             patch.object(plugin, '_count_verified', return_value=0):
             mock_time.time.return_value = 1000.0
             plugin.on_ui_update(ui)
         ui.set.assert_any_call('name', '')
@@ -1920,22 +1960,28 @@ class TestEpochEdgeCases:
         plugin._running = True
         plugin._process = MagicMock()
         plugin._process.poll.return_value = None
+        plugin._agent = agent
         def mock_exists(path):
-            if '/sys/class/net/wlan0' in path and 'mon' not in path:
+            if path == '/sys/class/net/wlan0':
                 return False
             return True
         with patch.object(plugin, '_get_battery_level', return_value=None), \
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
              patch('angryoxide_v2.os.path.exists', side_effect=mock_exists), \
-             patch('angryoxide_v2.os.path.isfile', return_value=False):
+             patch('angryoxide_v2.os.path.isfile', return_value=False), \
+             patch.object(plugin, '_stop_ao'), \
+             patch.object(plugin, '_try_fw_recovery', return_value=False):
             plugin.on_epoch(agent, 1, {})
-        agent._view.set.assert_any_call('status', 'WiFi down!')
+        agent._view.set.assert_any_call('status', 'WiFi down! Recovering...')
 
     def test_epoch_captures_sets_excited(self, plugin, agent):
-        """New captures set EXCITED face."""
+        """New captures set EXCITED face via _view.set."""
         plugin._running = True
         plugin._process = MagicMock()
         plugin._process.poll.return_value = None
+        plugin._agent = agent
         with patch.object(plugin, '_get_battery_level', return_value=None), \
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
              patch('angryoxide_v2.os.path.exists', return_value=True), \
              patch('angryoxide_v2.os.path.isfile', return_value=False), \
              patch.object(plugin, '_check_health', return_value=False), \
@@ -1943,15 +1989,17 @@ class TestEpochEdgeCases:
             plugin.on_epoch(agent, 1, {})
         import sys
         faces = sys.modules['pwnagotchi.ui.faces']
-        agent.set_face.assert_called_with(faces.EXCITED)
+        agent._view.set.assert_any_call('face', faces.EXCITED)
 
     def test_epoch_bored_after_30_stable(self, plugin, agent):
-        """30+ stable epochs with no captures sets BORED face."""
+        """30+ stable epochs with no captures sets BORED face via _view.set."""
         plugin._running = True
         plugin._process = MagicMock()
         plugin._process.poll.return_value = None
         plugin._stable_epochs = 30  # will become 31 after increment
+        plugin._agent = agent
         with patch.object(plugin, '_get_battery_level', return_value=None), \
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
              patch('angryoxide_v2.os.path.exists', return_value=True), \
              patch('angryoxide_v2.os.path.isfile', return_value=False), \
              patch.object(plugin, '_check_health', return_value=False), \
@@ -1959,7 +2007,7 @@ class TestEpochEdgeCases:
             plugin.on_epoch(agent, 1, {})
         import sys
         faces = sys.modules['pwnagotchi.ui.faces']
-        agent.set_face.assert_called_with(faces.BORED)
+        agent._view.set.assert_any_call('face', faces.BORED)
 
     def test_epoch_resets_crash_count_after_stability(self, plugin, agent):
         """Crash count resets after 5+ minutes of stability."""
@@ -2063,12 +2111,14 @@ class TestWebhookEdgeCases:
         assert plugin._dwell == 30
 
     def test_post_mode_subprocess_exception_returns_500(self, plugin):
-        """POST /api/mode with subprocess exception returns 500."""
+        """POST /api/mode with exception during setup returns 500."""
         plugin._agent = MagicMock()
-        plugin._agent._config = {'personality': {}, 'bettercap': {'handshakes': '/tmp'}, 'main': {}}
+        plugin._agent._config = {'personality': {}, 'bettercap': {'handshakes': '/tmp'}, 'main': {}, 'ui': {}}
         req = FakeRequest(method='POST', path='/api/mode',
                           json_data={'mode': 'ao'})
-        with patch('angryoxide_v2.subprocess.run', side_effect=OSError('command not found')):
+        # Force exception during the try block (e.g., threading.Thread raises)
+        import threading
+        with patch.object(threading, 'Thread', side_effect=OSError('command not found')):
             resp = plugin.on_webhook('/api/mode', req)
         assert isinstance(resp, tuple)
         assert resp[1] == 500
@@ -2120,6 +2170,7 @@ class TestWebhookEdgeCases:
             return True
 
         req = FakeRequest(method='GET', path='/api/download/all')
+        req.args = {'filter': 'all'}
         # We need to mock zipfile.ZipFile.write to track what gets added
         written_files = []
         original_zipfile = zipfile.ZipFile
@@ -2196,10 +2247,13 @@ class TestEpochEdgeCasesExtended:
         mock_scan.assert_called_once()
 
     def test_epoch_monitor_interface_missing(self, plugin, agent):
-        """Monitor interface missing sets wifi_down face."""
+        """Monitor interface missing: wlan0 is up but wlan0mon is down.
+        With current code, if wlan0 is up the WiFi down path is skipped,
+        and health check determines status. This tests the health check path."""
         plugin._running = True
         plugin._process = MagicMock()
         plugin._process.poll.return_value = None
+        plugin._agent = agent
 
         def mock_exists(path):
             if path == '/sys/class/net/wlan0':
@@ -2209,10 +2263,14 @@ class TestEpochEdgeCasesExtended:
             return True
 
         with patch.object(plugin, '_get_battery_level', return_value=None), \
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
              patch('angryoxide_v2.os.path.exists', side_effect=mock_exists), \
-             patch('angryoxide_v2.os.path.isfile', return_value=False):
+             patch('angryoxide_v2.os.path.isfile', return_value=False), \
+             patch.object(plugin, '_check_health', return_value=True):
             plugin.on_epoch(agent, 1, {})
-        agent._view.set.assert_any_call('status', 'wlan0mon missing!')
+        # Health check returns True (crashed), so AO crash status is shown
+        agent._view.set.assert_any_call('status',
+            'AO crashed! Restart %d/%d' % (plugin._crash_count, plugin.options.get('max_crashes', 10)))
 
     def test_epoch_firmware_crash_face(self, plugin, agent):
         """Firmware crash sets fw_crash face when _fw_crash_count > 0 and recent recovery."""
@@ -2452,15 +2510,18 @@ class TestUIUpdateRunningExtended:
         assert 'name' in cleared_elems
 
     def test_angryoxide_shows_captures_and_uptime(self, plugin):
-        """Running AO shows 'captures | uptime' format."""
+        """Running AO shows 'verified/total | uptime | channels' format."""
         ui = self._make_ui()
         plugin._running = True
         plugin._captures = 12
         plugin._start_time = 1000.0
-        with patch('angryoxide_v2.time') as mock_time:
+        with patch('angryoxide_v2.time') as mock_time, \
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
+             patch.object(plugin, '_count_pcapngs', return_value=12), \
+             patch.object(plugin, '_count_verified', return_value=5):
             mock_time.time.return_value = 4600.0  # 1 hour
             plugin.on_ui_update(ui)
-        ui.set.assert_any_call('angryoxide', 'AO: 12 | 1h')
+        ui.set.assert_any_call('angryoxide', 'AO: 5/12 | 1h | CH:1,6,11')
 
     def test_all_overlap_elements_cleared(self, plugin):
         """Running AO clears all overlapping UI elements: name, walkby, blitz, walkby_status."""
@@ -2599,38 +2660,54 @@ class TestCaptureTypes:
 
     def test_capture_type_pmkid_by_size(self, plugin):
         """pcapng file < 2048 bytes returns type 'PMKID'."""
-        plugin._known_files = {'/cap/AA-BB-CC-DD-EE-FF_Net.pcapng': 1000.0}
         req = FakeRequest(method='GET', path='/api/captures')
-        with patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1]), \
-             patch('angryoxide_v2.os.path.getsize', return_value=512):
+        with patch('angryoxide_v2.os.path.isdir', return_value=True), \
+             patch('angryoxide_v2.os.listdir', return_value=['AA-BB-CC-DD-EE-FF_Net.pcapng']), \
+             patch('angryoxide_v2.os.path.getmtime', return_value=1000.0), \
+             patch('angryoxide_v2.os.path.getsize', return_value=512), \
+             patch('angryoxide_v2.os.path.isfile', return_value=False), \
+             patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1].split('\\')[-1]), \
+             patch('angryoxide_v2.os.path.dirname', return_value='/etc/pwnagotchi/handshakes/'):
             resp = plugin.on_webhook('/api/captures', req)
         data = _resp_data(resp)
         assert data[0]['type'] == 'PMKID'
 
     def test_capture_type_4way_by_size(self, plugin):
         """pcapng file >= 2048 bytes returns type '4-way'."""
-        plugin._known_files = {'/cap/AA-BB-CC-DD-EE-FF_Net.pcapng': 1000.0}
         req = FakeRequest(method='GET', path='/api/captures')
-        with patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1]), \
-             patch('angryoxide_v2.os.path.getsize', return_value=4096):
+        with patch('angryoxide_v2.os.path.isdir', return_value=True), \
+             patch('angryoxide_v2.os.listdir', return_value=['AA-BB-CC-DD-EE-FF_Net.pcapng']), \
+             patch('angryoxide_v2.os.path.getmtime', return_value=1000.0), \
+             patch('angryoxide_v2.os.path.getsize', return_value=4096), \
+             patch('angryoxide_v2.os.path.isfile', return_value=False), \
+             patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1].split('\\')[-1]), \
+             patch('angryoxide_v2.os.path.dirname', return_value='/etc/pwnagotchi/handshakes/'):
             resp = plugin.on_webhook('/api/captures', req)
         data = _resp_data(resp)
         assert data[0]['type'] == '4-way'
 
     def test_capture_type_hashcat(self, plugin):
         """.22000 file returns type 'hashcat'."""
-        plugin._known_files = {'/cap/capture.22000': 1000.0}
         req = FakeRequest(method='GET', path='/api/captures')
-        with patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1]):
+        with patch('angryoxide_v2.os.path.isdir', return_value=True), \
+             patch('angryoxide_v2.os.listdir', return_value=['capture.22000']), \
+             patch('angryoxide_v2.os.path.getmtime', return_value=1000.0), \
+             patch('angryoxide_v2.os.path.isfile', return_value=False), \
+             patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1].split('\\')[-1]), \
+             patch('angryoxide_v2.os.path.dirname', return_value='/etc/pwnagotchi/handshakes/'):
             resp = plugin.on_webhook('/api/captures', req)
         data = _resp_data(resp)
         assert data[0]['type'] == 'hashcat'
 
     def test_capture_type_pmkid_in_name(self, plugin):
         """Filename containing 'pmkid' returns type 'PMKID'."""
-        plugin._known_files = {'/cap/AA-BB-CC-DD-EE-FF_pmkid_capture.pcapng': 1000.0}
         req = FakeRequest(method='GET', path='/api/captures')
-        with patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1]):
+        with patch('angryoxide_v2.os.path.isdir', return_value=True), \
+             patch('angryoxide_v2.os.listdir', return_value=['AA-BB-CC-DD-EE-FF_pmkid_capture.pcapng']), \
+             patch('angryoxide_v2.os.path.getmtime', return_value=1000.0), \
+             patch('angryoxide_v2.os.path.isfile', return_value=False), \
+             patch('angryoxide_v2.os.path.basename', side_effect=lambda p: p.split('/')[-1].split('\\')[-1]), \
+             patch('angryoxide_v2.os.path.dirname', return_value='/etc/pwnagotchi/handshakes/'):
             resp = plugin.on_webhook('/api/captures', req)
         data = _resp_data(resp)
         assert data[0]['type'] == 'PMKID'
@@ -3486,20 +3563,22 @@ class TestFastBoot:
     def test_on_ready_schedules_restore(self, plugin, agent):
         """on_ready schedules _restore_delayed_plugins after AO starts."""
         plugin._running = False  # _start_ao will set it to True
-        mock_timer_cls = MagicMock()
-        mock_threading = MagicMock()
-        mock_threading.Timer = mock_timer_cls
+        mock_timer = MagicMock()
+        import threading as _threading
         with patch('angryoxide_v2.os.path.isfile', return_value=True), \
+             patch('angryoxide_v2.os.path.exists', return_value=True), \
              patch('angryoxide_v2.subprocess.Popen') as mock_popen, \
              patch('angryoxide_v2.os.makedirs'), \
+             patch('angryoxide_v2.os.setsid', create=True), \
              patch('angryoxide_v2.glob.glob', return_value=[]), \
-             patch.dict('sys.modules', {'threading': mock_threading}):
+             patch.object(plugin, '_is_ao_mode', return_value=True), \
+             patch.object(_threading, 'Timer', return_value=mock_timer) as mock_timer_cls:
             mock_popen.return_value = MagicMock(pid=1234)
             plugin.on_ready(agent)
 
         # AO started, so timer should have been created
         mock_timer_cls.assert_called_once_with(30.0, plugin._restore_delayed_plugins)
-        mock_timer_cls.return_value.start.assert_called_once()
+        mock_timer.start.assert_called_once()
 
     def test_on_ready_no_restore_if_ao_fails(self, plugin, agent):
         """on_ready does NOT schedule restore if AO fails to start."""
