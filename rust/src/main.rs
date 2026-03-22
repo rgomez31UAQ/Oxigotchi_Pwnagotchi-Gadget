@@ -126,11 +126,22 @@ impl Daemon {
             personality::Face::Awake
         };
         self.screen.clear();
-        self.screen.draw_face(&boot_face);
-        // No name drawn — AO mode hides name (face is at y=16, name would overlap)
-        let welcome = format!("Hi! I'm {}! Starting v{}...",
-            self.config.name, env!("CARGO_PKG_VERSION"));
-        self.screen.draw_status(&welcome);
+        // Boot screen: centered face + centered welcome text below
+        // Face: 120x66, centered horizontally: x = (250-120)/2 = 65
+        self.screen.draw_bitmap(
+            display::faces::bitmap_for_face(&boot_face),
+            65, 5,
+            display::faces::FACE_WIDTH,
+            display::faces::FACE_HEIGHT,
+        );
+        // Welcome text centered below face, using bold font
+        let line1 = format!("Hi! I'm {}!", self.config.name);
+        let line2 = format!("Starting v{}", env!("CARGO_PKG_VERSION"));
+        // Center: each char ~7px wide in bold (12pt), display=250
+        let x1 = (250 - (line1.len() as i32) * 7) / 2;
+        let x2 = (250 - (line2.len() as i32) * 7) / 2;
+        self.screen.draw_name_at(&line1, x1, 80);
+        self.screen.draw_name_at(&line2, x2, 95);
         self.screen.flush();
         info!("display initialized");
 

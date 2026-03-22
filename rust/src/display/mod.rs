@@ -75,6 +75,13 @@ impl Screen {
         let _ = Text::new(&label, Point::new(5, 30), style).draw(&mut self.fb);
     }
 
+    /// Draw bold text at arbitrary position (for boot screen, centered text).
+    /// y is visual top of the text.
+    pub fn draw_name_at(&mut self, text: &str, x: i32, y: i32) {
+        let style = fonts::bold();
+        let _ = Text::new(text, Point::new(x, y + 10), style).draw(&mut self.fb);
+    }
+
     /// Draw a status message (10pt font) with word wrap.
     /// Python spec: status at (125, 20), max 20 chars per line.
     pub fn draw_status(&mut self, text: &str) {
