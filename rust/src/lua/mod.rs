@@ -179,6 +179,13 @@ impl PluginRuntime {
         }
     }
 
+    /// Update an indicator's display value (for sub-epoch refresh without full Lua tick).
+    pub fn update_indicator_value(&self, indicator_name: &str, value: &str) {
+        if let Some(ind) = self.indicators.lock().unwrap().get_mut(indicator_name) {
+            ind.value = value.to_string();
+        }
+    }
+
     /// Get indicator names that belong to a plugin (by prefix match).
     pub fn get_indicator_names_for_plugin(&self, plugin_name: &str) -> Vec<String> {
         let indicators = self.indicators.lock().unwrap();
