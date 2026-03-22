@@ -762,15 +762,11 @@ async fn mode_handler(
     Json(body): Json<ModeSwitch>,
 ) -> Json<ActionResponse> {
     let mut s = state.lock().unwrap();
-    let new_mode = if body.mode == "toggle" {
-        if s.mode == "AO" { "PWN".to_string() } else { "AO".to_string() }
-    } else {
-        body.mode.to_uppercase()
-    };
-    s.pending_mode_switch = Some(new_mode.clone());
+    let mode = body.mode.to_uppercase();
+    s.pending_mode_switch = Some(mode.clone());
     Json(ActionResponse {
         ok: true,
-        message: format!("Mode switch to {} queued", new_mode),
+        message: format!("Mode switch to {} queued", mode),
     })
 }
 
@@ -2180,9 +2176,9 @@ mod tests {
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
-        assert!(resp.message.contains("PWN")); // default is AO, toggle -> PWN
+        assert!(resp.message.contains("TOGGLE")); // toggle passed through to daemon
         let s = state.lock().unwrap();
-        assert_eq!(s.pending_mode_switch.as_deref(), Some("PWN"));
+        assert_eq!(s.pending_mode_switch.as_deref(), Some("TOGGLE"));
     }
 
     #[tokio::test]
