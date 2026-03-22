@@ -453,4 +453,20 @@ name = "test"
         assert_eq!(cfg.bluetooth.max_retries, 0);
         assert_eq!(cfg.bluetooth.connection_name, "");
     }
+
+    #[test]
+    fn test_parse_real_pi_config() {
+        // The real Pi config has many unknown sections ([main.plugins.*], [fs.*], etc.)
+        // The parser must skip them gracefully and still read [bluetooth].
+        let toml = include_str!("../../../pi_config.toml");
+        match Config::from_toml(toml) {
+            Ok(cfg) => {
+                println!("Parse OK! bluetooth.enabled = {}", cfg.bluetooth.enabled);
+                assert!(cfg.bluetooth.enabled, "bluetooth should be enabled in Pi config");
+            }
+            Err(e) => {
+                panic!("Pi config parse failed: {e}");
+            }
+        }
+    }
 }

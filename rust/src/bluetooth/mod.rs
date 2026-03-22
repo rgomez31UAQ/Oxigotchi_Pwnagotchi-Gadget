@@ -164,24 +164,59 @@ pub fn build_nmcli_show_args(con_name: &str) -> Vec<String> {
     vec!["connection".into(), "show".into(), con_name.into()]
 }
 
+/// Strip ANSI escape codes from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c.is_ascii_alphabetic() {
+                in_escape = false; // end of escape sequence
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Parse `bluetoothctl scan on` output for a device matching name or MAC.
-/// Output format: "[NEW] Device AA:BB:CC:DD:EE:FF Device Name"
+/// Handles ANSI color codes in bluetoothctl output.
+/// Output format (after stripping): "[NEW] Device AA:BB:CC:DD:EE:FF Device Name"
 /// Returns the MAC address if found.
 pub fn parse_scan_for_device(output: &str, name: &str, mac: &str) -> Option<String> {
-    for line in output.lines() {
+    let mut first_named: Option<String> = None;
+    for raw_line in output.lines() {
+        let line = strip_ansi(raw_line);
         if let Some(rest) = line.strip_prefix("[NEW] Device ") {
             let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-            if parts.len() >= 1 {
+            if !parts.is_empty() {
                 let found_mac = parts[0];
                 let found_name = if parts.len() >= 2 { parts[1] } else { "" };
+
+                // Match by MAC (case-insensitive)
                 if !mac.is_empty() && found_mac.eq_ignore_ascii_case(mac) {
                     return Some(found_mac.to_string());
                 }
+                // Match by name (case-insensitive substring)
                 if !name.is_empty() && found_name.to_lowercase().contains(&name.to_lowercase()) {
                     return Some(found_mac.to_string());
                 }
+                // Track first device with a real name (not just a MAC echo)
+                // for auto-detect mode (both name and mac filters empty)
+                if first_named.is_none() && !found_name.is_empty()
+                    && !found_name.contains('-') // skip "AA-BB-CC-DD-EE-FF" style names
+                {
+                    first_named = Some(found_mac.to_string());
+                }
             }
         }
+    }
+    // Auto-detect: if no name/mac filter specified, return first named device
+    if name.is_empty() && mac.is_empty() {
+        return first_named;
     }
     None
 }
@@ -1039,6 +1074,22 @@ mod tests {
         let output = "[NEW] Device AA:BB:CC:DD:EE:FF My Phone\n";
         let result = parse_scan_for_device(output, "Nonexistent", "");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_scan_output_with_ansi_colors() {
+        // Real bluetoothctl output has ANSI color codes
+        let output = "\x1b[0;92m[NEW]\x1b[0m Device 9C:9E:D5:E3:F2:19 Xiaomi 13T\n\
+                      \x1b[0;92m[NEW]\x1b[0m Device 70:B1:3D:99:CE:4D [TV] Samsung 7 Series (50)\n";
+        let result = parse_scan_for_device(output, "Xiaomi", "");
+        assert_eq!(result, Some("9C:9E:D5:E3:F2:19".to_string()));
+    }
+
+    #[test]
+    fn test_strip_ansi() {
+        assert_eq!(strip_ansi("\x1b[0;92m[NEW]\x1b[0m Device"), "[NEW] Device");
+        assert_eq!(strip_ansi("no escapes"), "no escapes");
+        assert_eq!(strip_ansi(""), "");
     }
 
     // ===== Task 3: Pairing state tests =====
