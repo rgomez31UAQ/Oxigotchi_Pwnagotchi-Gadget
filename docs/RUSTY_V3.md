@@ -254,7 +254,7 @@ The `state` table passed to `on_epoch` and other hooks contains:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `mood` | string | Current mood name |
+| `mood` | number | Current mood (0.0–1.0) |
 | `face` | string | Current face name |
 | `level` | number | Current level |
 | `xp` | number | Current XP |
@@ -268,7 +268,7 @@ The `state` table passed to `on_epoch` and other hooks contains:
 | `mem_used_mb` | number | Memory used (MB) |
 | `mem_total_mb` | number | Total memory (MB) |
 | `cpu_percent` | number | CPU usage percentage |
-| `cpu_freq_ghz` | number | CPU frequency (GHz) |
+| `cpu_freq_ghz` | string | CPU frequency (e.g. "1.0G") |
 
 **Mode:**
 
@@ -297,7 +297,7 @@ x = 0
 y = 0
 ```
 
-Position changes made through the web dashboard take effect at the next epoch (~30 seconds) without restarting the daemon.
+Position and enabled changes made through the web dashboard take effect at the next epoch (~30 seconds) without restarting the daemon. However, plugin *code* changes (editing `.lua` files) require a daemon restart — only position/enabled changes from the web dashboard are hot-reloaded.
 
 ### Default Plugins
 
