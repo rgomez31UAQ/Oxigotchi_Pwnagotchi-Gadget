@@ -160,6 +160,11 @@ impl ApTracker {
         self.aps.len()
     }
 
+    /// Sum client_count across all tracked APs.
+    pub fn total_clients(&self) -> u32 {
+        self.aps.values().map(|ap| ap.client_count).sum()
+    }
+
     /// Get an AP by BSSID.
     pub fn get(&self, bssid: &[u8; 6]) -> Option<&AccessPoint> {
         self.aps.get(bssid)
@@ -1722,5 +1727,23 @@ mod tests {
     #[test]
     fn test_extract_radiotap_rssi_too_short() {
         assert_eq!(extract_radiotap_rssi(&[0, 0, 0], 3), None);
+    }
+
+    #[test]
+    fn test_total_clients() {
+        let mut tracker = ApTracker::new();
+        let mut ap1 = make_ap(0x01, "Net1", -50);
+        ap1.client_count = 3;
+        let mut ap2 = make_ap(0x02, "Net2", -60);
+        ap2.client_count = 5;
+        tracker.update(ap1);
+        tracker.update(ap2);
+        assert_eq!(tracker.total_clients(), 8);
+    }
+
+    #[test]
+    fn test_total_clients_empty() {
+        let tracker = ApTracker::new();
+        assert_eq!(tracker.total_clients(), 0);
     }
 }

@@ -254,7 +254,7 @@ impl Daemon {
 
         // ---- CAPTURE PHASE ----
         self.epoch_loop.next_phase(); // -> Capture
-        result.associations = 0; // stub
+        result.associations = self.wifi.tracker.total_clients();
 
         // ---- DISPLAY PHASE ----
         self.epoch_loop.next_phase(); // -> Display
