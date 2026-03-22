@@ -1157,4 +1157,36 @@ mod tests {
         assert_eq!(new, 1);
         assert_eq!(cm.handshake_count(), 1);
     }
+
+    #[test]
+    fn test_lua_plugins_load_and_register_indicators() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("test_ind.lua"), r#"
+            plugin = {}
+            plugin.name = "test_ind"
+            plugin.version = "1.0.0"
+            plugin.author = "test"
+            plugin.tag = "default"
+            function on_load(config)
+                register_indicator("test", { x = config.x or 0, y = config.y or 0, font = "small" })
+            end
+            function on_epoch(state)
+                set_indicator("test", "E:" .. state.epoch)
+            end
+        "#).unwrap();
+
+        let mut rt = lua::PluginRuntime::new();
+        let configs = vec![lua::PluginConfig::default_for("test_ind", 50, 60)];
+        let loaded = rt.load_plugins_from_dir(dir.path().to_str().unwrap(), &configs);
+        assert_eq!(loaded, 1);
+
+        let state = lua::state::EpochState { epoch: 99, ..Default::default() };
+        rt.tick_epoch(&state);
+
+        let indicators = rt.get_indicators();
+        assert_eq!(indicators.len(), 1);
+        assert_eq!(indicators[0].value, "E:99");
+        assert_eq!(indicators[0].x, 50);
+        assert_eq!(indicators[0].y, 60);
+    }
 }
