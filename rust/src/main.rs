@@ -403,13 +403,13 @@ impl Daemon {
     }
 
     /// Update the e-ink display with current state.
-    /// Layout matches Python angryoxide.py AO mode display.
+    /// Layout matches Python angryoxide.py AO mode — see docs/DISPLAY_SPEC.md.
     fn update_display(&mut self) {
         self.screen.clear();
-
         let m = &self.epoch_loop.metrics;
 
-        // ---- TOP BAR (y=0) — AO status + indicators ----
+        // ---- TOP BAR (y=0) ----
+        // AO status at (0,0) — Small 9pt — "AO: V/T | HH:MM | CH:1,6,11"
         let ao_status = format!(
             "AO: {}/{} | {}",
             m.handshakes,
@@ -417,23 +417,25 @@ impl Daemon {
             self.ao.uptime_str()
         );
         self.screen.draw_text(&ao_status, 0, 0);
-        // Battery + uptime on right
-        let bat_str = self.battery.display_str();
-        self.screen.draw_text(&bat_str, 155, 0);
+        // BT status at (115,0) — Small 9pt
+        self.screen.draw_text(self.bluetooth.status_short(), 115, 0);
+        // Battery at (140,0) — Small 9pt
+        self.screen.draw_text(&self.battery.display_str(), 140, 0);
+        // Uptime at (185,0) — Small 9pt
         self.screen.draw_labeled_value("UP", &self.epoch_loop.uptime_str(), 185, 0);
 
         // ---- LINE 1 (y=14) ----
         self.screen.draw_hline(0, 14, display::DISPLAY_WIDTH);
 
-        // ---- FACE (y=16, 120x66 bull PNG sprite) ----
+        // ---- FACE at (0,16) — 120x66 bull bitmap ----
         let face = self.epoch_loop.current_face();
         self.screen.draw_face(&face);
 
-        // ---- STATUS (y=20, right of face — bull-themed messages/jokes) ----
+        // ---- STATUS at (125,20) — Medium 10pt, word-wrapped ----
         let status = self.epoch_loop.personality.status_msg();
         self.screen.draw_status(&status);
 
-        // ---- IP DISPLAY (y=95) ----
+        // ---- IP DISPLAY at (0,95) — Small 9pt, rotates USB/BT ----
         let ip_str = self.network.display_ip_str(
             self.bluetooth.ip_address.as_deref()
         );
@@ -442,24 +444,14 @@ impl Daemon {
         // ---- LINE 2 (y=108) ----
         self.screen.draw_hline(0, 108, display::DISPLAY_WIDTH);
 
-        // ---- BOTTOM BAR (y=109) ----
-        // Crash indicator (left)
+        // ---- BOTTOM BAR (y=112) ----
+        // Crash counter at (0,112) — Small 9pt — only shown if crashes
         if self.ao.crash_count > 0 {
             let crash_str = format!("CRASH:{}", self.ao.crash_count);
-            self.screen.draw_text(&crash_str, 0, 109);
+            self.screen.draw_text(&crash_str, 0, 112);
         }
-
-        // PWND count
-        let pwnd_str = format!("PWND:{}", m.handshakes);
-        self.screen.draw_text(&pwnd_str, 70, 109);
-
-        // APs count
-        let aps_str = format!("APs:{}", m.total_aps);
-        self.screen.draw_text(&aps_str, 140, 109);
-
-        // Mode indicator (right)
-        let mode = if self.ao.config.rate > 1 { "RAGE" } else { "AUTO" };
-        self.screen.draw_text(mode, 222, 109);
+        // Mode at (222,112) — Small 9pt
+        self.screen.draw_text("AUTO", 222, 112);
 
         self.screen.flush();
     }

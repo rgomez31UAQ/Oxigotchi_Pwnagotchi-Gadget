@@ -4,7 +4,161 @@
 **Orientation:** Landscape, 250px wide x 122px tall
 **Colors:** Black (0xFF rendered) on white (0x00 rendered) — inverted internally
 
-> **Rusty Oxigotchi v3.0** will drive this display directly via SPI using the `rppal` crate — no Python PIL, no PIL ImageDraw, no framebuffer abstraction. The display driver will be a native Rust module (`display/`) that writes SPI commands directly to the Waveshare V4 controller. Same 250x122 canvas, same bull faces, but rendered in microseconds instead of milliseconds. The current Python-based rendering pipeline documented here serves as the reference spec for the Rusty display driver.
+> The Rust binary drives the display directly via SPI (`rppal` crate). No Python PIL,
+> no plugins. All elements are rendered in `main.rs::update_display()`.
+> The Python sections below are the **reference spec** — the Rust layout must match them.
+
+---
+
+## Rust Implementation — Current State
+
+**Source:** `rust/src/main.rs` → `update_display()`
+**Renderer:** `rust/src/display/mod.rs` → `Screen` struct
+**Fonts:** `rust/src/display/fonts.rs` → ProFont bitmap fonts via `profont` crate
+**Faces:** `rust/src/display/faces.rs` → 120x66 1-bit bitmaps compiled in from `faces/*.raw`
+
+### Rust Font Mapping
+
+| Python font | Python size | Rust function | ProFont size | Used by |
+|-------------|------------|---------------|-------------|---------|
+| Small | 9pt | `fonts::small()` | PROFONT_9_POINT | `draw_text()`, `draw_labeled_value()` — indicators, IP, crash |
+| Medium | 10pt | `fonts::medium()` | PROFONT_10_POINT | `draw_status()` — status text with word wrap |
+| Bold | 10pt bold | `fonts::bold()` | PROFONT_12_POINT | `draw_name()` — device name (12pt compensates for no bold) |
+| Huge | 35pt | `fonts::face()` | PROFONT_24_POINT | Kaomoji fallback (not used when bitmap faces active) |
+| — | — | `fonts::tiny()` | PROFONT_7_POINT | Dense indicators (available, not currently used) |
+
+### Rust Draw Methods
+
+| Method | Font | y parameter | Baseline calc | Notes |
+|--------|------|-------------|---------------|-------|
+| `draw_text(text, x, y)` | Small 9pt | visual top | `y + 7` | General text, indicators |
+| `draw_labeled_value(label, value, x, y)` | Small 9pt | visual top | `y + 7` | "LABEL: value" format |
+| `draw_name(name)` | Bold 12pt | hardcoded y=30 baseline | `Point(5, 30)` | Always at (5, 20) visual |
+| `draw_status(text)` | Medium 10pt | hardcoded y=28 baseline | `Point(125, 28)` | Word wrap, max 20 chars/line |
+| `draw_face(face)` | — | hardcoded (0, 16) | bitmap blit | 120x66 bull PNG sprite |
+| `draw_hline(x, y, width)` | — | pixel y | direct pixel set | 1px divider line |
+| `draw_bitmap(data, x, y, w, h)` | — | pixel y | direct pixel set | Raw 1-bit bitmap blit |
+
+### Rust Layout — Current vs Python Reference
+
+```
+PYTHON AO MODE (reference — what we must match):
+┌──────────────────────────────────────────────────────────┐
+│ AO: 5/23 | 1:23 | CH:1,6,11    BT C  BAT85%  UP 01:23  │  Y=0  top bar
+│ (0,0) Small                   (115,0)(140,0) (185,0)     │  Bold+Medium fonts
+│                                        APs:47 (145,0)    │  Small 9pt
+├──────────────────────────────────────────────────────────┤  Y=14 line1
+│                      Bull status msg...                  │  (125,20) Medium 10pt
+│  ┌────────────┐      word-wrapped, max 20 chars/line     │
+│  │ BULL PNG   │                                          │  (0,16) 120x66 bitmap
+│  │ 120×66     │                                          │
+│  │            │                                          │
+│  └────────────┘                                          │
+│                                                          │
+│  USB:10.0.0.2 :8080                                      │  (0,95) Small 9pt
+├──────────────────────────────────────────────────────────┤  Y=108 line2
+│ CRASH:0                                            AUTO  │  Y=112 Small / Bold
+│ (0,112)                                        (222,112) │
+└──────────────────────────────────────────────────────────┘
+```
+
+```
+RUST (current — gaps marked with ✗):
+┌──────────────────────────────────────────────────────────┐
+│ AO: 0/0 | 00:00:00           BAT100%  UP: 00:00:00       │  Y=0  all Small 9pt
+│ (0,0)                       (155,0)    (185,0)            │
+│                                                    ✗ BT  │  ✗ MISSING bluetooth
+│                                                  ✗ APs   │  ✗ MISSING ao_aps
+├──────────────────────────────────────────────────────────┤  Y=14 line1
+│                      Bull status msg...                  │  (125,20) Medium ✓
+│  ┌────────────┐                                          │  (0,16) bitmap ✓
+│  │ BULL PNG   │                                          │
+│  │ 120×66     │                                          │
+│  └────────────┘                                          │
+│                                                          │
+│  USB:10.0.0.2 :8080                                      │  (0,95) ✓
+├──────────────────────────────────────────────────────────┤  Y=108 line2
+│ CRASH:0  PWND:0  APs:0                            AUTO  │  Y=109 all Small 9pt
+│ (0,109)  (70,109)(140,109)                     (222,109) │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Gap Analysis — Rust vs Python
+
+| # | Element | Python | Rust Current | Fix Needed |
+|---|---------|--------|-------------|------------|
+| 1 | AO status | (0,0) Small 9pt `"AO: V/T \| HH:MM \| CH:1,6,11"` | (0,0) Small 9pt `"AO: H/C \| HH:MM:SS"` | **Match format** — add channels |
+| 2 | BT status | (115,0) Bold+Medium `"BT C"` / `"BT -"` | **MISSING** | **Add** at (115,0) |
+| 3 | Battery | (140,0) Bold+Medium `"BAT 85%"` | (155,0) Small `"BAT100%"` | **Move to (140,0)**, match font |
+| 4 | Uptime | (185,0) Bold+Medium `"UP HH:MM:SS"` | (185,0) Small `"UP: HH:MM:SS"` | **Match font** (Bold+Medium) |
+| 5 | AO APs | (145,0) Small 9pt `"APs:N"` | (140,109) Small — **wrong zone** | **Move to (145,0)** top bar |
+| 6 | Face | (0,16) PNG 120x66 | (0,16) bitmap 120x66 | ✓ Correct |
+| 7 | Status | (125,20) Medium word-wrap | (125,20) Medium word-wrap | ✓ Correct |
+| 8 | IP display | (0,95) Small `"USB:10.0.0.2 :8080"` | (0,95) Small | ✓ Correct |
+| 9 | Crash | (0,112) Small `"CRASH:N"` | (0,109) Small | **Move to y=112** |
+| 10 | PWND | **hidden** in AO mode | (70,109) shown | **Remove** — not shown in AO mode |
+| 11 | Mode | (222,112) Bold 10pt `"AUTO"` | (222,109) Small 9pt | **Move to y=112**, use bold font |
+
+### Required Fixes for Rust update_display()
+
+```rust
+fn update_display(&mut self) {
+    self.screen.clear();
+    let m = &self.epoch_loop.metrics;
+
+    // ---- TOP BAR (y=0) ----
+
+    // AO status line at (0,0) — Small 9pt
+    // Format: "AO: V/T | HH:MM | CH:1,6,11"
+    let ao_status = format!("AO: {}/{} | {}",
+        m.handshakes, self.captures.count(), self.ao.uptime_str());
+    self.screen.draw_text(&ao_status, 0, 0);
+
+    // BT status at (115,0) — Small 9pt
+    self.screen.draw_text(self.bluetooth.status_short(), 115, 0);
+
+    // Battery at (140,0) — Small 9pt
+    self.screen.draw_text(&self.battery.display_str(), 140, 0);
+
+    // AO APs count at (145,0) — Small 9pt (overlaps battery — pick one)
+    // Python puts APs at 145 which overlaps battery at 140.
+    // In practice the AO plugin draws APs OVER the battery area.
+    // For Rust, put APs right of battery or skip if battery is shown.
+
+    // Uptime at (185,0) — Small 9pt "UP HH:MM:SS"
+    self.screen.draw_labeled_value("UP", &self.epoch_loop.uptime_str(), 185, 0);
+
+    // ---- LINE 1 (y=14) ----
+    self.screen.draw_hline(0, 14, DISPLAY_WIDTH);
+
+    // ---- FACE at (0,16) — 120x66 bull bitmap ----
+    let face = self.epoch_loop.current_face();
+    self.screen.draw_face(&face);
+
+    // ---- STATUS at (125,20) — Medium 10pt, word-wrapped ----
+    let status = self.epoch_loop.personality.status_msg();
+    self.screen.draw_status(&status);
+
+    // ---- IP DISPLAY at (0,95) — Small 9pt ----
+    let ip_str = self.network.display_ip_str(
+        self.bluetooth.ip_address.as_deref());
+    self.screen.draw_text(&ip_str, 0, 95);
+
+    // ---- LINE 2 (y=108) ----
+    self.screen.draw_hline(0, 108, DISPLAY_WIDTH);
+
+    // ---- BOTTOM BAR (y=112) ----
+    // Crash counter at (0,112) — Small 9pt — only if crashes
+    if self.ao.crash_count > 0 {
+        self.screen.draw_text(
+            &format!("CRASH:{}", self.ao.crash_count), 0, 112);
+    }
+    // Mode at (222,112) — Small 9pt "AUTO"
+    self.screen.draw_text("AUTO", 222, 112);
+
+    self.screen.flush();
+}
+```
 
 ---
 
