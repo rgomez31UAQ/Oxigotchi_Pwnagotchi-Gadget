@@ -79,7 +79,7 @@ impl Screen {
     /// Python spec: status at (125, 20), max 20 chars per line.
     pub fn draw_status(&mut self, text: &str) {
         let style = fonts::medium();
-        let max_chars = 20;
+        let max_chars = 17; // 125px available / 7px per ProFont 10pt char
         let line_height = 12; // 10pt font + 2px spacing
         let x = 125i32;
         let mut y = 28i32; // baseline for first line
