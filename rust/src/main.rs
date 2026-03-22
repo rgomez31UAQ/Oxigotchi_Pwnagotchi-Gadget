@@ -249,11 +249,16 @@ impl Daemon {
             self.epoch_loop.personality.variety.tick_idle();
         }
 
-        // Time-of-day and rare face are checked in current_face()
-        // via variety.current_override(). Update the variety engine's
-        // time-of-day state here.
+        // Set time-of-day state for variety engine
         let hour = chrono::Local::now().hour();
         self.epoch_loop.personality.variety.current_hour = hour;
+        // Mark morning greeting as shown (6-8am, once per boot)
+        if (6..=8).contains(&hour)
+            && !self.epoch_loop.personality.variety.morning_greeted
+            && self.epoch_loop.personality.variety.current_override() == Some("motivated")
+        {
+            self.epoch_loop.personality.variety.morning_greeted = true;
+        }
 
         // Generate bull-themed status message (handles joke cycling)
         self.epoch_loop.personality.generate_status();

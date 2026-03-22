@@ -42,24 +42,44 @@
 ### Rust Layout — Current vs Python Reference
 
 ```
-PYTHON AO MODE (reference — what we must match):
+PYTHON AO MODE (reference — what Rust must match):
 ┌──────────────────────────────────────────────────────────┐
-│ AO: 5/23 | 1:23 | CH:1,6,11    BT C  BAT85%  UP 01:23  │  Y=0  top bar
-│ (0,0) Small                   (115,0)(140,0) (185,0)     │  Bold+Medium fonts
-│                                        APs:47 (145,0)    │  Small 9pt
+│ AO: 5/302 | 12m | CH:1,6,11                  APs:47     │  Y=0  top bar (all Small 9pt)
+│ (0,0)                                       (145,0)      │
+│                     [BT C]  [BAT85%]     [UP 01:23:45]   │  core elements at their
+│                    (115,0)  (140,0)        (185,0)        │  default positions
 ├──────────────────────────────────────────────────────────┤  Y=14 line1
-│                      Bull status msg...                  │  (125,20) Medium 10pt
-│  ┌────────────┐      word-wrapped, max 20 chars/line     │
-│  │ BULL PNG   │                                          │  (0,16) 120x66 bitmap
-│  │ 120×66     │                                          │
-│  │            │                                          │
+│                      Udderly bored                       │  (125,20) Medium 10pt
+│  ┌────────────┐      (bull status msg,                   │  word-wrapped max 20c/line
+│  │ BULL PNG   │       or 2-part joke)                    │
+│  │ 120×66     │                                          │  (0,16) bitmap blit
+│  │ bored.png  │                                          │
 │  └────────────┘                                          │
 │                                                          │
-│  USB:10.0.0.2 :8080                                      │  (0,95) Small 9pt
+│  USB:10.0.0.2 :8080                                      │  (0,95) Small 9pt, rotates
 ├──────────────────────────────────────────────────────────┤  Y=108 line2
-│ CRASH:0                                            AUTO  │  Y=112 Small / Bold
+│ CRASH:0                                            AUTO  │  Y=112 (Small 9pt / Bold 10pt)
 │ (0,112)                                        (222,112) │
 └──────────────────────────────────────────────────────────┘
+
+TOP BAR details:
+  angryoxide (0,0)  = "AO: V/T | Xm | CH:channels"   V=verified(.22000), T=total pcapng
+  ao_aps (145,0)    = "APs:N"                          N from AO stdout parsing
+  bluetooth (115,0) = "BT C" / "BT -"                  core pwnagotchi element (not hidden)
+  bat (140,0)       = "BAT85%"                         core pisugarx element (not hidden)
+  uptime (185,0)    = "UP HH:MM:SS"                    core pwnagotchi element (not hidden)
+  channel (300,300) = HIDDEN (moved off-screen by AO plugin)
+  aps (300,300)     = HIDDEN (moved off-screen, replaced by ao_aps)
+
+HIDDEN elements (moved to 300,300 off-screen):
+  shakes, channel, aps, display-password
+
+BLANKED elements (set to empty string):
+  name, walkby, blitz, walkby_status
+
+BOTTOM BAR:
+  ao_crash (0,112)  = "CRASH:N"    firmware crash count
+  mode (222,112)    = "AUTO"       repositioned by AO plugin every ui_update
 ```
 
 ```
@@ -98,6 +118,32 @@ RUST (current — gaps marked with ✗):
 | 9 | Crash | (0,112) Small `"CRASH:N"` | (0,109) Small | **Move to y=112** |
 | 10 | PWND | **hidden** in AO mode | (70,109) shown | **Remove** — not shown in AO mode |
 | 11 | Mode | (222,112) Bold 10pt `"AUTO"` | (222,109) Small 9pt | **Move to y=112**, use bold font |
+
+### Face Variety — Python Reference (from on_epoch, lines 1510-1667)
+
+Priority order (first match wins, `face_set` flag prevents lower-priority overrides):
+
+| # | Feature | Condition | Face | Status | Priority |
+|---|---------|-----------|------|--------|----------|
+| 7 | Debug on boot | `debug_epochs_left > 0` | debug→awake | bull_status('debug', 2) | Highest |
+| 1a | Active milestone | `milestone_epochs_left > 0` | milestone face | milestone status | High |
+| 1b | New milestone | captures hit 1/10/25/50/100 | 1=excited, 10=cool, 25=intense, 50=smart, 100=grateful | bull_status(face, 2) | High |
+| 1c | Level-up | every 10 captures (not at 10/25/50/100) | motivated | bull_status('motivated', 2) | High |
+| 2 | Capture variety | `captures_this_epoch > 0` | random(['happy','cool','grateful','excited']) | bull_status(face, 2) | High |
+| 5 | Friend (active) | `friend_epochs_left > 0` | friend | bull_status('friend', 1) | Medium |
+| 5 | Friend (new) | peers detected | friend | bull_status('friend', 1) | Medium |
+| 6 | Upload (active) | `upload_epochs_left > 0` | upload | bull_status('upload', 1) | Medium |
+| 6 | Upload (new) | wpa-sec active + new captures | upload | bull_status('upload', 1) | Medium |
+| 3 | Time: 2-5am | `2 <= hour <= 5` and no captures | sleep | bull_status('sleep', 0) | Low |
+| 3 | Time: 6-8am | `6 <= hour <= 8` (once per boot) | motivated | bull_status('motivated', 1) | Low |
+| 3 | Time: 10pm-1am | `hour >= 22 or hour <= 1` | cool | bull_status('cool', 0) | Low |
+| 4 | Idle 0-10 | `idle_epochs % 50` in 0-10 | bored | bull_status('bored', 0) | Low |
+| 4 | Idle 11-20 | `idle_epochs % 50` in 11-20 | lonely | bull_status('lonely', 0) | Low |
+| 4 | Idle 21-30 | `idle_epochs % 50` in 21-30 | demotivated | bull_status('demotivated', 0) | Low |
+| 4 | Idle 31-40 | `idle_epochs % 50` in 31-40 | angry | bull_status('angry', 0) | Low |
+| 4 | Idle 41-50 | `idle_epochs % 50` in 41-50 | sad | bull_status('sad', 0) | Low |
+| 8 | Rare face | 5% random chance | random(['cool','intense','smart','grateful','motivated']) | bull_status(face, 0) | Low |
+| — | Default | nothing else triggered | awake | bull_status('awake', 0) | Lowest |
 
 ### Required Fixes for Rust update_display()
 
