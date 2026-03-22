@@ -654,6 +654,19 @@ impl WifiManager {
     pub fn start_monitor(&mut self) -> Result<(), String> {
         #[cfg(unix)]
         {
+            // Unblock WiFi rfkill before anything else
+            for entry in std::fs::read_dir("/sys/class/rfkill").into_iter().flatten() {
+                if let Ok(entry) = entry {
+                    let type_path = entry.path().join("type");
+                    let soft_path = entry.path().join("soft");
+                    if let Ok(t) = std::fs::read_to_string(&type_path) {
+                        if t.trim() == "wlan" {
+                            let _ = std::fs::write(&soft_path, "0");
+                        }
+                    }
+                }
+            }
+
             // Detect phy name
             let phy = detect_phy_name()?;
             info!("detected phy: {phy}");
