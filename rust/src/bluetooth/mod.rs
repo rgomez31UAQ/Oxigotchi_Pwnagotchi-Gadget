@@ -8,8 +8,8 @@
 
 use std::time::Instant;
 
-/// Default nmcli connection profile name.
-pub const DEFAULT_CONNECTION_NAME: &str = "Xiaomi 13T Network";
+/// Default nmcli connection profile name (empty = not configured).
+pub const DEFAULT_CONNECTION_NAME: &str = "";
 /// The bnep0 interface sysfs path for status checking.
 pub const BNEP0_SYSFS_PATH: &str = "/sys/class/net/bnep0";
 
@@ -356,8 +356,8 @@ mod tests {
 
     #[test]
     fn test_build_connect_args() {
-        let args = build_connect_args("Xiaomi 13T Network");
-        assert_eq!(args, vec!["connection", "up", "Xiaomi 13T Network"]);
+        let args = build_connect_args("My Phone PAN");
+        assert_eq!(args, vec!["connection", "up", "My Phone PAN"]);
     }
 
     #[test]
@@ -368,8 +368,8 @@ mod tests {
 
     #[test]
     fn test_build_disconnect_nmcli_args() {
-        let args = build_disconnect_nmcli_args("Xiaomi 13T Network");
-        assert_eq!(args, vec!["connection", "down", "Xiaomi 13T Network"]);
+        let args = build_disconnect_nmcli_args("My Phone PAN");
+        assert_eq!(args, vec!["connection", "down", "My Phone PAN"]);
     }
 
     #[test]
@@ -714,7 +714,7 @@ mod tests {
     fn test_config_defaults() {
         let cfg = BtConfig::default();
         assert!(cfg.phone_mac.is_empty());
-        assert_eq!(cfg.connection_name, "Xiaomi 13T Network");
+        assert!(cfg.connection_name.is_empty());
         assert!(!cfg.auto_connect);
         assert_eq!(cfg.retry_interval_secs, 30);
         assert_eq!(cfg.max_retries, 0);
@@ -739,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert_eq!(DEFAULT_CONNECTION_NAME, "Xiaomi 13T Network");
+        assert!(DEFAULT_CONNECTION_NAME.is_empty());
         assert_eq!(BNEP0_SYSFS_PATH, "/sys/class/net/bnep0");
     }
 }
