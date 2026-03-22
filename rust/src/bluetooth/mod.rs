@@ -92,6 +92,86 @@ pub fn build_ip_addr_args() -> Vec<String> {
     ]
 }
 
+/// Build the bluetoothctl command args to power on the adapter.
+pub fn build_power_on_args() -> Vec<String> {
+    vec!["power".into(), "on".into()]
+}
+
+/// Build the bluetoothctl command args to enable the agent.
+pub fn build_agent_on_args() -> Vec<String> {
+    vec!["agent".into(), "on".into()]
+}
+
+/// Build the bluetoothctl command args to set the default agent.
+pub fn build_default_agent_args() -> Vec<String> {
+    vec!["default-agent".into()]
+}
+
+/// Build the bluetoothctl command args to pair with a device.
+pub fn build_pair_args(mac: &str) -> Vec<String> {
+    vec!["pair".into(), mac.into()]
+}
+
+/// Build the bluetoothctl command args to trust a device.
+pub fn build_trust_args(mac: &str) -> Vec<String> {
+    vec!["trust".into(), mac.into()]
+}
+
+/// Build the bluetoothctl command args to turn off discoverability.
+pub fn build_discoverable_off_args() -> Vec<String> {
+    vec!["discoverable".into(), "off".into()]
+}
+
+/// Build the bluetoothctl command args to scan for devices (with timeout).
+pub fn build_scan_on_args() -> Vec<String> {
+    vec!["--timeout".into(), "10".into(), "scan".into(), "on".into()]
+}
+
+/// Build the nmcli command args to add a PAN bluetooth connection profile.
+pub fn build_nmcli_add_pan_args(con_name: &str, mac: &str) -> Vec<String> {
+    vec![
+        "connection".into(),
+        "add".into(),
+        "type".into(),
+        "bluetooth".into(),
+        "con-name".into(),
+        con_name.into(),
+        "bt-type".into(),
+        "panu".into(),
+        "bluetooth.bdaddr".into(),
+        mac.into(),
+        "autoconnect".into(),
+        "yes".into(),
+    ]
+}
+
+/// Build the nmcli command args to show a connection profile.
+pub fn build_nmcli_show_args(con_name: &str) -> Vec<String> {
+    vec!["connection".into(), "show".into(), con_name.into()]
+}
+
+/// Parse `bluetoothctl scan on` output for a device matching name or MAC.
+/// Output format: "[NEW] Device AA:BB:CC:DD:EE:FF Device Name"
+/// Returns the MAC address if found.
+pub fn parse_scan_for_device(output: &str, name: &str, mac: &str) -> Option<String> {
+    for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("[NEW] Device ") {
+            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+            if parts.len() >= 1 {
+                let found_mac = parts[0];
+                let found_name = if parts.len() >= 2 { parts[1] } else { "" };
+                if !mac.is_empty() && found_mac.eq_ignore_ascii_case(mac) {
+                    return Some(found_mac.to_string());
+                }
+                if !name.is_empty() && found_name.to_lowercase().contains(&name.to_lowercase()) {
+                    return Some(found_mac.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Parse an IPv4 address from `ip -4 addr show bnep0` output.
 ///
 /// Looks for a line like `inet 192.168.44.128/24 ...` and extracts the IP.
@@ -741,5 +821,100 @@ mod tests {
     fn test_constants() {
         assert!(DEFAULT_CONNECTION_NAME.is_empty());
         assert_eq!(BNEP0_SYSFS_PATH, "/sys/class/net/bnep0");
+    }
+
+    // ===== New bluetoothctl builder tests =====
+
+    #[test]
+    fn test_build_power_on_args() {
+        assert_eq!(build_power_on_args(), vec!["power", "on"]);
+    }
+
+    #[test]
+    fn test_build_agent_on_args() {
+        assert_eq!(build_agent_on_args(), vec!["agent", "on"]);
+    }
+
+    #[test]
+    fn test_build_default_agent_args() {
+        assert_eq!(build_default_agent_args(), vec!["default-agent"]);
+    }
+
+    #[test]
+    fn test_build_pair_args() {
+        let args = build_pair_args("AA:BB:CC:DD:EE:FF");
+        assert_eq!(args, vec!["pair", "AA:BB:CC:DD:EE:FF"]);
+    }
+
+    #[test]
+    fn test_build_trust_args() {
+        let args = build_trust_args("AA:BB:CC:DD:EE:FF");
+        assert_eq!(args, vec!["trust", "AA:BB:CC:DD:EE:FF"]);
+    }
+
+    #[test]
+    fn test_build_discoverable_off_args() {
+        assert_eq!(build_discoverable_off_args(), vec!["discoverable", "off"]);
+    }
+
+    #[test]
+    fn test_build_scan_on_args() {
+        assert_eq!(
+            build_scan_on_args(),
+            vec!["--timeout", "10", "scan", "on"]
+        );
+    }
+
+    // ===== New nmcli builder tests =====
+
+    #[test]
+    fn test_build_nmcli_add_pan_args() {
+        let args = build_nmcli_add_pan_args("MyPhone", "AA:BB:CC:DD:EE:FF");
+        assert_eq!(
+            args,
+            vec![
+                "connection",
+                "add",
+                "type",
+                "bluetooth",
+                "con-name",
+                "MyPhone",
+                "bt-type",
+                "panu",
+                "bluetooth.bdaddr",
+                "AA:BB:CC:DD:EE:FF",
+                "autoconnect",
+                "yes",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_build_nmcli_show_args() {
+        let args = build_nmcli_show_args("MyPhone");
+        assert_eq!(args, vec!["connection", "show", "MyPhone"]);
+    }
+
+    // ===== Scan output parser tests =====
+
+    #[test]
+    fn test_parse_scan_output_finds_device() {
+        let output = "[NEW] Device AA:BB:CC:DD:EE:FF My Phone\n[NEW] Device 11:22:33:44:55:66 Other Device\n";
+        let result = parse_scan_for_device(output, "My Phone", "");
+        assert_eq!(result, Some("AA:BB:CC:DD:EE:FF".to_string()));
+    }
+
+    #[test]
+    fn test_parse_scan_output_finds_by_mac() {
+        let output = "[NEW] Device AA:BB:CC:DD:EE:FF My Phone\n[NEW] Device 11:22:33:44:55:66 Other Device\n";
+        let result = parse_scan_for_device(output, "", "AA:BB:CC:DD:EE:FF");
+        assert_eq!(result, Some("AA:BB:CC:DD:EE:FF".to_string()));
+    }
+
+    #[test]
+    fn test_parse_scan_output_no_match() {
+        let output = "[NEW] Device AA:BB:CC:DD:EE:FF My Phone\n";
+        let result = parse_scan_for_device(output, "Nonexistent", "");
+        assert_eq!(result, None);
     }
 }
