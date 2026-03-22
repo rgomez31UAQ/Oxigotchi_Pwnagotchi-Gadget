@@ -126,6 +126,9 @@ impl AttackScheduler {
     /// `enabled` maps to [deauth, pmkid, csa, disassoc].
     /// Returns None if rate-limited or all types disabled.
     pub fn next_attack(&mut self, _target_bssid: &[u8; 6], enabled: &[bool; 4]) -> Option<AttackType> {
+        if !enabled.iter().any(|&e| e) {
+            return None; // all disabled, don't consume rate token
+        }
         if !self.rate_limiter.allow() {
             return None;
         }

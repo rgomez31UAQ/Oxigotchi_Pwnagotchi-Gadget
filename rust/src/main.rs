@@ -68,7 +68,18 @@ impl Daemon {
         attacks.whitelist.clear();
 
         let captures = capture::CaptureManager::new(CAPTURE_DIR);
-        let bluetooth = bluetooth::BtTether::default();
+        let bt_config = bluetooth::BtConfig {
+            enabled: config.bluetooth.enabled,
+            phone_mac: config.bluetooth.phone_mac.clone(),
+            phone_name: config.bluetooth.phone_name.clone(),
+            connection_name: config.bluetooth.connection_name.clone(),
+            auto_connect: config.bluetooth.auto_connect,
+            auto_pair: config.bluetooth.auto_pair,
+            hide_after_connect: config.bluetooth.hide_after_connect,
+            retry_interval_secs: config.bluetooth.retry_interval_secs,
+            max_retries: config.bluetooth.max_retries,
+        };
+        let bluetooth = bluetooth::BtTether::new(bt_config);
         let battery = pisugar::PiSugar::default();
         let network = network::NetworkManager::new();
         let recovery = recovery::RecoveryManager::default();
@@ -134,14 +145,9 @@ impl Daemon {
         }
 
         // Bluetooth tethering
-        if self.bluetooth.should_connect() {
-            match self.bluetooth.connect() {
-                Ok(()) => info!("bluetooth tethered: {}", self.bluetooth.status_str()),
-                Err(e) => {
-                    log::warn!("bluetooth tether failed: {e}");
-                    self.bluetooth.on_error();
-                }
-            }
+        match self.bluetooth.setup() {
+            Ok(()) => info!("bluetooth setup complete: {}", self.bluetooth.status_str()),
+            Err(e) => log::warn!("bluetooth setup failed: {e}"),
         }
 
         // USB RNDIS network setup
