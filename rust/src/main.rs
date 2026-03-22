@@ -575,9 +575,9 @@ impl Daemon {
         self.screen.draw_text(&crash_str, 0, 112);
         // WWW (internet status) at (70,112)
         let www = match self.network.internet {
-            network::InternetStatus::Online => "WWW",
-            network::InternetStatus::Offline => "---",
-            network::InternetStatus::Unknown => "...",
+            network::InternetStatus::Online => "WWW:C",
+            network::InternetStatus::Offline => "WWW:-",
+            network::InternetStatus::Unknown => "WWW:.",
         };
         self.screen.draw_text(www, 70, 112);
         // BT status at (100,112)
