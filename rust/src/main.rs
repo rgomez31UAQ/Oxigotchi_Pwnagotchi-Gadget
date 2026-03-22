@@ -572,19 +572,6 @@ impl Daemon {
     /// Layout matches Python angryoxide.py AO mode — see docs/DISPLAY_SPEC.md.
     fn update_display(&mut self) {
         self.screen.clear();
-        let m = &self.epoch_loop.metrics;
-
-        // ---- TOP BAR (y=0) — matches Python AO mode positions ----
-        // AO status at (0,0) — "AO: V/T | Xm | CH:1,6,11"
-        let ao_status = format!(
-            "AO: {}/{} | {}",
-            m.handshakes,
-            self.captures.count(),
-            self.ao.uptime_str()
-        );
-        self.screen.draw_text(&ao_status, 0, 0);
-        // Uptime at (145,0)
-        self.screen.draw_labeled_value("UP", &self.epoch_loop.uptime_str(), 145, 0);
 
         // ---- LINE 1 (y=14) ----
         self.screen.draw_hline(0, 14, display::DISPLAY_WIDTH);
@@ -592,10 +579,6 @@ impl Daemon {
         // ---- FACE at (0,16) — 120x66 bull bitmap ----
         let face = self.epoch_loop.current_face();
         self.screen.draw_face(&face);
-
-        // ---- STATUS at (125,20) — Medium 10pt, word-wrapped ----
-        let status = self.epoch_loop.personality.status_msg();
-        self.screen.draw_status(&status);
 
         // ---- XP BAR right of face (~125, 65) ----
         // "Lv N" text then graphical bar, matching Python "Lv 1  Exp|███" style
@@ -629,61 +612,8 @@ impl Daemon {
             }
         }
 
-        // ---- SYSTEM STATS below XP bar (~125, 77) — matches Python memtemp-plus ----
-        let (si, cpu_sample) = personality::SystemInfo::read(&self.prev_cpu_sample);
-        if cpu_sample.is_some() {
-            self.prev_cpu_sample = cpu_sample;
-        }
-        self.screen.draw_text("mem  cpu freq temp", 125, 85);
-        // Read CPU frequency from sysfs
-        let freq_ghz = {
-            #[cfg(target_os = "linux")]
-            {
-                std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
-                    .ok()
-                    .and_then(|s| s.trim().parse::<f64>().ok())
-                    .map(|khz| format!("{:.1}G", khz / 1_000_000.0))
-                    .unwrap_or_else(|| "---".into())
-            }
-            #[cfg(not(target_os = "linux"))]
-            { "---".to_string() }
-        };
-        let stats = format!(
-            "{}%  {}% {} {}C",
-            if si.mem_total_mb > 0 { (si.mem_used_mb * 100 / si.mem_total_mb).to_string() } else { "-".into() },
-            si.cpu_percent as u32,
-            freq_ghz,
-            si.cpu_temp_c as u32
-        );
-        self.screen.draw_text(&stats, 125, 95);
-
-        // ---- IP DISPLAY at (0,95) — rotates USB/BT ----
-        let ip_str = self.network.display_ip_str(
-            self.bluetooth.ip_address.as_deref()
-        );
-        self.screen.draw_text(&ip_str, 0, 95);
-
         // ---- LINE 2 (y=108) ----
         self.screen.draw_hline(0, 108, display::DISPLAY_WIDTH);
-
-        // ---- BOTTOM BAR (y=112) — evenly spaced across 250px ----
-        let crash_str = format!("CRASH:{}", self.ao.crash_count);
-        let www = match self.network.internet {
-            network::InternetStatus::Online => "WWW:C",
-            network::InternetStatus::Offline => "WWW:-",
-            network::InternetStatus::Unknown => "WWW:.",
-        };
-        let bt_short = format!("BT:{}", self.bluetooth.status_short());
-        let bat_str = self.battery.display_str();
-
-        let aps_str = format!("APs:{}", self.epoch_loop.metrics.total_aps);
-
-        self.screen.draw_text(&crash_str, 0, 112);     // CRASH:0
-        self.screen.draw_text(www, 42, 112);            // WWW:C
-        self.screen.draw_text(&bt_short, 76, 112);      // BT:C
-        self.screen.draw_text(&bat_str, 104, 112);      // CHG=100%
-        self.screen.draw_text(&aps_str, 160, 112);      // APs:0
-        self.screen.draw_text("AUTO", 200, 112);        // AUTO
 
         // ---- LUA PLUGIN INDICATORS ----
         for ind in self.lua.get_indicators() {
