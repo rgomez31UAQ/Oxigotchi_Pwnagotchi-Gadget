@@ -1,31 +1,21 @@
+// rustc 1.94 ICE in AnnotateSnippetEmitter when rendering dead_code warnings.
+// Remove this once the compiler is updated past the fix.
+#![allow(dead_code)]
+
 // Modules are the public API surface for Rusty Oxigotchi.
-#[allow(dead_code)]
 mod ao;
-#[allow(dead_code)]
 mod attacks;
-#[allow(dead_code)]
 mod bluetooth;
-#[allow(dead_code)]
 mod capture;
 mod config;
-#[allow(dead_code)]
 mod display;
 mod epoch;
-#[allow(dead_code)]
-mod migration;
-#[allow(dead_code)]
 mod personality;
-#[allow(dead_code)]
 mod pisugar;
-#[allow(dead_code)]
 mod network;
-#[allow(dead_code)]
 mod recovery;
-#[allow(dead_code)]
 mod web;
-#[allow(dead_code)]
 mod wifi;
-#[allow(dead_code)]
 mod lua;
 
 use chrono::Timelike;
@@ -863,7 +853,6 @@ impl Daemon {
     }
 
     /// Build a web status snapshot.
-    #[allow(dead_code)]
     fn build_web_status(&self) -> web::StatusResponse {
         let m = &self.epoch_loop.metrics;
         web::build_status(&web::StatusParams {
@@ -882,7 +871,6 @@ impl Daemon {
     }
 
     /// Build web attack stats.
-    #[allow(dead_code)]
     fn build_attack_stats(&self) -> web::AttackStats {
         let s = self.shared_state.lock().unwrap();
         web::AttackStats {
@@ -900,7 +888,6 @@ impl Daemon {
     }
 
     /// Build web capture info.
-    #[allow(dead_code)]
     fn build_capture_info(&self) -> web::CaptureInfo {
         web::CaptureInfo {
             total_files: self.captures.count(),
