@@ -489,20 +489,15 @@ impl Daemon {
         self.screen.draw_status(&status);
 
         // ---- XP BAR right of face (~125, 65) ----
-        // "Lv N  Exp" text + "|" + filled bar, all on one line
+        // "Lv N" text then graphical bar, matching Python "Lv 1  Exp|███" style
         let xp = &self.epoch_loop.personality.xp;
-        let lv_str = format!("Lv {}  Exp", xp.level);
+        let lv_str = format!("Lv {}", xp.level);
         self.screen.draw_text(&lv_str, 125, 65);
-        // "|" separator + bar starts right after text
-        let text_end_x: u32 = 125 + (lv_str.len() as u32) * 5;
-        // Draw the "|" as a vertical line
-        for dy in 0..9u32 {
-            self.screen.set_pixel(text_end_x + 1, 66 + dy, embedded_graphics::pixelcolor::BinaryColor::On);
-        }
-        let bar_x: u32 = text_end_x + 3;
+        // Bar: fixed position so layout works for Lv 1 through Lv 999
+        let bar_x: u32 = 160;
         let bar_y: u32 = 66;
-        let bar_w: u32 = 248 - bar_x; // extend to near right edge
-        let bar_h: u32 = 9;  // match text height
+        let bar_w: u32 = 88; // extends to x=248
+        let bar_h: u32 = 7;
         let needed = xp.xp_to_next_level();
         let filled_w = if needed > 0 {
             ((xp.xp as u32) * (bar_w - 2) / needed as u32).min(bar_w - 2)
