@@ -582,7 +582,7 @@ impl Daemon {
             epoch: m.epoch,
             mode: self.mode.as_str().to_string(),
             channel: m.channel,
-            aps_seen: m.total_aps,
+            aps_seen: self.ao.ap_count(),
             handshakes: m.handshakes,
             captures_total: self.captures.count(),
             blind_epochs: m.blind_epochs,
@@ -630,7 +630,7 @@ impl Daemon {
         s.mode = self.mode.as_str().to_string();
         s.epoch = m.epoch;
         s.channel = m.channel;
-        s.aps_seen = m.total_aps;
+        s.aps_seen = self.ao.ap_count();
         s.handshakes = m.handshakes;
         s.blind_epochs = m.blind_epochs;
         s.mood = self.epoch_loop.personality.mood.value();
@@ -832,6 +832,10 @@ impl Daemon {
             log::warn!("WiFi monitor stop failed: {e}");
         }
 
+        // Reset shared UART — WiFi monitor mode leaves it in a state where
+        // BT HCI commands time out (BCM43436B0 shared UART).
+        bluetooth::reset_hci_uart();
+
         // Connect Bluetooth
         match self.bluetooth.setup() {
             Ok(()) => info!("BT connected: {}", self.bluetooth.status_str()),
@@ -929,7 +933,7 @@ impl Daemon {
             uptime: &self.epoch_loop.uptime_str(),
             epoch: m.epoch,
             channel: m.channel,
-            aps_seen: m.total_aps,
+            aps_seen: self.ao.ap_count(),
             handshakes: m.handshakes,
             blind_epochs: m.blind_epochs,
             mood: self.epoch_loop.personality.mood.value(),
