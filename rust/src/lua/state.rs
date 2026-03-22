@@ -20,6 +20,8 @@ pub struct EpochState {
     pub ao_pid: u32,
     pub ao_crash_count: u32,
     pub ao_uptime_str: String,
+    pub ao_uptime_secs: u64,
+    pub ao_channels: String,
 
     // battery
     pub battery_level: u8,
@@ -72,6 +74,8 @@ impl EpochState {
         t.set("ao_pid", self.ao_pid)?;
         t.set("ao_crash_count", self.ao_crash_count)?;
         t.set("ao_uptime_str", self.ao_uptime_str.as_str())?;
+        t.set("ao_uptime_secs", self.ao_uptime_secs)?;
+        t.set("ao_channels", self.ao_channels.as_str())?;
 
         t.set("battery_level", self.battery_level)?;
         t.set("battery_charging", self.battery_charging)?;

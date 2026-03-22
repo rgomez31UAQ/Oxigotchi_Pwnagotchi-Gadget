@@ -313,6 +313,11 @@ impl AoManager {
         }
     }
 
+    /// Get AO uptime in seconds (0 if not running).
+    pub fn uptime_secs(&self) -> u64 {
+        self.start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0)
+    }
+
     /// Get AO uptime as a formatted string.
     pub fn uptime_str(&self) -> String {
         match self.start_time {

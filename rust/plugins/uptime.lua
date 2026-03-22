@@ -14,6 +14,14 @@ function on_load(config)
     })
 end
 
+-- Format as DD:HH:MM (days:hours:minutes)
+local function fmt_ddhhmm(secs)
+    local d = math.floor(secs / 86400)
+    local h = math.floor((secs % 86400) / 3600)
+    local m = math.floor((secs % 3600) / 60)
+    return string.format("%02d:%02d:%02d", d, h, m)
+end
+
 function on_epoch(state)
-    set_indicator("uptime", format_duration(state.uptime_secs))
+    set_indicator("uptime", fmt_ddhhmm(state.uptime_secs))
 end
