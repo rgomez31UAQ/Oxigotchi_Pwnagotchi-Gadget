@@ -180,15 +180,9 @@ impl Daemon {
             info!("PiSugar not detected");
         }
 
-        // Bluetooth tethering — MUST happen before WiFi monitor mode.
-        // The BCM43436B0 shares UART between WiFi and BT; once WiFi enters
-        // monitor mode the BT UART init times out. Power on BT first.
-        match self.bluetooth.setup() {
-            Ok(()) => info!("bluetooth setup complete: {}", self.bluetooth.status_str()),
-            Err(e) => log::warn!("bluetooth setup failed: {e}"),
-        }
-
-        // Start WiFi monitor mode
+        // Start WiFi monitor mode first — RAGE is the default mode.
+        // BT only connects when user switches to SAFE mode via button.
+        // BCM43436B0 shares UART: whichever starts first gets it.
         match self.wifi.start_monitor() {
             Ok(()) => info!("WiFi monitor mode started"),
             Err(e) => {
