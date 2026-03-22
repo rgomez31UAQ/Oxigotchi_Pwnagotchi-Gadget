@@ -711,13 +711,20 @@ impl XpTracker {
     }
 
     /// Display string in format: "Lv.22 (1224/2200)"
+    /// Display string with visual progress bar matching Python exp plugin.
+    /// Format: "Lv N  Exp|████░░░░" (filled + empty blocks)
     pub fn display_str(&self) -> String {
-        format!(
-            "Lv.{} ({}/{})",
-            self.level,
-            self.xp,
-            self.xp_to_next_level()
-        )
+        let needed = self.xp_to_next_level();
+        let bar_width = 10u64;
+        let filled = if needed > 0 {
+            (self.xp * bar_width / needed).min(bar_width)
+        } else {
+            bar_width
+        };
+        let empty = bar_width - filled;
+        let bar: String = "\u{2588}".repeat(filled as usize)
+            + &"\u{2591}".repeat(empty as usize);
+        format!("Lv {}  Exp|{}", self.level, bar)
     }
 
     /// Should we save this epoch? (every SAVE_INTERVAL epochs)
@@ -1341,25 +1348,31 @@ mod tests {
     #[test]
     fn test_xp_display_str() {
         let xp = XpTracker::new();
-        assert_eq!(xp.display_str(), "Lv.1 (0/100)");
+        let s = xp.display_str();
+        assert!(s.starts_with("Lv 1  Exp|"), "got: {s}");
+        assert!(s.contains('\u{2591}'), "should have empty blocks");
     }
 
     #[test]
     fn test_xp_display_str_after_xp() {
         let mut xp = XpTracker::new();
         xp.award(50);
-        assert_eq!(xp.display_str(), "Lv.1 (50/100)");
+        let s = xp.display_str();
+        assert!(s.starts_with("Lv 1  Exp|"), "got: {s}");
+        // 50/100 = 5 filled blocks
+        assert_eq!(s.matches('\u{2588}').count(), 5, "should have 5 filled blocks: {s}");
     }
 
     #[test]
     fn test_xp_display_str_level_22() {
         let mut xp = XpTracker::new();
-        // Fast-forward to level 22 with some XP
-        // Sum of 1..=21 * 100 = 21 * 22 / 2 * 100 = 23100
         xp.award(23100 + 1224);
         assert_eq!(xp.level, 22);
         assert_eq!(xp.xp, 1224);
-        assert_eq!(xp.display_str(), "Lv.22 (1224/2200)");
+        let s = xp.display_str();
+        assert!(s.starts_with("Lv 22  Exp|"), "got: {s}");
+        // 1224/2200 ≈ 55% → 5 filled blocks
+        assert_eq!(s.matches('\u{2588}').count(), 5, "got: {s}");
     }
 
     #[test]
