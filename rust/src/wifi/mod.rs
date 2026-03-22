@@ -912,19 +912,6 @@ pub fn is_whitelisted(ap: &AccessPoint, whitelist: &[WhitelistEntry]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Internet connectivity check (Python: internet-connection.py)
-// ---------------------------------------------------------------------------
-
-/// Check if the Pi has internet connectivity.
-///
-/// TODO: Implement actual connectivity check (ping or HTTP HEAD to a known host).
-/// The Python plugin checks by trying to resolve a hostname.
-pub fn check_internet_connection() -> bool {
-    // TODO: try TCP connect to 1.1.1.1:53 or HTTP HEAD to connectivity check URL
-    false
-}
-
-// ---------------------------------------------------------------------------
 // Channel frequency helpers
 // ---------------------------------------------------------------------------
 
@@ -1693,14 +1680,6 @@ mod tests {
             let freq = channel_to_freq(ch).unwrap();
             assert_eq!(freq_to_channel(freq), Some(ch));
         }
-    }
-
-    // ---- Internet connectivity stub test ----
-
-    #[test]
-    fn test_check_internet_connection_stub() {
-        // Stub always returns false
-        assert!(!check_internet_connection());
     }
 
     // ---- Radiotap RSSI extraction tests ----

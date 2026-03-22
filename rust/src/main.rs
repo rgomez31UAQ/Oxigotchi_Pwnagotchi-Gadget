@@ -7,7 +7,6 @@ mod attacks;
 mod bluetooth;
 #[allow(dead_code)]
 mod capture;
-#[allow(dead_code)]
 mod config;
 #[allow(dead_code)]
 mod display;
