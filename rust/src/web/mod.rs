@@ -122,6 +122,10 @@ pub struct DaemonState {
     pub pending_pwnagotchi_restart: bool,
     pub pending_attack_toggle: Option<AttackToggle>,
     pub pending_bt_toggle: Option<bool>,
+
+    // -- plugins --
+    pub plugin_list: Vec<PluginInfo>,
+    pub pending_plugin_updates: Vec<PluginUpdate>,
 }
 
 impl DaemonState {
@@ -201,6 +205,8 @@ impl DaemonState {
             pending_pwnagotchi_restart: false,
             pending_attack_toggle: None,
             pending_bt_toggle: None,
+            plugin_list: Vec::new(),
+            pending_plugin_updates: Vec::new(),
         }
     }
 }
@@ -410,6 +416,27 @@ pub struct CrackedEntry {
     pub ssid: String,
     pub bssid: String,
     pub password: String,
+}
+
+/// Plugin info for the web API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub version: String,
+    pub author: String,
+    pub tag: String,
+    pub enabled: bool,
+    pub x: i32,
+    pub y: i32,
+}
+
+/// A plugin config update from the web dashboard.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginUpdate {
+    pub name: String,
+    pub enabled: Option<bool>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
 }
 
 // ---------------------------------------------------------------------------

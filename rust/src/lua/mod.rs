@@ -71,6 +71,8 @@ struct LoadedPlugin {
     name: String,
     meta: PluginMeta,
     env_key: LuaRegistryKey,
+    config_x: i32,
+    config_y: i32,
 }
 
 /// The Lua plugin runtime. Owns the Lua VM and all loaded plugins.
@@ -129,6 +131,8 @@ impl PluginRuntime {
             name: name.to_string(),
             meta,
             env_key,
+            config_x: config.x,
+            config_y: config.y,
         });
 
         Ok(())
@@ -156,6 +160,37 @@ impl PluginRuntime {
     /// Return metadata for all loaded plugins.
     pub fn get_plugin_info(&self) -> Vec<PluginMeta> {
         self.plugins.iter().map(|p| p.meta.clone()).collect()
+    }
+
+    /// Get plugin info for the web dashboard (name, version, author, tag, x, y).
+    pub fn get_web_plugin_list(&self) -> Vec<(PluginMeta, i32, i32)> {
+        self.plugins.iter().map(|p| {
+            (p.meta.clone(), p.config_x, p.config_y)
+        }).collect()
+    }
+
+    /// Update an indicator's position (for web dashboard changes).
+    pub fn update_indicator_position(&self, indicator_name: &str, x: i32, y: i32) {
+        if let Some(ind) = self.indicators.lock().unwrap().get_mut(indicator_name) {
+            ind.x = x;
+            ind.y = y;
+        }
+    }
+
+    /// Get indicator names that belong to a plugin (by prefix match).
+    pub fn get_indicator_names_for_plugin(&self, plugin_name: &str) -> Vec<String> {
+        let indicators = self.indicators.lock().unwrap();
+        indicators.keys()
+            .filter(|k| {
+                // Direct match (e.g., "uptime" indicator for "uptime" plugin)
+                k.as_str() == plugin_name ||
+                // Prefix match for plugins with multiple indicators
+                k.starts_with(&format!("{}_", plugin_name)) ||
+                // Special case: sys_stats registers sys_header and sys_values
+                (plugin_name == "sys_stats" && (k.as_str() == "sys_header" || k.as_str() == "sys_values"))
+            })
+            .cloned()
+            .collect()
     }
 
     // ── private helpers ──────────────────────────────────────────────

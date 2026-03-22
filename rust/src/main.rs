@@ -433,6 +433,22 @@ impl Daemon {
                 Err(e) => log::error!("AO restart failed: {e}"),
             }
         }
+
+        // Process pending plugin position updates
+        let plugin_updates = {
+            let mut s = self.shared_state.lock().unwrap();
+            std::mem::take(&mut s.pending_plugin_updates)
+        };
+        for update in plugin_updates {
+            if let (Some(x), Some(y)) = (update.x, update.y) {
+                let x = x.clamp(0, 249);
+                let y = y.clamp(0, 121);
+                for ind_name in self.lua.get_indicator_names_for_plugin(&update.name) {
+                    self.lua.update_indicator_position(&ind_name, x, y);
+                }
+                info!("plugin {}: position updated to ({x},{y})", update.name);
+            }
+        }
     }
 
     /// Build an EpochState snapshot for Lua plugins.
@@ -566,6 +582,19 @@ impl Daemon {
         s.screen_width = self.screen.fb.width;
         s.screen_height = self.screen.fb.height;
         s.screen_bytes = self.screen.fb.as_bytes().to_vec();
+
+        // Sync plugin list for web dashboard
+        s.plugin_list = self.lua.get_web_plugin_list().into_iter().map(|(meta, x, y)| {
+            web::PluginInfo {
+                name: meta.name,
+                version: meta.version,
+                author: meta.author,
+                tag: meta.tag,
+                enabled: true,
+                x,
+                y,
+            }
+        }).collect();
     }
 
     /// Update the e-ink display with current state.
