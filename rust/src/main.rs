@@ -486,6 +486,39 @@ impl Daemon {
         }
     }
 
+    /// Battery state snapshot: (level, charging, voltage_mv, low, critical, available).
+    fn battery_snapshot(&self) -> (u8, bool, u16, bool, bool, bool) {
+        (
+            self.battery.status.level,
+            self.battery.status.charge_state == pisugar::ChargeState::Charging,
+            self.battery.status.voltage_mv,
+            self.battery.status.low,
+            self.battery.status.critical,
+            self.battery.available,
+        )
+    }
+
+    /// AO process state snapshot: (state_str, pid, crash_count, uptime_str, uptime_secs).
+    fn ao_snapshot(&self) -> (String, u32, u32, String, u64) {
+        (
+            self.ao.state_str().to_string(),
+            self.ao.pid,
+            self.ao.crash_count,
+            self.ao.uptime_str(),
+            self.ao.uptime_secs(),
+        )
+    }
+
+    /// Bluetooth state snapshot: (connected, status_short, ip, internet_available).
+    fn bt_snapshot(&self) -> (bool, String, String, bool) {
+        (
+            self.bluetooth.state == bluetooth::BtState::Connected,
+            self.bluetooth.status_short().to_string(),
+            self.bluetooth.ip_address.clone().unwrap_or_default(),
+            self.bluetooth.internet_available,
+        )
+    }
+
     /// Build an EpochState snapshot for Lua plugins.
     fn build_epoch_state(&self) -> lua::state::EpochState {
         let m = &self.epoch_loop.metrics;
@@ -513,6 +546,10 @@ impl Daemon {
             s.cpu_percent
         };
 
+        let (bat_level, bat_charging, bat_mv, bat_low, bat_crit, bat_avail) = self.battery_snapshot();
+        let (ao_state, ao_pid, ao_crashes, ao_uptime, ao_up_secs) = self.ao_snapshot();
+        let (bt_conn, bt_short, bt_ip, bt_inet) = self.bt_snapshot();
+
         lua::state::EpochState {
             uptime_secs: self.epoch_loop.uptime_secs(),
             epoch: m.epoch,
@@ -522,22 +559,22 @@ impl Daemon {
             handshakes: m.handshakes,
             captures_total: self.captures.count(),
             blind_epochs: m.blind_epochs,
-            ao_state: self.ao.state_str().to_string(),
-            ao_pid: self.ao.pid,
-            ao_crash_count: self.ao.crash_count,
-            ao_uptime_str: self.ao.uptime_str(),
-            ao_uptime_secs: self.ao.uptime_secs(),
+            ao_state,
+            ao_pid,
+            ao_crash_count: ao_crashes,
+            ao_uptime_str: ao_uptime,
+            ao_uptime_secs: ao_up_secs,
             ao_channels: "AH".to_string(), // autohunt — AO handles channel hopping
-            battery_level: self.battery.status.level,
-            battery_charging: self.battery.status.charge_state == pisugar::ChargeState::Charging,
-            battery_voltage_mv: self.battery.status.voltage_mv,
-            battery_low: self.battery.status.low,
-            battery_critical: self.battery.status.critical,
-            battery_available: self.battery.available,
-            bt_connected: self.bluetooth.state == bluetooth::BtState::Connected,
-            bt_short: self.bluetooth.status_short().to_string(),
-            bt_ip: self.bluetooth.ip_address.clone().unwrap_or_default(),
-            bt_internet: self.bluetooth.internet_available,
+            battery_level: bat_level,
+            battery_charging: bat_charging,
+            battery_voltage_mv: bat_mv,
+            battery_low: bat_low,
+            battery_critical: bat_crit,
+            battery_available: bat_avail,
+            bt_connected: bt_conn,
+            bt_short,
+            bt_ip,
+            bt_internet: bt_inet,
             internet_online: self.network.internet == network::InternetStatus::Online,
             display_ip: self.network.display_ip_str(self.bluetooth.ip_address.as_deref()),
             mood: self.epoch_loop.personality.mood.value(),
@@ -557,6 +594,10 @@ impl Daemon {
     fn sync_to_web(&self) {
         let mut s = self.shared_state.lock().unwrap();
         let m = &self.epoch_loop.metrics;
+
+        let (bat_level, bat_charging, bat_mv, bat_low, bat_crit, bat_avail) = self.battery_snapshot();
+        let (ao_state, ao_pid, ao_crashes, ao_uptime, _ao_up_secs) = self.ao_snapshot();
+        let (bt_conn, _bt_short, bt_ip, bt_inet) = self.bt_snapshot();
 
         s.uptime_str = self.epoch_loop.uptime_str();
         s.mode = self.mode.as_str().to_string();
@@ -588,26 +629,26 @@ impl Daemon {
             }
         }).collect();
 
-        s.battery_level = self.battery.status.level;
-        s.battery_charging = self.battery.status.charge_state == pisugar::ChargeState::Charging;
-        s.battery_voltage_mv = self.battery.status.voltage_mv;
-        s.battery_low = self.battery.status.low;
-        s.battery_critical = self.battery.status.critical;
-        s.battery_available = self.battery.available;
+        s.battery_level = bat_level;
+        s.battery_charging = bat_charging;
+        s.battery_voltage_mv = bat_mv;
+        s.battery_low = bat_low;
+        s.battery_critical = bat_crit;
+        s.battery_available = bat_avail;
 
         s.wifi_state = format!("{:?}", self.wifi.state);
         s.wifi_aps_tracked = self.wifi.tracker.count();
 
-        s.bt_state = self.bluetooth.status_str().to_string();
-        s.bt_connected = self.bluetooth.state == bluetooth::BtState::Connected;
-        s.bt_ip = self.bluetooth.ip_address.clone().unwrap_or_default();
-        s.bt_internet_available = self.bluetooth.internet_available;
+        s.bt_state = self.bluetooth.status_str().to_string(); // long form for web
+        s.bt_connected = bt_conn;
+        s.bt_ip = bt_ip;
+        s.bt_internet_available = bt_inet;
         s.bt_retry_count = self.bluetooth.retry_count;
 
-        s.ao_state = self.ao.state_str().to_string();
-        s.ao_pid = self.ao.pid;
-        s.ao_crash_count = self.ao.crash_count;
-        s.ao_uptime = self.ao.uptime_str();
+        s.ao_state = ao_state;
+        s.ao_pid = ao_pid;
+        s.ao_crash_count = ao_crashes;
+        s.ao_uptime = ao_uptime;
 
         s.xp = self.epoch_loop.personality.xp.xp;
         s.level = self.epoch_loop.personality.xp.level;
