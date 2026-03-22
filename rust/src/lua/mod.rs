@@ -261,6 +261,69 @@ impl PluginRuntime {
         Ok(t)
     }
 
+    /// Load all .lua plugins from a directory. Returns count of successfully loaded plugins.
+    /// Plugins not in configs or with enabled=false are skipped.
+    pub fn load_plugins_from_dir(&mut self, dir: &str, configs: &[PluginConfig]) -> usize {
+        let path = std::path::Path::new(dir);
+        if !path.exists() {
+            log::warn!("Plugin directory does not exist: {dir}");
+            return 0;
+        }
+
+        let mut count = 0;
+        let entries: Vec<_> = match std::fs::read_dir(path) {
+            Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+            Err(e) => {
+                log::error!("Failed to read plugin directory {dir}: {e}");
+                return 0;
+            }
+        };
+
+        for entry in entries {
+            let file_path = entry.path();
+            if file_path.extension().is_none_or(|e| e != "lua") {
+                continue;
+            }
+
+            let stem = file_path.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let config = configs.iter().find(|c| c.name == stem);
+            let config = match config {
+                Some(c) if c.enabled => c,
+                Some(_) => {
+                    log::info!("plugin {stem}: disabled, skipping");
+                    continue;
+                }
+                None => {
+                    log::info!("plugin {stem}: no config, skipping");
+                    continue;
+                }
+            };
+
+            let source = match std::fs::read_to_string(&file_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("plugin {stem}: read error: {e}");
+                    continue;
+                }
+            };
+
+            match self.load_plugin_from_str(&stem, &source, config) {
+                Ok(()) => {
+                    log::info!("plugin {stem}: loaded v{}", self.plugins.last().map(|p| p.meta.version.as_str()).unwrap_or("?"));
+                    count += 1;
+                }
+                Err(e) => {
+                    log::error!("plugin {stem}: load error: {e}");
+                }
+            }
+        }
+
+        count
+    }
+
     /// Call on_epoch for a single plugin. Returns error if the call fails.
     fn tick_one(&self, plugin: &LoadedPlugin, epoch_state: &state::EpochState) -> Result<(), String> {
         let env: LuaTable = self.lua.registry_value(&plugin.env_key)
@@ -524,5 +587,76 @@ mod tests {
 
         let indicators = rt.get_indicators();
         assert_eq!(indicators.len(), 3);
+    }
+
+    #[test]
+    fn test_load_plugins_from_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugin_path = dir.path().join("hello.lua");
+        std::fs::write(&plugin_path, r#"
+            plugin = {}
+            plugin.name = "hello"
+            plugin.version = "1.0.0"
+            plugin.author = "test"
+            plugin.tag = "default"
+            function on_load(config)
+                register_indicator("hi", { x = 0, y = 0, font = "small" })
+            end
+            function on_epoch(state)
+                set_indicator("hi", "world")
+            end
+        "#).unwrap();
+
+        let mut rt = PluginRuntime::new();
+        let configs = vec![PluginConfig::default_for("hello", 0, 0)];
+        let loaded = rt.load_plugins_from_dir(dir.path().to_str().unwrap(), &configs);
+        assert_eq!(loaded, 1);
+        assert_eq!(rt.plugin_count(), 1);
+    }
+
+    #[test]
+    fn test_load_plugins_skips_bad_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("bad.lua"), "this is not valid lua {{{{").unwrap();
+        std::fs::write(dir.path().join("good.lua"), r#"
+            plugin = {}
+            plugin.name = "good"
+            plugin.version = "1.0.0"
+            plugin.author = "test"
+            plugin.tag = "default"
+            function on_load(config) end
+            function on_epoch(state) end
+        "#).unwrap();
+
+        let mut rt = PluginRuntime::new();
+        let configs = vec![
+            PluginConfig::default_for("bad", 0, 0),
+            PluginConfig::default_for("good", 0, 0),
+        ];
+        let loaded = rt.load_plugins_from_dir(dir.path().to_str().unwrap(), &configs);
+        assert_eq!(loaded, 1);
+    }
+
+    #[test]
+    fn test_load_plugins_disabled_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("skip.lua"), r#"
+            plugin = {}
+            plugin.name = "skip"
+            plugin.version = "1.0.0"
+            plugin.author = "test"
+            plugin.tag = "default"
+            function on_load(config)
+                register_indicator("s", { x = 0, y = 0, font = "small" })
+            end
+            function on_epoch(state) end
+        "#).unwrap();
+
+        let mut rt = PluginRuntime::new();
+        let mut cfg = PluginConfig::default_for("skip", 0, 0);
+        cfg.enabled = false;
+        let loaded = rt.load_plugins_from_dir(dir.path().to_str().unwrap(), &[cfg]);
+        assert_eq!(loaded, 0);
+        assert_eq!(rt.get_indicators().len(), 0);
     }
 }
