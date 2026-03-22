@@ -200,6 +200,19 @@ impl Daemon {
             self.handle_recovery_action(action);
         }
 
+        // ---- BLUETOOTH HEALTH CHECK ----
+        self.bluetooth.check_status();
+        // Auto-reconnect if configured
+        if self.bluetooth.should_connect() {
+            match self.bluetooth.connect() {
+                Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
+                Err(e) => {
+                    log::warn!("bluetooth reconnect failed: {e}");
+                    self.bluetooth.on_error();
+                }
+            }
+        }
+
         // ---- NETWORK HEALTH CHECK ----
         self.network.health_check();
         // Rotate IP display each epoch
@@ -422,8 +435,9 @@ impl Daemon {
             self.ao.uptime_str()
         );
         self.screen.draw_text(&ao_status, 0, 0);
-        // BT status at (115,0) — Small 9pt
-        self.screen.draw_text(self.bluetooth.status_short(), 115, 0);
+        // BT status at (115,0) — Small 9pt — "BT:C" / "BT:-"
+        let bt_str = format!("BT:{}", self.bluetooth.status_short());
+        self.screen.draw_text(&bt_str, 115, 0);
         // Battery at (140,0) — Small 9pt
         self.screen.draw_text(&self.battery.display_str(), 140, 0);
         // Uptime at (185,0) — Small 9pt
