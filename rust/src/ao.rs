@@ -159,15 +159,35 @@ impl AoManager {
             let args = self.build_args();
             info!("starting AO: {} {}", self.config.binary, args.join(" "));
 
+            // Reset shutdown flag before spawning
+            self.shutdown_flag.store(false, Ordering::Relaxed);
+            self.ao_ap_count.store(0, Ordering::Relaxed);
+
             match std::process::Command::new(&self.config.binary)
                 .args(&args)
-                .stdout(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
                 .spawn()
             {
-                Ok(child) => {
+                Ok(mut child) => {
                     self.pid = child.id();
                     info!("AO started with PID {}", self.pid);
+
+                    // Take stdout and spawn reader thread (JoinHandle intentionally
+                    // discarded — thread exits on stdout EOF when child dies)
+                    if let Some(stdout) = child.stdout.take() {
+                        let ap_count = Arc::clone(&self.ao_ap_count);
+                        let shutdown = Arc::clone(&self.shutdown_flag);
+                        if let Err(e) = std::thread::Builder::new()
+                            .name("ao-stdout-reader".into())
+                            .spawn(move || {
+                                ao_stdout_reader(stdout, ap_count, shutdown);
+                            })
+                        {
+                            error!("failed to spawn AO stdout reader: {e}");
+                        }
+                    }
+
                     self.process = Some(child);
                     self.state = AoState::Running;
                     self.start_time = Some(Instant::now());
@@ -440,6 +460,45 @@ pub fn parse_ao_line(line: &str) -> Option<u32> {
         return None;
     }
     digits.parse().ok()
+}
+
+/// Reader thread: reads AO stdout line-by-line, parses for AP count.
+#[cfg(unix)]
+fn ao_stdout_reader(
+    stdout: std::process::ChildStdout,
+    ap_count: Arc<AtomicU32>,
+    shutdown: Arc<AtomicBool>,
+) {
+    use std::io::{BufRead, BufReader};
+
+    let reader = BufReader::new(stdout);
+    for line_result in reader.lines() {
+        if shutdown.load(Ordering::Relaxed) {
+            info!("AO stdout reader: shutdown signaled");
+            break;
+        }
+        match line_result {
+            Ok(line) => {
+                if let Some(count) = parse_ao_line(&line) {
+                    ap_count.store(count, Ordering::Relaxed);
+                }
+                // Log capture events (informational only)
+                let lower = line.to_ascii_lowercase();
+                if lower.contains("handshake")
+                    || lower.contains("pmkid")
+                    || lower.contains("captured")
+                    || lower.contains("hash")
+                {
+                    info!("AO capture event: {}", &line[..line.len().min(120)]);
+                }
+            }
+            Err(e) => {
+                warn!("AO stdout read error: {e}");
+                break;
+            }
+        }
+    }
+    info!("AO stdout reader thread exiting");
 }
 
 #[cfg(test)]
