@@ -222,6 +222,8 @@ The `state` table passed to `on_epoch` and other hooks contains:
 | `ao_pid` | number | AngryOxide process ID |
 | `ao_crash_count` | number | AO crashes this session |
 | `ao_uptime_str` | string | AO uptime formatted |
+| `ao_uptime_secs` | number | AO uptime in seconds |
+| `ao_channels` | string | AO channel mode (e.g. "AH" for autohunt) |
 
 **Battery (PiSugar3):**
 

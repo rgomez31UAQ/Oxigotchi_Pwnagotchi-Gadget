@@ -8,7 +8,7 @@
 //! All Command calls are #[cfg(unix)] gated. On Windows, stubs are used.
 
 #[cfg(unix)]
-use log::{error, info, warn};
+use log::{info, warn};
 #[cfg(not(unix))]
 use log::info;
 use std::collections::HashMap;

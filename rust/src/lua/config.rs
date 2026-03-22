@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn round_trip() {
-        let configs = vec![
+        let configs: Vec<(String, bool, i32, i32)> = vec![
             ("battery".into(), true, 140, 112),
             ("uptime".into(), true, 185, 0),
         ];

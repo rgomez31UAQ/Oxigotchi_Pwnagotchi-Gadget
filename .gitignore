@@ -12,6 +12,15 @@ __pycache__/
 *_results.json
 .pytest_cache/
 
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Debug artifacts
+*.bmp
+
 # OS
 .DS_Store
 Thumbs.db
