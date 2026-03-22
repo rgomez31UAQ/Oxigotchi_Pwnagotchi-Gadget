@@ -50,6 +50,7 @@ pub struct DaemonState {
     pub attack_rogue_m2: bool,
 
     // -- captures --
+    pub capture_dir: String,
     pub capture_files: usize,
     pub handshake_files: usize,
     pub pending_upload: usize,
@@ -148,6 +149,7 @@ impl DaemonState {
             attack_disassoc: true,
             attack_anon_reassoc: true,
             attack_rogue_m2: true,
+            capture_dir: "/home/pi/captures".into(),
             capture_files: 0,
             handshake_files: 0,
             pending_upload: 0,
@@ -867,6 +869,47 @@ async fn display_handler(
 
 // ---------------------------------------------------------------------------
 // Router builder
+/// GET /api/download/all -> ZIP of all capture files
+async fn download_zip_handler(State(state): State<SharedState>) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    use std::io::Write;
+
+    let capture_dir = {
+        let s = state.lock().unwrap();
+        s.capture_dir.clone()
+    };
+
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        if let Ok(entries) = std::fs::read_dir(&capture_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = path.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    if let Ok(data) = std::fs::read(&path) {
+                        let _ = zip.start_file(&name, options);
+                        let _ = zip.write_all(&data);
+                    }
+                }
+            }
+        }
+        let _ = zip.finish();
+    }
+
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/zip")
+        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"captures.zip\"")
+        .body(axum::body::Body::from(buf.into_inner()))
+        .unwrap()
+}
+
 // ---------------------------------------------------------------------------
 
 /// Build the axum router with all routes, sharing daemon state.
@@ -889,6 +932,7 @@ pub fn build_router(state: SharedState) -> Router {
         .route(API_RESTART, post(restart_handler))
         .route(API_SHUTDOWN, post(shutdown_handler))
         .route(API_DISPLAY, get(display_handler))
+        .route("/api/download/all", get(download_zip_handler))
         .with_state(state)
 }
 
@@ -1157,8 +1201,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="card-title">Download Captures</div>
 <div class="sub">Download all captures as a ZIP archive.</div>
 <div class="action-btns">
-<!-- TODO: implement /api/handshakes/download.zip endpoint -->
-<button class="action-btn btn-restart" onclick="toast('ZIP download not yet implemented')">Download All (ZIP)</button>
+<a href="/api/download/all" class="action-btn btn-restart" style="text-decoration:none;text-align:center">Download All (ZIP)</a>
 </div>
 </div>
 
@@ -2166,5 +2209,14 @@ mod tests {
         let resp2: StatusResponse = serde_json::from_str(&body2).unwrap();
         assert_eq!(resp1.epoch, 999);
         assert_eq!(resp2.epoch, 0);
+    }
+
+    #[tokio::test]
+    async fn test_download_zip_endpoint_exists() {
+        let state = test_state();
+        let router = build_router(state);
+        let (status, _body) = get(&router, "/api/download/all").await;
+        // get() returns (u16, String); 200 = OK with empty zip for nonexistent capture dir
+        assert_eq!(status, 200);
     }
 }

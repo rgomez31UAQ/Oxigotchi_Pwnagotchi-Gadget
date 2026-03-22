@@ -396,6 +396,7 @@ impl Daemon {
         s.attack_rate = self.ao.config.rate;
         s.deauths_this_epoch = m.deauths_this_epoch;
 
+        s.capture_dir = self.captures.capture_dir.to_string_lossy().to_string();
         s.capture_files = self.captures.count();
         s.handshake_files = self.captures.handshake_count();
         s.pending_upload = self.captures.pending_upload_count();
