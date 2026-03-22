@@ -8,6 +8,7 @@ pub struct EpochState {
     // timing
     pub uptime_secs: u64,
     pub epoch: u64,
+    pub mode: String,
 
     // wifi / AO
     pub channel: u8,
@@ -60,6 +61,7 @@ impl EpochState {
 
         t.set("uptime_secs", self.uptime_secs)?;
         t.set("epoch", self.epoch)?;
+        t.set("mode", self.mode.as_str())?;
 
         t.set("channel", self.channel)?;
         t.set("aps_seen", self.aps_seen)?;
@@ -137,5 +139,16 @@ mod tests {
         assert_eq!(table.get::<u8>("battery_level").unwrap(), 85);
         assert!(table.get::<bool>("bt_connected").unwrap());
         assert_eq!(table.get::<u32>("level").unwrap(), 3);
+    }
+
+    #[test]
+    fn test_epoch_state_mode_field() {
+        let lua = Lua::new();
+        let s = EpochState {
+            mode: "RAGE".into(),
+            ..Default::default()
+        };
+        let table = s.to_lua_table(&lua).unwrap();
+        assert_eq!(table.get::<String>("mode").unwrap(), "RAGE");
     }
 }
