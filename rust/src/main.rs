@@ -558,6 +558,7 @@ impl Daemon {
         let m = &self.epoch_loop.metrics;
 
         s.uptime_str = self.epoch_loop.uptime_str();
+        s.mode = self.mode.as_str().to_string();
         s.epoch = m.epoch;
         s.channel = m.channel;
         s.aps_seen = m.total_aps;
@@ -780,6 +781,9 @@ impl Daemon {
 
         // Power off Bluetooth adapter to free radio for WiFi
         self.bluetooth.power_off();
+
+        // Wait for UART to settle after BT release
+        std::thread::sleep(Duration::from_secs(2));
 
         // Enter WiFi monitor mode
         match self.wifi.start_monitor() {
