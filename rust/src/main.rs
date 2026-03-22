@@ -439,8 +439,26 @@ impl Daemon {
             self.watchdog.ping();
         }
 
-        // Sleep before next epoch
-        std::thread::sleep(self.epoch_loop.epoch_duration);
+        // Sleep before next epoch — poll button every 500ms during sleep
+        let sleep_total = self.epoch_loop.epoch_duration;
+        let poll_interval = Duration::from_millis(500);
+        let sleep_start = std::time::Instant::now();
+        while sleep_start.elapsed() < sleep_total {
+            std::thread::sleep(poll_interval);
+            // Check button during sleep for responsive mode switching
+            if let Some(action) = self.battery.poll_button() {
+                match action {
+                    pisugar::ButtonAction::SingleTap => {
+                        let new_mode = self.mode.toggle();
+                        match new_mode {
+                            OperatingMode::Safe => self.enter_safe_mode(),
+                            OperatingMode::Rage => self.enter_rage_mode(),
+                        }
+                    }
+                    _ => {} // double tap, long press unused
+                }
+            }
+        }
 
         // Advance to next Scan (increments epoch counter)
         self.epoch_loop.next_phase(); // -> Scan (calls finish_epoch)
