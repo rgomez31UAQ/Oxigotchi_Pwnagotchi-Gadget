@@ -443,12 +443,11 @@ impl PiSugar {
         if !self.available {
             return "BAT N/A".to_string();
         }
-        let (label, suffix) = match self.status.charge_state {
-            ChargeState::Charging => ("CHG", "+"),
-            ChargeState::Full => ("CHG", "="),
-            _ => ("BAT", ""),
+        let label = match self.status.charge_state {
+            ChargeState::Charging | ChargeState::Full => "CHG",
+            _ => "BAT",
         };
-        format!("{}{}%{}", label, self.status.level, suffix)
+        format!("{}={}%", label, self.status.level)
     }
 }
 
@@ -773,10 +772,10 @@ mod tests {
         ps.available = true;
         ps.status.level = 75;
         ps.status.charge_state = ChargeState::Discharging;
-        assert_eq!(ps.display_str(), "BAT75%");
+        assert_eq!(ps.display_str(), "BAT=75%");
 
         ps.status.charge_state = ChargeState::Charging;
-        assert_eq!(ps.display_str(), "CHG75%+");
+        assert_eq!(ps.display_str(), "CHG=75%");
     }
 
     #[test]
@@ -825,7 +824,7 @@ mod tests {
         ps.available = true;
         ps.status.level = 100;
         ps.status.charge_state = ChargeState::Full;
-        assert_eq!(ps.display_str(), "CHG100%=");
+        assert_eq!(ps.display_str(), "CHG=100%");
     }
 
     // ===== Button action mapping tests =====
