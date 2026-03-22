@@ -16,7 +16,7 @@ But the bull is getting an upgrade.
 
 The codename is **Rusty** — because even an ox gets stronger with age, and this one is forged in Rust. Everything that makes Oxigotchi great (patched firmware, 6 attack types, bull faces, web dashboard, self-healing) gets rebuilt from scratch as native Rust modules compiled into one binary. Your SD card will last a decade.
 
-Development is tracked in [docs/RUST_REWRITE_PLAN.md](docs/RUST_REWRITE_PLAN.md). The `rust/` directory has the initial scaffold.
+Development is tracked in [docs/RUSTY_V3.md](docs/RUSTY_V3.md). The `rust/` directory has the Rusty daemon.
 
 ---
 
