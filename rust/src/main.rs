@@ -308,7 +308,27 @@ impl Daemon {
         if self.watchdog.needs_ping() {
             self.watchdog.ping();
         }
-        std::thread::sleep(self.epoch_loop.epoch_duration);
+        // Sub-epoch loop: sleep in 5s ticks for IP rotation in SAFE mode.
+        // In RAGE mode, just sleeps the full duration (no display changes).
+        const IP_ROTATE_SECS: u64 = 5;
+        let total_secs = self.epoch_loop.epoch_duration.as_secs();
+        let ticks = total_secs / IP_ROTATE_SECS;
+        let remainder = total_secs % IP_ROTATE_SECS;
+
+        for _ in 0..ticks {
+            std::thread::sleep(Duration::from_secs(IP_ROTATE_SECS));
+            if self.mode == OperatingMode::Safe {
+                self.network.rotate_display(false);
+                let ip_str = self.network.display_ip_str(
+                    self.bluetooth.ip_address.as_deref(),
+                );
+                self.lua.update_indicator_value("ip_display", &ip_str);
+                self.update_display();
+            }
+        }
+        if remainder > 0 {
+            std::thread::sleep(Duration::from_secs(remainder));
+        }
         self.epoch_loop.next_phase(); // -> Scan (increments epoch counter)
     }
 
@@ -847,6 +867,7 @@ impl Daemon {
         }
 
         self.mode = OperatingMode::Rage;
+        self.network.display_slot = network::DisplaySlot::UsbIp;
         self.epoch_loop.personality.clear_override();
     }
 
