@@ -396,6 +396,37 @@ fn wait_timeout(
     }
 }
 
+/// Parse a line of AO stdout for AP/target count.
+/// Returns Some(count) if the line contains a target/AP count, None otherwise.
+/// Matches patterns like "Targets: 5", "APs: 12", "Access Points: 8" (case-insensitive).
+pub fn parse_ao_line(line: &str) -> Option<u32> {
+    let lower = line.to_ascii_lowercase();
+
+    // Find keyword position (longer matches first to avoid ambiguity)
+    let keyword_end = if let Some(pos) = lower.find("access points") {
+        pos + "access points".len()
+    } else if let Some(pos) = lower.find("targets") {
+        pos + "targets".len()
+    } else if let Some(pos) = lower.find("target") {
+        pos + "target".len()
+    } else if let Some(pos) = lower.find("aps") {
+        pos + "aps".len()
+    } else {
+        return None;
+    };
+
+    // Skip separator characters (whitespace, :, -, =)
+    let rest = &line[keyword_end..];
+    let rest = rest.trim_start_matches(|c: char| c == ':' || c == '-' || c == '=' || c.is_whitespace());
+
+    // Extract digits
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -549,5 +580,53 @@ mod tests {
         ao.state = AoState::Failed;
         let result = ao.start();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_ao_line_targets() {
+        assert_eq!(parse_ao_line("Targets: 5"), Some(5));
+        assert_eq!(parse_ao_line("Targets: 0"), Some(0));
+        assert_eq!(parse_ao_line("Targets: 42"), Some(42));
+    }
+
+    #[test]
+    fn test_parse_ao_line_aps() {
+        assert_eq!(parse_ao_line("APs: 12"), Some(12));
+        assert_eq!(parse_ao_line("APs=3"), Some(3));
+        assert_eq!(parse_ao_line("APs-7"), Some(7));
+    }
+
+    #[test]
+    fn test_parse_ao_line_access_points() {
+        assert_eq!(parse_ao_line("Access Points: 8"), Some(8));
+        assert_eq!(parse_ao_line("access points: 15"), Some(15));
+    }
+
+    #[test]
+    fn test_parse_ao_line_case_insensitive() {
+        assert_eq!(parse_ao_line("TARGETS: 10"), Some(10));
+        assert_eq!(parse_ao_line("targets: 3"), Some(3));
+        assert_eq!(parse_ao_line("aps: 7"), Some(7));
+    }
+
+    #[test]
+    fn test_parse_ao_line_no_match() {
+        assert_eq!(parse_ao_line(""), None);
+        assert_eq!(parse_ao_line("some random log line"), None);
+        assert_eq!(parse_ao_line("Frames: 1234 | Rate: 50"), None);
+        assert_eq!(parse_ao_line("Status :: 14:23:01 | AA:BB:CC"), None);
+    }
+
+    #[test]
+    fn test_parse_ao_line_no_digits_after_separator() {
+        assert_eq!(parse_ao_line("Targets: "), None);
+        assert_eq!(parse_ao_line("APs: abc"), None);
+        assert_eq!(parse_ao_line("Targets:"), None);
+    }
+
+    #[test]
+    fn test_parse_ao_line_embedded_in_status() {
+        assert_eq!(parse_ao_line("2026-03-22 14:00:00 UTC | [Status] | Targets: 9"), Some(9));
+        assert_eq!(parse_ao_line("[INFO] APs: 20"), Some(20));
     }
 }
