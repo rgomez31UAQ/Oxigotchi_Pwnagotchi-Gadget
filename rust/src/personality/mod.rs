@@ -808,6 +808,53 @@ impl Default for XpTracker {
 // System info (Python: memtemp-plus.py → display/sysinfo.rs)
 // ---------------------------------------------------------------------------
 
+/// A snapshot of /proc/stat CPU counters for computing CPU usage %.
+#[derive(Debug, Clone, Default)]
+pub struct CpuSample {
+    /// Total busy ticks (user + nice + system + irq + softirq + steal).
+    pub busy: u64,
+    /// Total ticks (busy + idle + iowait).
+    pub total: u64,
+}
+
+impl CpuSample {
+    /// Read current CPU counters from /proc/stat.
+    pub fn read() -> Option<Self> {
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(content) = std::fs::read_to_string("/proc/stat") {
+                if let Some(cpu_line) = content.lines().next() {
+                    let fields: Vec<u64> = cpu_line
+                        .split_whitespace()
+                        .skip(1) // skip "cpu"
+                        .filter_map(|s| s.parse().ok())
+                        .collect();
+                    if fields.len() >= 8 {
+                        // user(0) nice(1) system(2) idle(3) iowait(4) irq(5) softirq(6) steal(7)
+                        let busy = fields[0] + fields[1] + fields[2] + fields[5] + fields[6] + fields[7];
+                        let total = busy + fields[3] + fields[4];
+                        return Some(Self { busy, total });
+                    }
+                }
+            }
+            None
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        None
+    }
+
+    /// Compute CPU usage percentage from the delta between two samples.
+    pub fn cpu_percent(&self, prev: &CpuSample) -> f32 {
+        let delta_busy = self.busy.saturating_sub(prev.busy);
+        let delta_total = self.total.saturating_sub(prev.total);
+        if delta_total == 0 {
+            return 0.0;
+        }
+        (delta_busy as f32 / delta_total as f32) * 100.0
+    }
+}
+
 /// System stats: CPU temperature, memory usage, CPU load.
 #[derive(Debug, Clone, Default)]
 pub struct SystemInfo {
@@ -823,11 +870,8 @@ pub struct SystemInfo {
 
 impl SystemInfo {
     /// Read system info from /proc and /sys on Linux.
-    ///
-    /// Parses /sys/class/thermal/thermal_zone0/temp for CPU temp,
-    /// /proc/meminfo for memory. CPU usage requires two /proc/stat samples
-    /// over time, so it returns 0.0 (skip for now).
-    pub fn read() -> Self {
+    /// Pass a previous CpuSample to compute CPU usage %; None on first call.
+    pub fn read(prev_cpu: &Option<CpuSample>) -> (Self, Option<CpuSample>) {
         #[cfg(target_os = "linux")]
         {
             let cpu_temp_c = if let Ok(content) =
@@ -857,16 +901,22 @@ impl SystemInfo {
                 (0, 0)
             };
 
-            return Self {
+            let sample = CpuSample::read();
+            let cpu_percent = match (&sample, prev_cpu) {
+                (Some(curr), Some(prev)) => curr.cpu_percent(prev),
+                _ => 0.0,
+            };
+
+            return (Self {
                 cpu_temp_c,
                 mem_used_mb,
                 mem_total_mb,
-                cpu_percent: 0.0, // CPU % requires two /proc/stat samples — skip for now
-            };
+                cpu_percent,
+            }, sample);
         }
 
         #[cfg(not(target_os = "linux"))]
-        Self::default()
+        (Self::default(), None)
     }
 
     /// Format for display: "CPU 45C MEM 42/512MB"
@@ -1832,7 +1882,7 @@ mod tests {
 
     #[test]
     fn test_system_info_read_returns_struct() {
-        let info = SystemInfo::read();
+        let (info, _sample) = SystemInfo::read(&None);
         // On non-Linux, returns zeros (acceptable)
         // Just verify it doesn't panic and returns valid struct
         assert!(info.cpu_temp_c >= 0.0);
@@ -1843,5 +1893,38 @@ mod tests {
     fn test_system_info_display_str_no_data() {
         let info = SystemInfo::default();
         assert_eq!(info.display_str(), "SYS N/A");
+    }
+
+    // ====================================================================
+    // CpuSample tests
+    // ====================================================================
+
+    #[test]
+    fn test_cpu_sample_percent() {
+        let prev = CpuSample { busy: 100, total: 200 };
+        let curr = CpuSample { busy: 150, total: 300 };
+        let pct = curr.cpu_percent(&prev);
+        assert!((pct - 50.0).abs() < 0.01); // 50/100 = 50%
+    }
+
+    #[test]
+    fn test_cpu_sample_percent_zero_delta() {
+        let prev = CpuSample { busy: 100, total: 200 };
+        let curr = CpuSample { busy: 100, total: 200 };
+        assert_eq!(curr.cpu_percent(&prev), 0.0);
+    }
+
+    #[test]
+    fn test_cpu_sample_read_on_platform() {
+        let sample = CpuSample::read();
+        // On Linux: Some with real values. On non-Linux: None.
+        #[cfg(target_os = "linux")]
+        {
+            assert!(sample.is_some());
+            let s = sample.unwrap();
+            assert!(s.total > 0);
+        }
+        #[cfg(not(target_os = "linux"))]
+        assert!(sample.is_none());
     }
 }

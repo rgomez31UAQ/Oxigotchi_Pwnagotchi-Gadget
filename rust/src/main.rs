@@ -53,6 +53,7 @@ struct Daemon {
     watchdog: recovery::Watchdog,
     ao: ao::AoManager,
     shared_state: web::SharedState,
+    prev_cpu_sample: Option<personality::CpuSample>,
 }
 
 impl Daemon {
@@ -99,6 +100,7 @@ impl Daemon {
             watchdog,
             ao,
             shared_state,
+            prev_cpu_sample: None,
         }
     }
 
@@ -324,6 +326,16 @@ impl Daemon {
         }
 
         self.update_display();
+
+        // ---- CPU USAGE SAMPLING ----
+        if let Some(sample) = personality::CpuSample::read() {
+            if let Some(ref prev) = self.prev_cpu_sample {
+                let cpu_pct = sample.cpu_percent(prev);
+                let mut s = self.shared_state.lock().unwrap();
+                s.cpu_percent = cpu_pct;
+            }
+            self.prev_cpu_sample = Some(sample);
+        }
 
         // ---- Sync state to web ----
         self.sync_to_web();
