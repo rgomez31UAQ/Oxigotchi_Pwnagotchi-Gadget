@@ -824,10 +824,48 @@ pub struct SystemInfo {
 impl SystemInfo {
     /// Read system info from /proc and /sys on Linux.
     ///
-    /// TODO: Parse /sys/class/thermal/thermal_zone0/temp for CPU temp,
-    /// /proc/meminfo for memory, /proc/stat for CPU usage.
+    /// Parses /sys/class/thermal/thermal_zone0/temp for CPU temp,
+    /// /proc/meminfo for memory. CPU usage requires two /proc/stat samples
+    /// over time, so it returns 0.0 (skip for now).
     pub fn read() -> Self {
-        // Stub: on non-Linux platforms, return zeros
+        #[cfg(target_os = "linux")]
+        {
+            let cpu_temp_c = if let Ok(content) =
+                std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp")
+            {
+                content.trim().parse::<f32>().unwrap_or(0.0) / 1000.0
+            } else {
+                0.0
+            };
+
+            let (mem_used_mb, mem_total_mb) = if let Ok(content) =
+                std::fs::read_to_string("/proc/meminfo")
+            {
+                let mut total_kb: u64 = 0;
+                let mut available_kb: u64 = 0;
+                for line in content.lines() {
+                    if line.starts_with("MemTotal:") {
+                        total_kb = line.split_whitespace().nth(1)
+                            .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    } else if line.starts_with("MemAvailable:") {
+                        available_kb = line.split_whitespace().nth(1)
+                            .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    }
+                }
+                ((total_kb.saturating_sub(available_kb) / 1024) as u32, (total_kb / 1024) as u32)
+            } else {
+                (0, 0)
+            };
+
+            return Self {
+                cpu_temp_c,
+                mem_used_mb,
+                mem_total_mb,
+                cpu_percent: 0.0, // CPU % requires two /proc/stat samples — skip for now
+            };
+        }
+
+        #[cfg(not(target_os = "linux"))]
         Self::default()
     }
 
@@ -1786,5 +1824,24 @@ mod tests {
         let xp = XpTracker::with_save_path(&path);
         assert_eq!(xp.save_path, path);
         assert_eq!(xp.level, 1);
+    }
+
+    // ====================================================================
+    // SystemInfo tests
+    // ====================================================================
+
+    #[test]
+    fn test_system_info_read_returns_struct() {
+        let info = SystemInfo::read();
+        // On non-Linux, returns zeros (acceptable)
+        // Just verify it doesn't panic and returns valid struct
+        assert!(info.cpu_temp_c >= 0.0);
+        assert!(info.cpu_percent >= 0.0);
+    }
+
+    #[test]
+    fn test_system_info_display_str_no_data() {
+        let info = SystemInfo::default();
+        assert_eq!(info.display_str(), "SYS N/A");
     }
 }
