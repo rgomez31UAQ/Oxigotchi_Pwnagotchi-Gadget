@@ -170,8 +170,20 @@ impl Daemon {
             Err(e) => log::warn!("capture scan failed: {e}"),
         }
 
-        // Load Lua plugins
-        let plugin_configs = vec![]; // empty for now — Plan B adds default configs
+        // Load Lua plugins — default configs match update_display() positions exactly
+        let plugin_configs = vec![
+            lua::PluginConfig::default_for("ao_status",  0,   0),
+            lua::PluginConfig::default_for("aps",        145, 0),
+            lua::PluginConfig::default_for("uptime",     185, 0),
+            lua::PluginConfig::default_for("status_msg", 125, 20),
+            lua::PluginConfig::default_for("sys_stats",  125, 85),
+            lua::PluginConfig::default_for("ip_display", 0,   95),
+            lua::PluginConfig::default_for("crash",      0,   112),
+            lua::PluginConfig::default_for("www",        48,  112),
+            lua::PluginConfig::default_for("bt_status",  86,  112),
+            lua::PluginConfig::default_for("battery",    118, 112),
+            lua::PluginConfig::default_for("mode",       228, 112),
+        ];
         let loaded = self.lua.load_plugins_from_dir("/etc/oxigotchi/plugins", &plugin_configs);
         info!("loaded {loaded} Lua plugin(s)");
 
@@ -571,11 +583,8 @@ impl Daemon {
             self.ao.uptime_str()
         );
         self.screen.draw_text(&ao_status, 0, 0);
-        // APs count at (145,0)
-        let aps_str = format!("APs:{}", m.total_aps);
-        self.screen.draw_text(&aps_str, 145, 0);
-        // Uptime at (185,0)
-        self.screen.draw_labeled_value("UP", &self.epoch_loop.uptime_str(), 185, 0);
+        // Uptime at (145,0)
+        self.screen.draw_labeled_value("UP", &self.epoch_loop.uptime_str(), 145, 0);
 
         // ---- LINE 1 (y=14) ----
         self.screen.draw_hline(0, 14, display::DISPLAY_WIDTH);
@@ -667,11 +676,14 @@ impl Daemon {
         let bt_short = format!("BT:{}", self.bluetooth.status_short());
         let bat_str = self.battery.display_str();
 
+        let aps_str = format!("APs:{}", self.epoch_loop.metrics.total_aps);
+
         self.screen.draw_text(&crash_str, 0, 112);     // CRASH:0
-        self.screen.draw_text(www, 48, 112);            // WWW:C
-        self.screen.draw_text(&bt_short, 86, 112);      // BT:C
-        self.screen.draw_text(&bat_str, 118, 112);       // CHG=100%
-        self.screen.draw_text("AUTO", 228, 112);         // AUTO
+        self.screen.draw_text(www, 42, 112);            // WWW:C
+        self.screen.draw_text(&bt_short, 76, 112);      // BT:C
+        self.screen.draw_text(&bat_str, 104, 112);      // CHG=100%
+        self.screen.draw_text(&aps_str, 160, 112);      // APs:0
+        self.screen.draw_text("AUTO", 200, 112);        // AUTO
 
         // ---- LUA PLUGIN INDICATORS ----
         for ind in self.lua.get_indicators() {
