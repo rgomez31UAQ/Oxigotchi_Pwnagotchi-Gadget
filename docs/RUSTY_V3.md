@@ -34,7 +34,64 @@ No Python interpreter, no venv, no pip, no Go runtime, no garbage collector. You
 | SSH | `ssh pi@10.0.0.2` (default password: `raspberry`) |
 | Web dashboard | `http://10.0.0.2:8080` |
 
-> If using Bluetooth tethering in SAFE mode, the web dashboard is also reachable at the BT-assigned IP.
+> If using Bluetooth tethering in SAFE mode, the web dashboard is also reachable at the BT-assigned IP on port 8080.
+
+---
+
+## Web Dashboard
+
+**URL:** `http://10.0.0.2:8080`
+
+The dashboard is a single-page app with a dark terminal theme. Connect your phone or laptop to the Pi via USB tethering and open the URL in any browser. When in SAFE mode with Bluetooth tethering, the dashboard is also reachable at the BT-assigned IP on port 8080.
+
+Everything auto-refreshes — you never need to hit reload.
+
+### Dashboard Cards
+
+The dashboard has 22 live cards:
+
+| # | Card | What it shows | Refresh |
+|---|------|--------------|---------|
+| 1 | **Face Display** | Current bull face and status message | 5s |
+| 2 | **Core Stats** | Channel, APs seen, handshakes captured, epoch, uptime, attack rate | 5s |
+| 3 | **Live Display** | Real-time screenshot of the e-ink screen | 5s |
+| 4 | **Battery** | Level, charging state, voltage, progress bar | 15s |
+| 5 | **Bluetooth** | Connection status, device name, IP address | 15s |
+| 6 | **WiFi** | Monitor mode state, current channel, tracked APs, channel list, dwell time | 5s |
+| 7 | **Attack Types** | 6 toggle switches (deauth, PMKID, CSA, disassociation, anon reassoc, rogue M2) plus attack rate selector (1-3) | 10s |
+| 8 | **Recent Captures** | Capture file count, handshake count, pending uploads, total size | 30s |
+| 9 | **Recovery Status** | WiFi/AO/Recovery/GPS health dots, crash count, AO PID and uptime | 15s |
+| 10 | **Personality** | Mood percentage, current face, XP, level, blind epochs | 10s |
+| 11 | **System Info** | CPU temp, CPU usage, memory, disk, system uptime, GPS status | 15s |
+| 12 | **Cracked Passwords** | Passwords cracked from captured handshakes (SSID, BSSID, password) | 60s |
+| 13 | **Download Captures** | "Download All (ZIP)" button plus individual file download links | 30s |
+| 14 | **Mode Switch** | RAGE / SAFE toggle buttons | via status |
+| 15 | **Actions** | Restart AO, Shutdown Pi, Restart Pwnagotchi, Restart Pi, Restart SSH | on-demand |
+| 16 | **Plugins** | Toggle plugins on/off, edit x/y positions, shows version/author/tag | 15s |
+| 17 | **Nearby Networks** | AP list sorted by signal strength — SSID, BSSID, RSSI, channel, client count, handshake status | 10s |
+| 18 | **Whitelist** | View/add/remove MAC addresses and SSIDs excluded from attacks | 30s |
+| 19 | **Channel Config** | Set scan channels (comma-separated) and dwell time slider (500-10000ms) | via WiFi |
+| 20 | **WPA-SEC Upload** | Enter API key, view upload status | 30s |
+| 21 | **Discord Notifications** | Enable/disable toggle, webhook URL input | 30s |
+| 22 | **Logs** | Collapsible live log viewer (daemon journal output) | 10s |
+
+### Using the Dashboard
+
+**Attack types:** All 6 attack types are on by default. They complement each other — leaving them all enabled gives the best capture rate. You can toggle individual types off if you want to reduce your footprint.
+
+**Attack rate:** Rate 1 is the safe default for the BCM43436B0 WiFi chip. Rates 2 and 3 are marked "Risky" and "Danger" because they increase the chance of firmware crashes. Stick with 1 unless you know what you are doing.
+
+**Mode switch:** Tap RAGE or SAFE. The switch happens at the next epoch boundary (up to ~30 seconds). The face and indicators will update when the switch completes.
+
+**Whitelist:** Add a MAC address or SSID to exclude it from attacks. Changes take effect at the next epoch. Useful for protecting your own networks.
+
+**Channel config:** The default channels are 1, 6, 11 — the three non-overlapping 2.4GHz channels. You can add others, but keep the dwell time at 5000ms or higher to avoid firmware crashes on the BCM43436B0.
+
+**Downloading captures:** Click "Download All (ZIP)" to grab every capture file at once, or click individual filenames to download them one at a time.
+
+**WPA-SEC:** Paste your API key from [wpa-sec.stanev.org](https://wpa-sec.stanev.org) and hit Save. Captured handshakes will be automatically uploaded for cloud cracking. The key is saved to disk and persists across restarts.
+
+**Discord:** Paste a Discord webhook URL and enable the toggle. You will receive a notification in your Discord channel every time a handshake is captured.
 
 ---
 
@@ -48,7 +105,7 @@ Oxigotchi v3 has two operating modes that cycle based on what the BCM43436B0 har
 |---|---|---|
 | WiFi | Monitor mode, AngryOxide attacking | Managed mode, no attacks |
 | Bluetooth | Off (powered down) | On, tethered to phone |
-| Face pool | angry, intense, excited, upload, motivated | debug, grateful |
+| Face pool | angry, intense, excited, upload, motivated, raging | debug, grateful, grazing |
 | Use case | Capturing handshakes | Phone internet, SSH over BT, dashboard access |
 
 ### Why Two Modes?
@@ -57,7 +114,10 @@ The BCM43436B0 WiFi/BT combo chip on the Pi Zero 2W uses a shared UART bus. When
 
 ### Switching Modes
 
-**Toggle:** Single tap the PiSugar3 button.
+There are two ways to switch:
+
+1. **PiSugar3 button:** Single tap the button on your PiSugar3 battery.
+2. **Web dashboard:** Tap the RAGE or SAFE button on the Mode card.
 
 The mode switch happens at the next epoch boundary, which can take up to ~30 seconds. Be patient — the daemon checks the button state once per epoch.
 
@@ -66,8 +126,9 @@ The mode switch happens at the next epoch boundary, which can take up to ~30 sec
 **RAGE to SAFE:**
 1. Stop AngryOxide
 2. Exit WiFi monitor mode
-3. Power on BT adapter
-4. Pair/connect to configured phone
+3. Reload hci_uart kernel module (resets shared UART for clean BT)
+4. Power on BT adapter
+5. Pair/connect to configured phone
 
 **SAFE to RAGE:**
 1. Disconnect BT from phone
@@ -80,10 +141,143 @@ The mode switch happens at the next epoch boundary, which can take up to ~30 sec
 
 Each mode draws from its own pool of random faces:
 
-- **RAGE:** angry, intense, excited, upload, motivated
-- **SAFE:** debug, grateful
+- **RAGE:** angry, intense, excited, upload, motivated, raging
+- **SAFE:** debug, grateful, grazing
 
 The face changes each epoch to reflect the current mode's personality.
+
+---
+
+## E-ink Display
+
+The e-ink display is a 250x122 pixel Waveshare 2.13" V4 (1-bit monochrome, black and white only). The bull face and all indicators are rendered with ProFont bitmap fonts.
+
+### What You See
+
+- **Bull face** on the left side — 120x66 pixel sprite, changes with mood and mode
+- **AO status** (top left) — handshake count, minutes running, current channel mode (e.g., `AO: 3/8 | 1m | CH:AH`)
+- **Uptime** (top right) — how long the daemon has been running (`DD:HH:MM`)
+- **Status message** — personality text like "Sniffing the airwaves..."
+- **XP bar** — level and experience progress
+- **System stats** — memory, CPU, frequency, temperature
+- **IP address** — your USB tether IP. In SAFE mode, rotates between USB and BT IPs every 5 seconds
+- **Bottom bar** — crash count, internet indicator, BT status, battery level, AP count, current mode
+
+### Mood Faces
+
+Oxigotchi has 26 unique bull face expressions. The current face depends on mood (which rises when capturing handshakes and falls during idle "blind epochs") and special events:
+
+| Face | When |
+|------|------|
+| Excited | Mood above 90% — lots of captures |
+| Happy | Mood 70-90% |
+| Awake | Mood 50-70% (default at boot) |
+| Bored | Mood 30-50% — not finding much |
+| Sad | Mood 10-30% |
+| Demotivated | Mood below 10% — nothing to capture |
+| Battery Critical | Battery below 15% |
+| Battery Low | Battery below 20% |
+| WiFi Down | WiFi interface disappeared |
+| FW Crash | Firmware crash detected |
+| AO Crashed | AngryOxide process died |
+
+### Display Layout
+
+```
++---------------------------------------------------------+
+| AO: 3/8 | 1m | CH:AH              UP: 01:02:15         |  y=0  TOP BAR
+|---------------------------------------------------------|  y=14 HLINE
+|                    |  Sniffing the                       |
+|   [120x66 FACE]    |  airwaves...                       |  y=20 STATUS
+|                    |                                     |
+|                    |  Lv 3  [####......]                 |  y=73 XP BAR
+|                    |  mem  cpu freq temp                 |  y=85 SYS
+| USB:192.168.137.2  |  42%  12% 1.0G 45C                 |  y=95 SYS VALUES
+|---------------------------------------------------------|  y=108 HLINE
+| CRASH:0  WWW  BT:C  BAT:85%    APs:15            RAGE  |  y=112 BOTTOM BAR
++---------------------------------------------------------+
+```
+
+---
+
+## Capture Pipeline
+
+Oxigotchi uses a two-stage capture pipeline designed to minimize SD card wear.
+
+### How It Works
+
+1. **AngryOxide writes to RAM.** All capture output goes to `/tmp/ao_captures/`, which is a tmpfs mount (RAM disk). No SD card writes happen during active attacks.
+
+2. **hcxpcapngtool validates in RAM.** Each epoch, the daemon runs hcxpcapngtool on new `.pcapng` files in tmpfs. This converts valid captures to `.22000` (hashcat format) and identifies files with proven handshakes.
+
+3. **Only proven handshakes go to SD.** Files that produced a valid `.22000` are moved (along with the `.22000` companion) to the permanent capture directory on the SD card (`/home/pi/captures/`). Files that produced nothing are deleted from tmpfs after 60 seconds.
+
+4. **Automatic WPA-SEC upload.** If you have configured a WPA-SEC API key (via the dashboard or config), validated captures are automatically uploaded to [wpa-sec.stanev.org](https://wpa-sec.stanev.org) for cloud cracking.
+
+5. **Download anytime.** Grab individual files or a bulk ZIP from the Download Captures card on the dashboard.
+
+### Why This Matters
+
+- **Zero SD card wear during attacks.** The Pi Zero's SD card is the weakest link. By buffering in RAM, you avoid the constant write/delete cycle that kills cards.
+- **No junk files.** Only captures with proven handshakes are kept. You do not accumulate gigabytes of empty pcapng files.
+- **Automatic cracking.** WPA-SEC handles the heavy lifting — no need to run hashcat yourself.
+
+---
+
+## Self-Healing
+
+The BCM43436B0 WiFi chip on the Pi Zero 2W is prone to firmware crashes, especially during aggressive frame injection. Oxigotchi has a built-in recovery system that handles this automatically.
+
+### What Gets Monitored
+
+- **WiFi interface** (`wlan0mon`) — checked every 10 seconds for existence and responsiveness
+- **AngryOxide process** — monitored for unexpected exits
+- **PiSugar3 watchdog** — hardware watchdog integration for full system recovery
+
+### Recovery Levels
+
+| Level | What happened | What it does |
+|-------|--------------|-------------|
+| **Healthy** | Everything is fine | Nothing |
+| **Soft recovery** | WiFi interface is unresponsive | `rmmod brcmfmac` + `modprobe brcmfmac` to reload the driver |
+| **Hard recovery** | Soft recovery failed | GPIO power cycle of the WiFi chip via WL_REG_ON |
+| **Reboot** | All recovery attempts exhausted | Triggers a full Pi reboot |
+
+### AO Auto-Restart
+
+If AngryOxide crashes (which happens after firmware recovery), the daemon automatically restarts it with exponential backoff. The crash counter and recovery status are visible on the Recovery Status card in the dashboard.
+
+### GPS Auto-Detection
+
+At startup, the daemon probes `localhost:2947` for a gpsd connection. If found, it automatically passes `--gpsd` to AngryOxide so your captures include GPS coordinates.
+
+---
+
+## Migration from Pwnagotchi
+
+If you are coming from a pwnagotchi setup, Oxigotchi handles migration automatically on first boot.
+
+### What Gets Migrated
+
+- **Device name** — your pwnagotchi's name is imported into the Oxigotchi config
+- **Whitelist** — MAC addresses and SSIDs you had whitelisted carry over
+- **Channels** — your configured scan channels are imported
+- **Attack settings** — personality and bettercap-related settings are mapped to the Rust equivalents
+- **Existing captures** — handshake `.pcapng` files from `/home/pi/handshakes/` and `/etc/pwnagotchi/handshakes/` are deduplicated and imported to `/home/pi/captures/`
+
+### What Gets Disabled
+
+The daemon automatically stops and disables legacy pwnagotchi and bettercap systemd services on first boot. This frees up ~66MB of RAM (bettercap ~36MB + pwnagotchi ~30MB).
+
+### How It Works
+
+1. On first boot, the daemon checks for a sentinel file at `/var/lib/.rusty-first-boot`.
+2. If the sentinel does not exist, it reads the pwnagotchi config from `/etc/pwnagotchi/config.toml`.
+3. It extracts relevant settings and writes them into `/etc/oxigotchi/config.toml`.
+4. It scans handshake directories, deduplicates by BSSID, and copies unique captures.
+5. It creates the sentinel file so migration only runs once.
+
+You do not need to do anything — just flash the Oxigotchi image and boot.
 
 ---
 
@@ -110,7 +304,7 @@ Replace `XX:XX:XX:XX:XX:XX` with your phone's Bluetooth MAC address, and `"Phone
 
 ### First-Time Pairing
 
-1. Switch to SAFE mode (single tap PiSugar3 button, or reboot into SAFE).
+1. Switch to SAFE mode (single tap PiSugar3 button, or use the web dashboard).
 2. SSH in: `ssh pi@10.0.0.2`
 3. Run:
    ```bash
@@ -129,9 +323,60 @@ After pairing, SAFE mode will automatically connect to your phone on every mode 
 
 If `phone_mac` is not set, the daemon performs a 10-second BT scan looking for `phone_name`. This may fail if your phone is not actively discoverable. Setting the MAC directly is strongly recommended.
 
-### Recovery
+### hci_uart Reset
 
-If the BT adapter gets stuck in a DOWN state after WiFi was in monitor mode, the only fix is a full reboot. This is a hardware limitation of the BCM43436B0 UART — once the bus times out, software cannot recover it.
+When switching from RAGE to SAFE, the daemon automatically reloads the `hci_uart` kernel module before bringing up Bluetooth. This is necessary because WiFi monitor mode leaves the shared UART in a state where BT HCI commands time out. The reload gives BT a clean UART connection.
+
+---
+
+## Runtime State Persistence
+
+Settings you change through the web dashboard are saved to disk and survive restarts.
+
+### What Gets Saved
+
+| Setting | Persisted |
+|---------|-----------|
+| Attack type toggles (deauth, PMKID, CSA, disassoc, anon reassoc, rogue M2) | Yes |
+| Attack rate (1, 2, or 3) | Yes |
+| Whitelist entries | Yes |
+| WPA-SEC API key | Yes |
+| Discord webhook URL | Yes |
+| Discord enabled/disabled | Yes |
+
+### Where
+
+State is saved to `/var/lib/oxigotchi/state.json`. The file is written automatically after changes and loaded at daemon startup.
+
+Plugin positions and enabled state are saved separately to `/etc/oxigotchi/plugins.toml`.
+
+---
+
+## Channel Configuration
+
+### Defaults
+
+The default scan channels are **1, 6, 11** — the three non-overlapping 2.4GHz channels. This covers the vast majority of consumer networks.
+
+### Changing Channels
+
+Use the **Channel Config** card on the web dashboard:
+
+1. Enter channels as a comma-separated list (e.g., `1,6,11` or `1,2,3,4,5,6,7,8,9,10,11`).
+2. Adjust the dwell time slider. Default is 2000ms.
+3. Click **Apply**.
+
+Changes take effect at the next epoch.
+
+### Dwell Time
+
+Dwell time is how long AngryOxide stays on each channel before hopping. AngryOxide's autohunt mode (`CH:AH` on the display) automatically dwells longer on channels with active networks.
+
+**Warning:** Keep dwell time at 5000ms or higher if you are scanning many channels. Short dwell times with rapid channel hopping can trigger BCM43436B0 firmware crashes. The dashboard shows a warning about this.
+
+### 5GHz Channels
+
+The BCM43436B0 on the Pi Zero 2W is a 2.4GHz-only chip. Channels above 14 will not work.
 
 ---
 
@@ -256,7 +501,7 @@ The `state` table passed to `on_epoch` and other hooks contains:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `mood` | number | Current mood (0.0–1.0) |
+| `mood` | number | Current mood (0.0-1.0) |
 | `face` | string | Current face name |
 | `level` | number | Current level |
 | `xp` | number | Current XP |
@@ -322,68 +567,12 @@ Oxigotchi ships with 11 built-in plugins:
 | `uptime` | Daemon uptime (DD:HH:MM format) |
 | `status_msg` | Personality status message |
 | `sys_stats` | CPU, memory, frequency, temperature |
-| `ip_display` | Current IP address (USB or BT). In RAGE mode, only shows USB tether IP. In SAFE mode, Rust rotates between USB and BT IPs every 5 seconds. |
+| `ip_display` | Current IP address (USB or BT). In RAGE mode, only shows USB tether IP. In SAFE mode, rotates between USB and BT IPs every 5 seconds. |
 | `crash` | AO crash counter |
 | `www` | Internet connectivity indicator |
 | `bt_status` | Bluetooth connection status |
 | `battery` | Battery level and charging state |
 | `mode` | Current mode (RAGE / SAFE) |
-
----
-
-## Web Dashboard
-
-**URL:** `http://10.0.0.2:8080`
-
-When connected via Bluetooth tethering in SAFE mode, the dashboard is also reachable at the BT-assigned IP on port 8080.
-
-### Features
-
-- **Plugins panel:** Toggle plugins on/off, edit x/y positions, see version, author, and tag for each plugin.
-- Real-time system state updates via htmx.
-
-### API
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/plugins` | List all plugins with current config |
-| `POST` | `/api/plugins` | Batch update plugin positions and enabled state |
-
----
-
-## Display Layout
-
-The e-ink display is 250x122 pixels, 1-bit monochrome (black and white only). All text is rendered with ProFont bitmap fonts.
-
-**Fonts:**
-- `"small"` — ProFont 9pt, 6px character width
-- `"medium"` — ProFont 10pt, 7px character width
-
-### Layout Map
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ AO: 3/8 | 1m | CH:AH                    UP: 01:02:15       │  y=0  TOP BAR
-├──────────────────────────────────────────────────────────────┤  y=14 HLINE
-│                     │  Sniffing the                         │
-│   [120x66 FACE]     │  airwaves...                          │  y=20 STATUS
-│                     │                                       │
-│                     │  Lv 3  [████░░░░░░]                   │  y=73 XP BAR
-│                     │  mem  cpu freq temp                   │  y=85 SYS
-│ USB:192.168.137.2   │  42%  12% 1.0G 45C                   │  y=95 SYS VALUES
-├──────────────────────────────────────────────────────────────┤  y=108 HLINE
-│ CRASH:0  WWW  BT:C  BAT:85%    APs:15              RAGE   │  y=112 BOTTOM BAR
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Regions:**
-- **Top bar (y=0):** AO status (handshakes, minutes, channel mode), uptime
-- **Face area (y=14 to y=108):** 120x66 pixel bull face on the left
-- **Status area:** Status message and personality text to the right of the face
-- **XP bar (y=73):** Level and experience progress bar
-- **System stats (y=85-95):** Memory, CPU, frequency, temperature
-- **IP display:** USB or BT IP address
-- **Bottom bar (y=112):** Crash count, internet indicator, BT status, battery, AP count, current mode
 
 ---
 
@@ -396,6 +585,7 @@ The e-ink display is 250x122 pixels, 1-bit monochrome (black and white only). Al
 | `/etc/oxigotchi/config.toml` | Main daemon configuration (WiFi, BT, display, personality) |
 | `/etc/oxigotchi/plugins.toml` | Plugin positions and enabled state |
 | `/etc/oxigotchi/plugins/*.lua` | Lua plugin scripts |
+| `/var/lib/oxigotchi/state.json` | Runtime state (attack toggles, whitelist, WPA-SEC key, Discord config) |
 
 ### Main Config Example
 
@@ -461,6 +651,16 @@ If WiFi is soft-blocked:
 sudo rfkill unblock wifi
 ```
 
+### WiFi firmware crash (wlan0mon disappeared)
+
+**Symptom:** The AO status shows "AO: ERR" and the recovery card shows a non-zero crash count.
+
+**What happens automatically:** The daemon detects the missing `wlan0mon` interface, runs `rmmod brcmfmac` followed by `modprobe brcmfmac` to reload the WiFi driver, then restarts AngryOxide. If soft recovery fails, it tries a GPIO power cycle of the WiFi chip.
+
+**If auto-recovery keeps failing:** Reboot the Pi. Some firmware crashes leave the SDIO bus in an unrecoverable state.
+
+**How to reduce crashes:** Keep the attack rate at 1 (the default). Keep dwell time at 5000ms or above. Stick to channels 1, 6, 11.
+
 ### Plugin not loading
 
 **Symptom:** Plugin doesn't appear on display or in dashboard.
@@ -506,3 +706,34 @@ sudo rfkill unblock wifi
   ```bash
   journalctl -u rusty-oxigotchi | grep -i "display\|spi\|eink"
   ```
+
+### Captures not appearing
+
+**Symptom:** AO is running and finding networks but no captures show in the dashboard.
+
+**Fix:**
+1. Check that hcxpcapngtool is installed:
+   ```bash
+   which hcxpcapngtool
+   ```
+2. Look for files in the tmpfs staging directory:
+   ```bash
+   ls -la /tmp/ao_captures/
+   ```
+3. Check the permanent capture directory:
+   ```bash
+   ls -la /home/pi/captures/
+   ```
+4. If tmpfs has `.pcapng` files but no `.22000` companions, the captures do not contain valid handshakes — this is normal. AO needs time and the right conditions to capture handshakes.
+
+### WPA-SEC uploads not working
+
+**Symptom:** API key is set but "Pending Upload" count stays the same.
+
+**Fix:**
+1. Make sure you are in SAFE mode with BT tethering active (internet is required for uploads).
+2. Check that the API key is correct — log in to [wpa-sec.stanev.org](https://wpa-sec.stanev.org) and verify.
+3. Check daemon logs for upload errors:
+   ```bash
+   journalctl -u rusty-oxigotchi | grep -i wpasec
+   ```
