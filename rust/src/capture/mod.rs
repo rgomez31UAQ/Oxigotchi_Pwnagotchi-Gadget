@@ -533,6 +533,43 @@ pub fn upload_to_wpasec(path: &Path, config: &WpaSecConfig) -> Result<(), String
     ))
 }
 
+/// Fetch cracked passwords from wpa-sec.stanev.org.
+/// Returns lines in format: BSSID:SSID:PASSWORD
+#[cfg(unix)]
+pub fn fetch_cracked_from_wpasec(config: &WpaSecConfig) -> Vec<(String, String, String)> {
+    if config.api_key.is_empty() || !config.enabled {
+        return Vec::new();
+    }
+    let url = format!("{}/?api&dl=1", config.url);
+    let result = std::process::Command::new("curl")
+        .arg("-s")
+        .arg("-b")
+        .arg(format!("key={}", config.api_key))
+        .arg(&url)
+        .output();
+    match result {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.lines()
+                .filter_map(|line| {
+                    let parts: Vec<&str> = line.splitn(3, ':').collect();
+                    if parts.len() == 3 && !parts[2].is_empty() {
+                        Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(not(unix))]
+pub fn fetch_cracked_from_wpasec(_config: &WpaSecConfig) -> Vec<(String, String, String)> {
+    Vec::new()
+}
+
 #[cfg(not(unix))]
 pub fn upload_to_wpasec(_path: &Path, _config: &WpaSecConfig) -> Result<(), String> {
     Err("WPA-SEC upload requires Unix (curl)".into())

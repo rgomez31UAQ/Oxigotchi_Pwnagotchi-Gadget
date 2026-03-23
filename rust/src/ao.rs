@@ -51,6 +51,8 @@ pub struct AoConfig {
     pub rate: u32,
     /// Channel dwell time in seconds.
     pub dwell: u32,
+    /// Restrict to specific channels (empty = scan all / autohunt).
+    pub channels: Vec<u8>,
     /// Whether to skip interface setup (--no-setup).
     pub no_setup: bool,
     /// Run in headless mode.
@@ -69,6 +71,7 @@ impl Default for AoConfig {
             output_dir: "/home/pi/handshakes/".into(),
             rate: 1,
             dwell: 5,
+            channels: Vec::new(), // empty = autohunt (scan all)
             no_setup: true,
             headless: true,
             max_crashes: 10,
@@ -165,6 +168,14 @@ impl AoManager {
         }
         if self.gpsd_detected {
             args.push("--gpsd".into());
+        }
+        if !self.config.channels.is_empty() {
+            args.push("--channel".into());
+            let ch_str = self.config.channels.iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            args.push(ch_str);
         }
         args
     }

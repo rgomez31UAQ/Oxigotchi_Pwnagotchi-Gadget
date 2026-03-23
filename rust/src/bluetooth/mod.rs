@@ -481,9 +481,14 @@ impl BtTether {
 
     /// Scan for nearby BT devices (blocking, ~10s). Returns list of (MAC, name).
     pub fn scan_devices(&self) -> Vec<(String, String)> {
+        Self::scan_devices_static()
+    }
+
+    /// Static scan — can be called from a background thread without &self.
+    pub fn scan_devices_static() -> Vec<(String, String)> {
         #[cfg(unix)]
         {
-            info!("BT: scanning for devices (10s)...");
+            log::info!("BT: scanning for devices (10s)...");
             let _ = run_bluetoothctl(&build_power_on_args());
             let _ = run_bluetoothctl(&build_agent_on_args());
             match run_bluetoothctl(&build_scan_on_args()) {

@@ -541,6 +541,18 @@ impl Daemon {
             log::warn!("WPA-SEC: {upload_failed} upload(s) failed");
         }
 
+        // 5b. Fetch cracked passwords from WPA-SEC every 50 epochs (~25min)
+        if self.epoch_loop.metrics.epoch % 50 == 10 && self.wpasec_config.enabled {
+            let cracked = capture::fetch_cracked_from_wpasec(&self.wpasec_config);
+            if !cracked.is_empty() {
+                info!("WPA-SEC: fetched {} cracked password(s)", cracked.len());
+                let mut s = self.shared_state.lock().unwrap();
+                s.cracked = cracked.into_iter().map(|(bssid, ssid, password)| {
+                    web::CrackedEntry { bssid, ssid, password }
+                }).collect();
+            }
+        }
+
         let new_handshakes = self.captures.handshake_count().saturating_sub(handshakes_before);
         result.handshakes_captured = new_handshakes as u32;
 
@@ -706,20 +718,27 @@ impl Daemon {
             any_command = true; // triggers save_runtime_state
         }
 
-        // Process BT scan request
+        // Process BT scan request — spawn in background thread to avoid blocking
         let bt_scan_needed = {
             let s = self.shared_state.lock().unwrap();
             s.bt_scan_in_progress && s.bt_scan_results.is_empty()
         };
         if bt_scan_needed {
-            info!("web: BT scan triggered");
-            let devices = self.bluetooth.scan_devices();
-            let results: Vec<web::BtScanDevice> = devices.into_iter().map(|(mac, name)| {
-                web::BtScanDevice { mac, name }
-            }).collect();
-            let mut s = self.shared_state.lock().unwrap();
-            s.bt_scan_results = results;
-            s.bt_scan_in_progress = false;
+            info!("web: BT scan triggered (background thread)");
+            let shared = Arc::clone(&self.shared_state);
+            let _ = std::thread::Builder::new()
+                .name("bt-scan".into())
+                .spawn(move || {
+                    // Run scan on this thread (blocking ~10s)
+                    let devices = bluetooth::BtTether::scan_devices_static();
+                    let results: Vec<web::BtScanDevice> = devices.into_iter().map(|(mac, name)| {
+                        web::BtScanDevice { mac, name }
+                    }).collect();
+                    let mut s = shared.lock().unwrap();
+                    s.bt_scan_results = results;
+                    s.bt_scan_in_progress = false;
+                    log::info!("BT scan thread completed");
+                });
         }
 
         // Process BT pair request
@@ -823,6 +842,13 @@ impl Daemon {
                 self.autohunt = autohunt;
                 info!("web: autohunt set to {autohunt}");
             }
+            // Sync to AO config before restart
+            if self.autohunt {
+                self.ao.config.channels.clear(); // autohunt = scan all
+            } else {
+                self.ao.config.channels = self.wifi.channel_config.channels.clone();
+            }
+            self.ao.config.dwell = (self.wifi.channel_config.dwell_ms / 1000).max(1) as u32;
             // Restart AO so new channel/dwell/autohunt settings take effect
             info!("web: restarting AO with new channel config");
             let _ = self.ao.restart();
