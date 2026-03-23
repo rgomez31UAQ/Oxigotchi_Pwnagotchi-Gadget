@@ -810,6 +810,23 @@ impl Daemon {
             any_command = true;
         }
 
+        // Process pending settings update
+        let settings = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_settings.take()
+        };
+        if let Some(update) = settings {
+            if let Some(name) = update.name {
+                if !name.is_empty() {
+                    self.config.name = name.clone();
+                    let mut s = self.shared_state.lock().unwrap();
+                    s.name = name.clone();
+                    info!("web: device name changed to {name}");
+                    any_command = true;
+                }
+            }
+        }
+
         // Persist runtime state if any command was processed
         if any_command {
             self.save_runtime_state();

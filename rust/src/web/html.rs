@@ -7,14 +7,13 @@ pub const DASHBOARD_HTML: &str = r##"<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>oxigotchi</title>
-<script src="https://unpkg.com/htmx.org@1.9.10"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#1a1a2e;color:#e0e0e0;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:14px;padding:12px;max-width:600px;margin:0 auto}
-h1{color:#00d4aa;font-size:20px;text-align:center;margin-bottom:16px;letter-spacing:1px}
+h1{color:#00d4aa;font-size:20px;text-align:center;margin-bottom:4px;letter-spacing:1px}
+.section-label{color:#555;font-size:10px;text-transform:uppercase;letter-spacing:2px;margin:16px 0 6px;padding-left:4px}
 .card{background:#16213e;border-radius:12px;padding:16px;margin-bottom:12px}
 .card-title{color:#00d4aa;font-size:15px;font-weight:bold;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #0f3460}
-.face{font-size:48px;text-align:center;padding:20px;color:#e0e0e0}
 .status-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 16px}
 .status-grid .label{color:#888;font-size:12px}
 .status-grid .value{color:#e0e0e0;font-size:13px;font-weight:bold}
@@ -84,19 +83,33 @@ input:checked+.slider:before{transform:translateX(22px)}
 .logs-pre{background:#0a1628;color:#aaa;font-size:11px;font-family:'SF Mono','Fira Code',monospace;padding:10px;border-radius:6px;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
 .collapse-btn{background:none;border:1px solid #0f3460;color:#888;border-radius:6px;padding:6px 12px;font-size:12px;font-family:inherit;cursor:pointer;transition:.2s}
 .collapse-btn:hover{border-color:#00d4aa;color:#00d4aa}
+@media(max-width:400px){.grid-2{grid-template-columns:1fr}.stat-row{gap:4px}.stat .value{font-size:15px}}
 </style>
 </head>
 <body>
 <h1>Oxigotchi Dashboard</h1>
-<div style="text-align:center;color:#888;font-size:11px;margin:-12px 0 14px">Rusty Oxigotchi &mdash; WiFi capture bull</div>
+<div style="text-align:center;color:#888;font-size:11px;margin:-2px 0 10px">Rusty Oxigotchi &mdash; WiFi capture bull</div>
 
-<!-- 1. Face display -->
-<div class="card" id="card-face">
-<div class="face" id="face">(O_O)</div>
-<div style="text-align:center;color:#888" id="status-msg">Loading...</div>
+<!-- ═══════ AT-A-GLANCE ═══════ -->
+<div class="section-label">At-a-Glance</div>
+
+<!-- 1. Live Display (e-ink preview) -->
+<div class="card" id="card-eink" style="text-align:center">
+<div class="card-title">Live Display</div>
+<div style="padding:8px;background:#fff;display:inline-block;border-radius:4px"><img id="eink-img" src="/api/display.png" alt="e-ink" style="width:250px;height:122px;image-rendering:pixelated"></div>
 </div>
 
-<!-- 2. Core stats -->
+<!-- 2. Mode switch -->
+<div class="card" id="card-mode">
+<div class="card-title">Mode</div>
+<div class="sub">RAGE = all attacks max aggression. SAFE = passive scanning only.</div>
+<div class="mode-btns">
+<button class="mode-btn active" id="mode-rage" onclick="switchMode('RAGE')">RAGE</button>
+<button class="mode-btn" id="mode-safe" onclick="switchMode('SAFE')">SAFE</button>
+</div>
+</div>
+
+<!-- 3. Core stats -->
 <div class="card" id="card-stats">
 <div class="card-title">Core Stats</div>
 <div class="stat-row">
@@ -109,11 +122,8 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
-<!-- 3. E-ink preview -->
-<div class="card" id="card-eink" style="text-align:center">
-<div class="card-title">Live Display</div>
-<div style="padding:8px;background:#fff;display:inline-block;border-radius:4px"><img id="eink-img" src="/api/display.png" alt="e-ink" style="width:250px;height:122px;image-rendering:pixelated"></div>
-</div>
+<!-- ═══════ HARDWARE HEALTH ═══════ -->
+<div class="section-label">Hardware</div>
 
 <div class="grid-2">
 
@@ -128,17 +138,23 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="progress-bar"><div class="progress-fill" id="bat-bar" style="width:0%"></div></div>
 </div>
 
-<!-- 5. Bluetooth -->
-<div class="card" id="card-bt">
-<div class="card-title">Bluetooth</div>
+<!-- 5. System Info -->
+<div class="card" id="card-system">
+<div class="card-title">System</div>
 <div class="status-grid">
-<div class="label">Status</div><div class="value" id="bt-status">-</div>
-<div class="label">Device</div><div class="value" id="bt-device">-</div>
-<div class="label">IP</div><div class="value" id="bt-ip">-</div>
+<div class="label">CPU Temp</div><div class="value" id="sys-temp">-</div>
+<div class="label">CPU</div><div class="value" id="sys-cpu">-</div>
+<div class="label">Memory</div><div class="value" id="sys-mem">-</div>
+<div class="label">Disk</div><div class="value" id="sys-disk">-</div>
+<div class="label">Uptime</div><div class="value" id="sys-uptime">-</div>
+<div class="label">GPS</div><div class="value" id="sys-gps">-</div>
 </div>
 </div>
 
 </div>
+
+<!-- ═══════ HUNTING ═══════ -->
+<div class="section-label">Hunting</div>
 
 <!-- 6. WiFi -->
 <div class="card" id="card-wifi">
@@ -153,7 +169,19 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
-<!-- 7. Attack controls -->
+<!-- 7. Nearby Networks -->
+<div class="card" id="card-aps">
+<div class="card-title">Nearby Networks</div>
+<div class="sub">Access points detected by monitor mode, sorted by signal strength.</div>
+<div class="ap-scroll">
+<table class="ap-table" id="ap-table">
+<thead><tr><th>SSID</th><th>BSSID</th><th>RSSI</th><th>CH</th><th>Cli</th><th>Status</th></tr></thead>
+<tbody id="ap-tbody"><tr><td colspan="6" style="color:#555">Loading...</td></tr></tbody>
+</table>
+</div>
+</div>
+
+<!-- 8. Attack controls -->
 <div class="card" id="card-attacks">
 <div class="card-title">Attack Types</div>
 <div style="color:#00d4aa;font-size:11px;margin-bottom:10px;padding:8px;background:#0f346033;border-radius:6px">All 6 ON is the sweet spot &mdash; they complement each other.</div>
@@ -193,20 +221,108 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
-<!-- 8. Capture list -->
+<!-- 9. Channel Config + Autohunt -->
+<div class="card" id="card-channels">
+<div class="card-title">Channel Config</div>
+<div class="sub">Configure which channels to scan and dwell time per channel.</div>
+
+<div class="toggle-row" style="border-bottom:1px solid #0f3460;padding-bottom:10px;margin-bottom:10px">
+<div class="toggle-info"><div class="toggle-label">Autohunt</div><div class="toggle-desc">Let AO automatically pick channels to hunt on</div></div>
+<label class="switch"><input type="checkbox" id="autohunt-toggle" checked onchange="toggleAutohunt(this.checked)"><span class="slider"></span></label>
+</div>
+
+<div style="margin-bottom:8px">
+<div style="font-size:12px;color:#888;margin-bottom:4px">Channels (comma-separated)</div>
+<input type="text" id="ch-list" class="ch-input" placeholder="1,6,11" value="">
+</div>
+<div style="margin-bottom:8px">
+<div style="font-size:12px;color:#888;margin-bottom:4px">Dwell Time: <span id="ch-dwell-val">2000</span>ms</div>
+<input type="range" id="ch-dwell" class="ch-slider" min="500" max="10000" step="100" value="2000" oninput="document.getElementById('ch-dwell-val').textContent=this.value">
+</div>
+<div style="color:#e67e22;font-size:11px;padding:6px 8px;background:#5a300033;border-radius:6px;margin-bottom:8px">Warning: Some channels may cause BCM43436B0 firmware crashes. Stick to 1,6,11 for stability.</div>
+<button class="wl-btn wl-btn-add" onclick="applyChannels()">Apply</button>
+</div>
+
+<!-- ═══════ LOOT ═══════ -->
+<div class="section-label">Loot</div>
+
+<!-- 10. Captures (merged: stats + list + download) -->
 <div class="card" id="card-captures">
-<div class="card-title">Recent Captures</div>
-<div class="sub">Validated capture files. Click to download.</div>
+<div class="card-title">Captures</div>
+<div class="sub">Validated capture files from AO monitor mode.</div>
 <div class="status-grid" style="margin-bottom:8px">
 <div class="label">Total Files</div><div class="value" id="cap-total">-</div>
 <div class="label">Handshakes</div><div class="value" id="cap-hs">-</div>
 <div class="label">Pending Upload</div><div class="value" id="cap-pending">-</div>
 <div class="label">Total Size</div><div class="value" id="cap-size">-</div>
 </div>
+<div class="action-btns" style="margin-bottom:8px">
+<a href="/api/download/all" class="action-btn btn-restart" style="text-decoration:none;text-align:center">Download All (ZIP)</a>
+</div>
 <div class="captures-list" id="cap-list"><div style="color:#555;font-size:12px">Loading...</div></div>
 </div>
 
-<!-- 9. Recovery status -->
+<!-- 11. Cracked passwords -->
+<div class="card" id="card-cracked">
+<div class="card-title">Cracked Passwords</div>
+<div class="sub">Passwords cracked from captured handshakes.</div>
+<div id="cracked-list"><div style="color:#555;font-size:12px">No cracked passwords yet</div></div>
+</div>
+
+<!-- ═══════ CONNECTIVITY ═══════ -->
+<div class="section-label">Connectivity</div>
+
+<!-- 12. Bluetooth -->
+<div class="card" id="card-bt">
+<div class="card-title">Bluetooth</div>
+<div class="status-grid" style="margin-bottom:10px">
+<div class="label">Status</div><div class="value" id="bt-status">-</div>
+<div class="label">Device</div><div class="value" id="bt-device">-</div>
+<div class="label">IP</div><div class="value" id="bt-ip">-</div>
+<div class="label">Internet</div><div class="value" id="bt-internet">-</div>
+<div class="label">Retries</div><div class="value" id="bt-retries">-</div>
+</div>
+<div class="toggle-row" style="border-bottom:none">
+<div class="toggle-info"><div class="toggle-label">Discoverable</div><div class="toggle-desc">Make device visible for BT pairing</div></div>
+<label class="switch"><input type="checkbox" id="bt-visible" onchange="toggleBtVisible(this.checked)"><span class="slider"></span></label>
+</div>
+</div>
+
+<!-- 13. WPA-SEC Upload -->
+<div class="card" id="card-wpasec">
+<div class="card-title">WPA-SEC Upload</div>
+<div class="sub">Upload captured handshakes to wpa-sec.stanev.org for cloud cracking.</div>
+<div class="status-grid" style="margin-bottom:8px">
+<div class="label">Status</div><div class="value" id="wpasec-status">-</div>
+<div class="label">API Key</div><div class="value" id="wpasec-key">-</div>
+</div>
+<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px">
+<input type="text" id="wpasec-input" class="wl-input" placeholder="WPA-SEC API key" style="flex:2;min-width:180px">
+<button class="wl-btn wl-btn-add" onclick="saveWpaSec()">Save</button>
+</div>
+</div>
+
+<!-- 14. Discord Webhook -->
+<div class="card" id="card-discord">
+<div class="card-title">Discord Notifications</div>
+<div class="sub">Send handshake capture notifications to a Discord channel.</div>
+<div class="toggle-row" style="border-bottom:none;padding-bottom:0">
+<div class="toggle-info"><div class="toggle-label">Enabled</div><div class="toggle-desc">Toggle Discord notifications on/off</div></div>
+<label class="switch"><input type="checkbox" id="discord-toggle" onchange="saveDiscord()"><span class="slider"></span></label>
+</div>
+<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px">
+<input type="text" id="discord-url" class="wl-input" placeholder="Discord webhook URL" style="flex:2;min-width:180px">
+<button class="wl-btn wl-btn-add" onclick="saveDiscord()">Save</button>
+</div>
+<div class="status-grid" style="margin-top:8px">
+<div class="label">Status</div><div class="value" id="discord-status">Disabled</div>
+</div>
+</div>
+
+<!-- ═══════ STATUS & PERSONALITY ═══════ -->
+<div class="section-label">Status</div>
+
+<!-- 15. Recovery status -->
 <div class="card" id="card-recovery">
 <div class="card-title">Recovery Status</div>
 <div class="sub">WiFi and firmware crash recovery tracking.</div>
@@ -226,7 +342,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
-<!-- 10. Personality -->
+<!-- 16. Personality -->
 <div class="card" id="card-personality">
 <div class="card-title">Personality</div>
 <div class="sub">Mood, experience, and level progression.</div>
@@ -240,80 +356,30 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="progress-bar" style="margin-top:8px"><div class="progress-fill" id="mood-bar" style="width:50%"></div></div>
 </div>
 
-<!-- 11. System info -->
-<div class="card" id="card-system">
-<div class="card-title">System Info</div>
-<div class="sub">Hardware stats from the Pi.</div>
-<div class="status-grid">
-<div class="label">CPU Temp</div><div class="value" id="sys-temp">-</div>
-<div class="label">CPU Usage</div><div class="value" id="sys-cpu">-</div>
-<div class="label">Memory</div><div class="value" id="sys-mem">-</div>
-<div class="label">Disk</div><div class="value" id="sys-disk">-</div>
-<div class="label">Sys Uptime</div><div class="value" id="sys-uptime">-</div>
-<div class="label">GPS</div><div class="value" id="sys-gps">-</div>
-</div>
-</div>
+<!-- ═══════ MANAGEMENT ═══════ -->
+<div class="section-label">Management</div>
 
-<!-- 12. Cracked passwords -->
-<div class="card" id="card-cracked">
-<div class="card-title">Cracked Passwords</div>
-<div class="sub">Passwords cracked from captured handshakes.</div>
-<div id="cracked-list"><div style="color:#555;font-size:12px">No cracked passwords yet</div></div>
-</div>
-
-<!-- 13. Handshake download -->
-<div class="card" id="card-download">
-<div class="card-title">Download Captures</div>
-<div class="sub">Download all captures as a ZIP, or click individual files below.</div>
-<div class="action-btns" style="margin-bottom:8px">
-<a href="/api/download/all" class="action-btn btn-restart" style="text-decoration:none;text-align:center">Download All (ZIP)</a>
-</div>
-<div class="captures-list" id="dl-list"><div style="color:#555;font-size:12px">Loading...</div></div>
-</div>
-
-<!-- 14. Mode switch -->
-<div class="card" id="card-mode">
-<div class="card-title">Mode</div>
-<div class="sub">RAGE = all attacks max aggression. SAFE = passive scanning only. Switching takes ~90s.</div>
-<div class="mode-btns">
-<button class="mode-btn active" id="mode-rage" onclick="switchMode('RAGE')">RAGE</button>
-<button class="mode-btn" id="mode-safe" onclick="switchMode('SAFE')">SAFE</button>
-</div>
-</div>
-
-<!-- 15. Actions -->
+<!-- 17. Actions -->
 <div class="card" id="card-actions">
 <div class="card-title">Actions</div>
 <div class="sub">Restart applies config changes. Shutdown powers off the Pi.</div>
 <div class="action-btns">
 <button class="action-btn btn-restart" onclick="restartAO()">Restart AO</button>
 <button class="action-btn btn-stop" onclick="if(confirm('Shut down the Pi?'))doShutdown()">Shutdown Pi</button>
-<button class="action-btn btn-warn" onclick="if(confirm('Restart pwnagotchi?'))restartPwn()">Restart Pwn</button>
+<button class="action-btn btn-warn" onclick="if(confirm('Restart oxigotchi?'))restartPwn()">Restart Oxi</button>
 <button class="action-btn btn-restart" onclick="if(confirm('Reboot the Pi?'))restartPi()">Restart Pi</button>
 <button class="action-btn btn-restart" onclick="restartSSH()">Restart SSH</button>
 </div>
 </div>
 
-<!-- 16. Plugins -->
+<!-- 18. Plugins -->
 <div class="card" id="card-plugins">
 <div class="card-title">Plugins</div>
 <div class="sub">Lua plugins control display indicators. Toggle on/off and set x,y positions.</div>
 <div id="plugins-list"><div style="color:#555;font-size:12px">Loading...</div></div>
 </div>
 
-<!-- 17. Nearby Networks (AP List) -->
-<div class="card" id="card-aps">
-<div class="card-title">Nearby Networks</div>
-<div class="sub">Access points detected by monitor mode, sorted by signal strength.</div>
-<div class="ap-scroll">
-<table class="ap-table" id="ap-table">
-<thead><tr><th>SSID</th><th>BSSID</th><th>RSSI</th><th>CH</th><th>Cli</th><th>Status</th></tr></thead>
-<tbody id="ap-tbody"><tr><td colspan="6" style="color:#555">Loading...</td></tr></tbody>
-</table>
-</div>
-</div>
-
-<!-- 18. Whitelist Management -->
+<!-- 19. Whitelist -->
 <div class="card" id="card-whitelist">
 <div class="card-title">Whitelist</div>
 <div class="sub">Networks and MACs excluded from attacks. Changes apply next epoch.</div>
@@ -325,53 +391,6 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
-<!-- 19. Channel Configuration -->
-<div class="card" id="card-channels">
-<div class="card-title">Channel Config</div>
-<div class="sub">Configure which channels to scan and dwell time per channel.</div>
-<div style="margin-bottom:8px">
-<div style="font-size:12px;color:#888;margin-bottom:4px">Channels (comma-separated)</div>
-<input type="text" id="ch-list" class="ch-input" placeholder="1,6,11" value="">
-</div>
-<div style="margin-bottom:8px">
-<div style="font-size:12px;color:#888;margin-bottom:4px">Dwell Time: <span id="ch-dwell-val">2000</span>ms</div>
-<input type="range" id="ch-dwell" class="ch-slider" min="500" max="10000" step="100" value="2000" oninput="document.getElementById('ch-dwell-val').textContent=this.value">
-</div>
-<div style="color:#e67e22;font-size:11px;padding:6px 8px;background:#5a300033;border-radius:6px;margin-bottom:8px">Warning: Some channels may cause BCM43436B0 firmware crashes. Stick to 1,6,11 for stability.</div>
-<button class="wl-btn wl-btn-add" onclick="applyChannels()">Apply</button>
-</div>
-
-<!-- 21. WPA-SEC Config -->
-<div class="card" id="card-wpasec">
-<div class="card-title">WPA-SEC Upload</div>
-<div class="sub">Upload captured handshakes to wpa-sec.stanev.org for cloud cracking.</div>
-<div class="status-grid" style="margin-bottom:8px">
-<div class="label">Status</div><div class="value" id="wpasec-status">-</div>
-<div class="label">API Key</div><div class="value" id="wpasec-key">-</div>
-</div>
-<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px">
-<input type="text" id="wpasec-input" class="wl-input" placeholder="WPA-SEC API key" style="flex:2;min-width:180px">
-<button class="wl-btn wl-btn-add" onclick="saveWpaSec()">Save</button>
-</div>
-</div>
-
-<!-- 22. Discord Webhook -->
-<div class="card" id="card-discord">
-<div class="card-title">Discord Notifications</div>
-<div class="sub">Send handshake capture notifications to a Discord channel.</div>
-<div class="toggle-row" style="border-bottom:none;padding-bottom:0">
-<div class="toggle-info"><div class="toggle-label">Enabled</div><div class="toggle-desc">Toggle Discord notifications on/off</div></div>
-<label class="switch"><input type="checkbox" id="discord-toggle" onchange="saveDiscord()"><span class="slider"></span></label>
-</div>
-<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px">
-<input type="text" id="discord-url" class="wl-input" placeholder="Discord webhook URL" style="flex:2;min-width:180px">
-<button class="wl-btn wl-btn-add" onclick="saveDiscord()">Save</button>
-</div>
-<div class="status-grid" style="margin-top:8px">
-<div class="label">Status</div><div class="value" id="discord-status">Disabled</div>
-</div>
-</div>
-
 <!-- 20. Logs Panel -->
 <div class="card" id="card-logs">
 <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
@@ -380,6 +399,19 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 <div id="logs-panel" style="display:none">
 <pre class="logs-pre" id="logs-content">Loading...</pre>
+</div>
+</div>
+
+<!-- 21. Settings -->
+<div class="card" id="card-settings">
+<div class="card-title">Settings</div>
+<div class="sub">Device configuration. Changes are saved to config.toml.</div>
+<div style="margin-bottom:10px">
+<div style="font-size:12px;color:#888;margin-bottom:4px">Device Name</div>
+<div style="display:flex;gap:6px">
+<input type="text" id="setting-name" class="wl-input" placeholder="oxigotchi" style="flex:2">
+<button class="wl-btn wl-btn-add" onclick="saveSettings()">Save</button>
+</div>
 </div>
 </div>
 
@@ -416,8 +448,6 @@ function esc(s) { var d = document.createElement('div'); d.textContent = s; retu
 function refreshStatus() {
     api('GET', '/api/status').then(function(d) {
         if (!d) return;
-        document.getElementById('face').textContent = d.face;
-        document.getElementById('status-msg').textContent = d.status_message;
         document.getElementById('s-ch').textContent = d.channel;
         document.getElementById('s-aps').textContent = d.aps_seen;
         document.getElementById('s-pwnd').textContent = d.handshakes;
@@ -426,6 +456,9 @@ function refreshStatus() {
         // Mode buttons
         document.getElementById('mode-rage').classList.toggle('active', d.mode === 'RAGE' || d.mode === 'AO');
         document.getElementById('mode-safe').classList.toggle('active', d.mode === 'SAFE' || d.mode === 'PWN');
+        // Settings name field (only if not focused)
+        var nameInput = document.getElementById('setting-name');
+        if (nameInput && !nameInput.matches(':focus')) nameInput.value = d.name || '';
     });
 }
 
@@ -454,6 +487,9 @@ function refreshBluetooth() {
         document.getElementById('bt-status').style.color = d.connected ? '#00d4aa' : '#888';
         document.getElementById('bt-device').textContent = d.device_name || '-';
         document.getElementById('bt-ip').textContent = d.ip || '-';
+        document.getElementById('bt-internet').textContent = d.internet_available ? 'Yes' : 'No';
+        document.getElementById('bt-internet').style.color = d.internet_available ? '#00d4aa' : '#888';
+        document.getElementById('bt-retries').textContent = d.retry_count;
     });
 }
 
@@ -501,7 +537,7 @@ function refreshCaptures() {
             return;
         }
         el.innerHTML = d.files.map(function(f) {
-            return '<div class="capture-item">' + esc(f.filename) + ' <span style="color:#555">(' + fmtBytes(f.size_bytes) + ')</span></div>';
+            return '<div class="capture-item"><a href="/api/download/' + encodeURIComponent(f.filename) + '" style="color:#00d4aa;text-decoration:none">' + esc(f.filename) + '</a> <span style="color:#555">(' + fmtBytes(f.size_bytes) + ')</span></div>';
         }).join('');
     });
 }
@@ -627,6 +663,46 @@ function refreshLogs() {
     });
 }
 
+function refreshPlugins() {
+    api('GET', '/api/plugins').then(function(plugins) {
+        if (!plugins) return;
+        var html = '';
+        plugins.forEach(function(p) {
+            var tagColor = p.tag === 'default' ? '#00d4aa' : '#f0c040';
+            html += '<div class="toggle-row">' +
+                '<div class="toggle-info">' +
+                '<div class="toggle-label">' + esc(p.name) +
+                ' <span style="color:' + tagColor + ';font-size:10px;padding:1px 6px;border:1px solid ' + tagColor + ';border-radius:8px;margin-left:6px">' + esc(p.tag) + '</span>' +
+                ' <span style="color:#666;font-size:10px;margin-left:4px">v' + esc(p.version) + '</span></div>' +
+                '<div class="toggle-desc" style="margin-top:4px">' +
+                'x: <input type="number" min="0" max="249" value="' + p.x + '" style="width:48px;background:#0a1628;color:#e0e0e0;border:1px solid #0f3460;border-radius:4px;padding:2px 4px;font-size:11px" onchange="updatePlugin(\'' + esc(p.name) + '\',this.parentNode)">' +
+                ' y: <input type="number" min="0" max="121" value="' + p.y + '" style="width:48px;background:#0a1628;color:#e0e0e0;border:1px solid #0f3460;border-radius:4px;padding:2px 4px;font-size:11px" onchange="updatePlugin(\'' + esc(p.name) + '\',this.parentNode)">' +
+                '</div></div>' +
+                '<label class="switch"><input type="checkbox" ' + (p.enabled ? 'checked' : '') + ' onchange="togglePlugin(\'' + esc(p.name) + '\',this.checked)"><span class="slider"></span></label>' +
+                '</div>';
+        });
+        document.getElementById('plugins-list').innerHTML = html || '<div style="color:#555;font-size:12px">No plugins loaded</div>';
+    });
+}
+
+function refreshWpaSec() {
+    api('GET', '/api/wpasec').then(function(d) {
+        if (!d) return;
+        document.getElementById('wpasec-status').textContent = d.enabled ? 'Enabled' : 'Disabled';
+        document.getElementById('wpasec-status').style.color = d.enabled ? '#00d4aa' : '#888';
+        document.getElementById('wpasec-key').textContent = d.api_key || '(not set)';
+    });
+}
+
+function refreshDiscord() {
+    api('GET', '/api/discord').then(function(d) {
+        if (!d) return;
+        document.getElementById('discord-status').textContent = d.enabled ? 'Enabled' : 'Disabled';
+        document.getElementById('discord-status').style.color = d.enabled ? '#00d4aa' : '#888';
+        document.getElementById('discord-toggle').checked = d.enabled;
+    });
+}
+
 // --- Action functions ---
 
 function addWhitelist() {
@@ -647,13 +723,26 @@ function removeWhitelist(val) {
 function applyChannels() {
     var chStr = document.getElementById('ch-list').value.trim();
     var dwell = parseInt(document.getElementById('ch-dwell').value) || 2000;
+    var autohunt = document.getElementById('autohunt-toggle').checked;
     var channels = null;
     if (chStr) {
         channels = chStr.split(',').map(function(c){ return parseInt(c.trim()); }).filter(function(c){ return !isNaN(c) && c > 0 && c <= 14; });
         if (!channels.length) { toast('Invalid channel list'); return; }
     }
-    api('POST', '/api/channels', {channels: channels, dwell_ms: dwell}).then(function(r) {
+    api('POST', '/api/channels', {channels: channels, dwell_ms: dwell, autohunt: autohunt}).then(function(r) {
         if (r && r.ok) toast('Channel config applied');
+    });
+}
+
+function toggleAutohunt(enabled) {
+    var chStr = document.getElementById('ch-list').value.trim();
+    var dwell = parseInt(document.getElementById('ch-dwell').value) || 2000;
+    var channels = null;
+    if (chStr) {
+        channels = chStr.split(',').map(function(c){ return parseInt(c.trim()); }).filter(function(c){ return !isNaN(c) && c > 0 && c <= 14; });
+    }
+    api('POST', '/api/channels', {channels: channels, dwell_ms: dwell, autohunt: enabled}).then(function(r) {
+        if (r && r.ok) toast('Autohunt ' + (enabled ? 'ON' : 'OFF'));
     });
 }
 
@@ -702,8 +791,8 @@ function doShutdown() {
     });
 }
 function restartPwn() {
-    api('POST', '/api/restart', {}).then(function(r) {
-        toast('Pwnagotchi restart queued');
+    api('POST', '/api/restart-pwn', {}).then(function(r) {
+        toast(r && r.message ? r.message : 'Oxigotchi restart queued');
     });
 }
 function restartPi() {
@@ -717,14 +806,12 @@ function restartSSH() {
     });
 }
 
-function refreshWpaSec() {
-    api('GET', '/api/wpasec').then(function(d) {
-        if (!d) return;
-        document.getElementById('wpasec-status').textContent = d.enabled ? 'Enabled' : 'Disabled';
-        document.getElementById('wpasec-status').style.color = d.enabled ? '#00d4aa' : '#888';
-        document.getElementById('wpasec-key').textContent = d.api_key || '(not set)';
+function toggleBtVisible(visible) {
+    api('POST', '/api/bluetooth', {visible: visible}).then(function(r) {
+        toast('Bluetooth ' + (visible ? 'discoverable' : 'hidden'));
     });
 }
+
 function saveWpaSec() {
     var key = document.getElementById('wpasec-input').value.trim();
     api('POST', '/api/wpasec', {api_key: key}).then(function(r) {
@@ -732,54 +819,11 @@ function saveWpaSec() {
     });
 }
 
-function refreshDiscord() {
-    api('GET', '/api/discord').then(function(d) {
-        if (!d) return;
-        document.getElementById('discord-status').textContent = d.enabled ? 'Enabled' : 'Disabled';
-        document.getElementById('discord-status').style.color = d.enabled ? '#00d4aa' : '#888';
-        document.getElementById('discord-toggle').checked = d.enabled;
-    });
-}
 function saveDiscord() {
     var url = document.getElementById('discord-url').value.trim();
     var enabled = document.getElementById('discord-toggle').checked;
     api('POST', '/api/discord', {webhook_url: url, enabled: enabled}).then(function(r) {
         if (r && r.ok) { toast('Discord config saved'); refreshDiscord(); }
-    });
-}
-
-function refreshDownloadList() {
-    api('GET', '/api/captures').then(function(d) {
-        var el = document.getElementById('dl-list');
-        if (!d || !d.files || !d.files.length) {
-            el.innerHTML = '<div style="color:#555;font-size:12px">No captures to download</div>';
-            return;
-        }
-        el.innerHTML = d.files.map(function(f) {
-            return '<div class="capture-item"><a href="/api/download/' + encodeURIComponent(f.filename) + '" style="color:#00d4aa;text-decoration:none">' + esc(f.filename) + '</a> <span style="color:#555">(' + fmtBytes(f.size_bytes) + ')</span></div>';
-        }).join('');
-    });
-}
-
-function refreshPlugins() {
-    api('GET', '/api/plugins').then(function(plugins) {
-        if (!plugins) return;
-        var html = '';
-        plugins.forEach(function(p) {
-            var tagColor = p.tag === 'default' ? '#00d4aa' : '#f0c040';
-            html += '<div class="toggle-row">' +
-                '<div class="toggle-info">' +
-                '<div class="toggle-label">' + esc(p.name) +
-                ' <span style="color:' + tagColor + ';font-size:10px;padding:1px 6px;border:1px solid ' + tagColor + ';border-radius:8px;margin-left:6px">' + esc(p.tag) + '</span>' +
-                ' <span style="color:#666;font-size:10px;margin-left:4px">v' + esc(p.version) + '</span></div>' +
-                '<div class="toggle-desc" style="margin-top:4px">' +
-                'x: <input type="number" min="0" max="249" value="' + p.x + '" style="width:48px;background:#0a1628;color:#e0e0e0;border:1px solid #0f3460;border-radius:4px;padding:2px 4px;font-size:11px" onchange="updatePlugin(\'' + esc(p.name) + '\',this.parentNode)">' +
-                ' y: <input type="number" min="0" max="121" value="' + p.y + '" style="width:48px;background:#0a1628;color:#e0e0e0;border:1px solid #0f3460;border-radius:4px;padding:2px 4px;font-size:11px" onchange="updatePlugin(\'' + esc(p.name) + '\',this.parentNode)">' +
-                '</div></div>' +
-                '<label class="switch"><input type="checkbox" ' + (p.enabled ? 'checked' : '') + ' onchange="togglePlugin(\'' + esc(p.name) + '\',this.checked)"><span class="slider"></span></label>' +
-                '</div>';
-        });
-        document.getElementById('plugins-list').innerHTML = html || '<div style="color:#555;font-size:12px">No plugins loaded</div>';
     });
 }
 
@@ -794,6 +838,14 @@ function updatePlugin(name, container) {
     var y = parseInt(inputs[1].value) || 0;
     api('POST', '/api/plugins', [{name: name, x: x, y: y}])
         .then(function(r) { toast(name + ' position: ' + x + ',' + y); });
+}
+
+function saveSettings() {
+    var name = document.getElementById('setting-name').value.trim();
+    if (!name) { toast('Enter a name'); return; }
+    api('POST', '/api/settings', {name: name}).then(function(r) {
+        if (r && r.ok) toast('Settings saved');
+    });
 }
 
 // --- Initial load & auto-refresh ---
@@ -812,7 +864,6 @@ setTimeout(refreshAps, 5500);
 setTimeout(refreshWhitelist, 6000);
 setTimeout(refreshWpaSec, 6500);
 setTimeout(refreshDiscord, 7000);
-setTimeout(refreshDownloadList, 7500);
 
 setInterval(refreshStatus, 5000);
 setInterval(refreshBattery, 15000);
@@ -830,9 +881,7 @@ setInterval(refreshWhitelist, 30000);
 setInterval(refreshLogs, 10000);
 setInterval(refreshWpaSec, 30000);
 setInterval(refreshDiscord, 30000);
-setInterval(refreshDownloadList, 30000);
 setInterval(function(){ document.getElementById('eink-img').src='/api/display.png?t='+Date.now(); }, 5000);
 </script>
 </body>
-</html>
-"##;
+</html>"##;

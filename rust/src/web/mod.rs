@@ -128,6 +128,7 @@ pub struct DaemonState {
     pub pending_pwnagotchi_restart: bool,
     pub pending_attack_toggle: Option<AttackToggle>,
     pub pending_bt_toggle: Option<bool>,
+    pub pending_settings: Option<SettingsUpdate>,
 
     // -- plugins --
     pub plugin_list: Vec<PluginInfo>,
@@ -232,6 +233,7 @@ impl DaemonState {
             pending_pwnagotchi_restart: false,
             pending_attack_toggle: None,
             pending_bt_toggle: None,
+            pending_settings: None,
             plugin_list: Vec::new(),
             pending_plugin_updates: Vec::new(),
             ap_list: Vec::new(),
@@ -513,6 +515,8 @@ pub struct WhitelistRemove {
 pub struct ChannelConfig {
     pub channels: Option<Vec<u8>>,
     pub dwell_ms: Option<u64>,
+    #[serde(default)]
+    pub autohunt: Option<bool>,
 }
 
 /// WPA-SEC config response returned by GET /api/wpasec.
@@ -546,6 +550,12 @@ pub struct DiscordResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogsResponse {
     pub lines: Vec<String>,
+}
+
+/// Settings update request for POST /api/settings.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SettingsUpdate {
+    pub name: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +592,8 @@ pub const API_DISCORD: &str = "/api/discord";
 pub const API_DOWNLOAD_SINGLE: &str = "/api/download/:filename";
 pub const API_RESTART_PI: &str = "/api/restart-pi";
 pub const API_RESTART_SSH: &str = "/api/restart-ssh";
+pub const API_RESTART_PWN: &str = "/api/restart-pwn";
+pub const API_SETTINGS: &str = "/api/settings";
 
 // ---------------------------------------------------------------------------
 // StatusParams helper (used by main.rs to build StatusResponse)
@@ -1165,6 +1177,33 @@ async fn restart_ssh_handler() -> Json<ActionResponse> {
     })
 }
 
+/// POST /api/settings -> update device settings (name, etc.)
+async fn settings_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<SettingsUpdate>,
+) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    s.pending_settings = Some(body);
+    Json(ActionResponse {
+        ok: true,
+        message: "Settings update queued".into(),
+    })
+}
+
+/// POST /api/restart-pwn -> restart the oxigotchi service itself
+async fn restart_pwn_handler() -> Json<ActionResponse> {
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("sudo")
+            .args(["systemctl", "restart", "rusty-oxigotchi"])
+            .spawn();
+    }
+    Json(ActionResponse {
+        ok: true,
+        message: "Oxigotchi restart initiated".into(),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Display framebuffer endpoint
 // ---------------------------------------------------------------------------
@@ -1329,6 +1368,8 @@ pub fn build_router(state: SharedState) -> Router {
         .route(API_DOWNLOAD_SINGLE, get(download_single_handler))
         .route(API_RESTART_PI, post(restart_pi_handler))
         .route(API_RESTART_SSH, post(restart_ssh_handler))
+        .route(API_RESTART_PWN, post(restart_pwn_handler))
+        .route(API_SETTINGS, post(settings_handler))
         .with_state(state)
 }
 
@@ -1657,7 +1698,7 @@ mod tests {
     #[test]
     fn test_dashboard_html_contains_all_cards() {
         assert!(DASHBOARD_HTML.contains("<title>oxigotchi</title>"));
-        assert!(DASHBOARD_HTML.contains("card-face"), "missing face card");
+        // face card removed — e-ink preview replaces it
         assert!(DASHBOARD_HTML.contains("card-stats"), "missing core stats card");
         assert!(DASHBOARD_HTML.contains("card-eink"), "missing e-ink card");
         assert!(DASHBOARD_HTML.contains("card-battery"), "missing battery card");
@@ -1669,7 +1710,7 @@ mod tests {
         assert!(DASHBOARD_HTML.contains("card-personality"), "missing personality card");
         assert!(DASHBOARD_HTML.contains("card-system"), "missing system card");
         assert!(DASHBOARD_HTML.contains("card-cracked"), "missing cracked card");
-        assert!(DASHBOARD_HTML.contains("card-download"), "missing download card");
+        // download card merged into captures card
         assert!(DASHBOARD_HTML.contains("card-mode"), "missing mode card");
         assert!(DASHBOARD_HTML.contains("card-actions"), "missing actions card");
         assert!(DASHBOARD_HTML.contains("card-plugins"), "missing plugins card");
@@ -1679,6 +1720,7 @@ mod tests {
         assert!(DASHBOARD_HTML.contains("card-logs"), "missing logs card");
         assert!(DASHBOARD_HTML.contains("card-wpasec"), "missing wpasec card");
         assert!(DASHBOARD_HTML.contains("card-discord"), "missing discord card");
+        assert!(DASHBOARD_HTML.contains("card-settings"), "missing settings card");
     }
 
     #[test]

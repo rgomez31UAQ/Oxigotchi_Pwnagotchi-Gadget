@@ -6,6 +6,7 @@
 //! Uses `nmcli` and `bluetoothctl` CLI tools (no D-Bus crate needed).
 //! All Command calls are `#[cfg(unix)]` gated.
 
+use log::info;
 use std::time::Instant;
 
 /// Default nmcli connection profile name (empty = not configured).
@@ -139,6 +140,11 @@ pub fn build_trust_args(mac: &str) -> Vec<String> {
 /// Build the bluetoothctl command args to turn off discoverability.
 pub fn build_discoverable_off_args() -> Vec<String> {
     vec!["discoverable".into(), "off".into()]
+}
+
+/// Build the bluetoothctl command args to turn on discoverability.
+pub fn build_discoverable_on_args() -> Vec<String> {
+    vec!["discoverable".into(), "on".into()]
 }
 
 /// Build the bluetoothctl command args to scan for devices (with timeout).
@@ -442,6 +448,24 @@ impl BtTether {
         self.state = BtState::Disconnected;
         self.internet_available = false;
         self.ip_address = None;
+    }
+
+    /// Make BT adapter discoverable (visible to other devices).
+    pub fn show(&mut self) {
+        #[cfg(unix)]
+        {
+            let _ = run_bluetoothctl(&build_discoverable_on_args());
+        }
+        info!("BT discoverable ON");
+    }
+
+    /// Hide BT adapter (turn off discoverability).
+    pub fn hide(&mut self) {
+        #[cfg(unix)]
+        {
+            let _ = run_bluetoothctl(&build_discoverable_off_args());
+        }
+        info!("BT discoverable OFF");
     }
 
     /// Power off the BT adapter to free the radio for WiFi monitor mode.
