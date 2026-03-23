@@ -500,6 +500,7 @@ function refreshBluetooth() {
     });
 }
 
+var _chConfigCooldown = 0;
 function refreshWifi() {
     api('GET', '/api/wifi').then(function(d) {
         if (!d) return;
@@ -509,7 +510,8 @@ function refreshWifi() {
         document.getElementById('wifi-aps').textContent = d.aps_tracked;
         document.getElementById('wifi-channels').textContent = d.channels.join(', ') || '-';
         document.getElementById('wifi-dwell').textContent = d.dwell_ms + 'ms';
-        // Populate channel config card with current values
+        // Populate channel config card — skip if user recently applied changes (cooldown)
+        if (Date.now() < _chConfigCooldown) return;
         var chInput = document.getElementById('ch-list');
         if (chInput && !chInput.matches(':focus')) chInput.value = d.channels.join(',');
         var dwInput = document.getElementById('ch-dwell');
@@ -736,6 +738,7 @@ function applyChannels() {
         channels = chStr.split(',').map(function(c){ return parseInt(c.trim()); }).filter(function(c){ return !isNaN(c) && c > 0 && c <= 14; });
         if (!channels.length) { toast('Invalid channel list'); return; }
     }
+    _chConfigCooldown = Date.now() + 45000;
     api('POST', '/api/channels', {channels: channels, dwell_ms: dwell, autohunt: autohunt}).then(function(r) {
         if (r && r.ok) toast('Channel config applied');
     });
@@ -748,6 +751,7 @@ function toggleAutohunt(enabled) {
     if (chStr) {
         channels = chStr.split(',').map(function(c){ return parseInt(c.trim()); }).filter(function(c){ return !isNaN(c) && c > 0 && c <= 14; });
     }
+    _chConfigCooldown = Date.now() + 45000;
     api('POST', '/api/channels', {channels: channels, dwell_ms: dwell, autohunt: enabled}).then(function(r) {
         if (r && r.ok) toast('Autohunt ' + (enabled ? 'ON' : 'OFF'));
     });
