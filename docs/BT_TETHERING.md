@@ -60,6 +60,8 @@ If the BT adapter is stuck in DOWN state (common after WiFi monitor mode was sta
 
 There is no software-only way to recover the UART once it's timed out. `systemctl restart bluetooth`, `hciconfig hci0 reset`, and `hciattach` all fail.
 
+However, the v3 daemon handles this automatically: when switching from RAGE to SAFE mode, it reloads the `hci_uart` kernel module (`rmmod hci_uart` + `modprobe hci_uart`) before bringing up BT. This gives the UART a clean reset without requiring a full reboot. The reload takes about 4 seconds (1s for rmmod + 3s for hci0 to re-register with the kernel).
+
 ## For SD Card Image Flashers
 
 When someone flashes a new SD card with the oxigotchi image:
@@ -74,19 +76,44 @@ When someone flashes a new SD card with the oxigotchi image:
    - Add `phone_mac = "XX:XX:XX:XX:XX:XX"` to `/etc/oxigotchi/config.toml`
    - Reboot
 
-Future improvement: a web dashboard BT pairing wizard that handles this flow.
+Alternatively, the web dashboard has a **BT Scan** feature (on the Bluetooth card) that performs a 10-second scan and shows discovered devices. You can pair directly from the dashboard without SSH.
+
+## RAGE to SAFE Transition (hci_uart Reset)
+
+When the user switches from RAGE to SAFE mode, the daemon performs these steps in order:
+
+1. Stop AngryOxide
+2. Exit WiFi monitor mode (`ip link set wlan0mon down`, `iw dev wlan0mon del`)
+3. Reload hci_uart kernel module:
+   - `rmmod hci_uart` (removes the BT UART driver)
+   - Wait 1 second
+   - `modprobe hci_uart` (reloads with clean state)
+   - Wait 3 seconds (hci0 re-registers with the kernel)
+4. Power on BT adapter via bluetoothctl
+5. Pair/connect to configured phone via nmcli
+
+This hci_uart reset is critical because WiFi monitor mode leaves the shared BCM43436B0 UART in a state where BT HCI commands time out. Without the reload, `bluetoothctl power on` fails with error 110.
+
+## SAFE to RAGE Transition
+
+1. Disconnect BT from phone (nmcli + bluetoothctl)
+2. Power off BT adapter (`bluetoothctl power off`)
+3. Wait 2 seconds (UART settle delay)
+4. Enter WiFi monitor mode
+5. Start AngryOxide
 
 ## Known Issues
 
-- **WiFi + BT coexistence**: Once BT is connected and WiFi enters monitor mode, the BT connection typically stays alive. But if BT drops, it CANNOT be re-established without a reboot.
-- **nmcli error**: "No suitable device found (device wlan0 not available)" — this means the BT UART is down, not a WiFi issue. The error message is misleading.
+- **WiFi + BT coexistence**: In v3, WiFi and BT never run simultaneously. RAGE mode powers off BT entirely, SAFE mode stops WiFi monitor. This is by design — the shared UART cannot reliably handle both.
+- **nmcli error**: "No suitable device found (device wlan0 not available)" — this means the BT UART is down, not a WiFi issue. The error message is misleading. Switch to SAFE mode to fix.
 - **10-second scan timeout**: If the phone isn't discoverable during the scan window, pairing fails. Using `phone_mac` bypasses this entirely.
+- **BT health monitoring**: In SAFE mode, the daemon checks BT connection status each epoch and auto-reconnects if the connection drops.
 
 ## Python Pwnagotchi Comparison
 
-The Python `bt-tether` plugin handled this by:
+The Python `bt-tether` plugin handled BT differently:
 1. Running `hciconfig hci0 up` in a retry loop
 2. Using `dbus` to manage BlueZ directly (not bluetoothctl)
 3. Having its own keepalive mechanism
 
-The Rust daemon uses `bluetoothctl` and `nmcli` CLI commands instead, which is simpler but less resilient to the UART timing issue.
+The Rust daemon uses `bluetoothctl` and `nmcli` CLI commands instead. The explicit RAGE/SAFE mode separation avoids the UART contention problems that plagued the Python version.

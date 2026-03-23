@@ -155,7 +155,7 @@ The e-ink display is a 250x122 pixel Waveshare 2.13" V4 (1-bit monochrome, black
 ### What You See
 
 - **Bull face** on the left side — 120x66 pixel sprite, changes with mood and mode
-- **AO status** (top left) — handshake count, minutes running, current channel mode (e.g., `AO: 3/8 | 1m | CH:AH`)
+- **AO status** (top left) — handshake count, minutes running, live channel (e.g., `AO: 3/8 | 1m | CH:6`). The channel number updates every 5 seconds from AO's stdout as it hops between configured channels
 - **Uptime** (top right) — how long the daemon has been running (`DD:HH:MM`)
 - **Status message** — personality text like "Sniffing the airwaves..."
 - **XP bar** — level and experience progress
@@ -260,9 +260,62 @@ The daemon detects this: when AO crashes 3+ times consecutively, it reports the 
 
 If AngryOxide crashes (which happens after firmware recovery), the daemon automatically restarts it with exponential backoff (5s, 10s, 20s... up to 5 minutes). After 10 stable epochs (~5 minutes), the crash counter resets. The crash counter and recovery status are visible on the Recovery Status card in the dashboard.
 
+### PSM Watchdog Counter Reset
+
+The BCM43436B0 firmware has internal watchdog counters (PSM, DPC, RSSI) that accumulate over time. After ~2.5 hours of continuous operation, these counters can reach thresholds that cause firmware degradation — the radio becomes sluggish and AO starts crashing.
+
+The daemon preventively resets these counters every 15 minutes (every 30 epochs) by writing zeros to the firmware's counter addresses via SDIO RAMRW (nexmon ioctl 0x500). This keeps the firmware in a healthy state indefinitely.
+
+Requirements: the brcmfmac-nexmon DKMS module must be loaded and `wlan0` must be up. The reset is silent — if the ioctl fails (e.g., on stock firmware without nexmon), it is skipped with a debug log.
+
+### GiveUp Safety
+
+When all recovery attempts are exhausted (3 soft + 2 hard), the daemon **gives up gracefully** — it stops trying to recover WiFi but stays running. The USB network, SSH, and web dashboard remain accessible. The daemon never reboots the Pi as part of crash recovery, preventing infinite reboot loops.
+
+### Legacy Service Auto-Disable
+
+On first boot, the daemon checks if the legacy `pwnagotchi` and `bettercap` systemd services are active. If they are, it stops and disables them. This frees approximately 66 MB of RAM (bettercap ~36 MB + pwnagotchi ~30 MB) that the Rust daemon does not need.
+
 ### GPS Auto-Detection
 
 At startup, the daemon probes `localhost:2947` for a gpsd connection. If found, it automatically passes `--gpsd` to AngryOxide so your captures include GPS coordinates.
+
+---
+
+## XP and Leveling
+
+The bull earns XP passively and actively. XP persists across reboots (saved to `/home/pi/exp_stats.json` every 5 epochs).
+
+### XP Sources
+
+| Event | XP |
+|-------|-----|
+| Each epoch (passive, just for being active) | +1 |
+| Each AP visible this epoch | +1 per AP |
+| Association sent | +15 |
+| Deauth sent | +10 |
+| Handshake captured | +100 |
+| New AP discovered | +5 |
+
+### Leveling Curve
+
+The XP needed for each level follows an exponential formula: `level^1.05 * 5`.
+
+| Level | XP to complete |
+|-------|----------------|
+| 1 | 5 |
+| 2 | 10 |
+| 10 | 56 |
+| 22 | 128 |
+| 100 | 629 |
+| 500 | 3,900 |
+| 999 | 18,000 |
+
+The maximum level is **999**. Reaching it requires approximately 3.4 million total XP — roughly 7 months of daily use (8 hours/day with ~16 APs visible). Handshake captures accelerate leveling significantly.
+
+### Personality and Jokes
+
+The bull has a mood system (0.0 to 1.0) that affects its face expression. Mood rises on captures and falls during idle "blind epochs." Status messages rotate with each epoch, and the bull tells jokes with specific timing: the question appears for one epoch (~10 seconds), then the punchline appears for the next epoch (~5 seconds).
 
 ---
 
@@ -610,6 +663,42 @@ phone_name = "Phone Name"
 auto_pair = true
 auto_connect = true
 ```
+
+---
+
+## AP Counting
+
+The daemon counts access points by tracking unique BSSIDs from AO's stdout. AO prints attack lines containing MAC addresses — each unique BSSID is counted as one AP. The count displayed on the e-ink screen and in the dashboard reflects all unique APs seen this session, not just the ones visible right now.
+
+---
+
+## Image Building
+
+The `tools/bake_v3.sh` script builds a complete Oxigotchi v3 SD card image. It takes a v2 base image and layers the Rust daemon on top:
+
+1. Mounts the base image via loopback
+2. Copies the cross-compiled `rusty-oxigotchi` binary to `/usr/local/bin/`
+3. Creates config directories (`/etc/oxigotchi/`, `/var/lib/oxigotchi/`)
+4. Installs the `rusty-oxigotchi.service` systemd unit
+5. Deploys default Lua plugins and config
+6. Cleans first-boot state (forces migration to run on first boot)
+7. Unmounts cleanly
+
+Run inside WSL:
+```bash
+sudo bash /path/to/oxigotchi/tools/bake_v3.sh
+```
+
+---
+
+## Firmware Roadmap (v7)
+
+The current firmware patch (v6) addresses 5 crash vectors. The v7 patch roadmap includes:
+
+- **DWT watchpoint-based PSM reset** — Use the ARM DWT (Data Watchpoint and Trace) unit to trap writes to the PSM watchdog counter address. When the counter exceeds a threshold, the watchpoint handler resets it automatically at the hardware level, eliminating the need for periodic SDIO RAMRW resets from userspace.
+- **RSSI threshold fix** — Widen the RSSI rejection window to prevent false signal-loss resets during active channel hopping.
+
+These improvements would make the firmware fully autonomous — no userspace intervention needed to prevent watchdog-triggered crashes.
 
 ---
 

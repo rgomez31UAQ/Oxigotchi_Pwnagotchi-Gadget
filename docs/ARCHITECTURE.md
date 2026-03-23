@@ -1,10 +1,8 @@
-> **Note:** This document describes the **Oxigotchi v2.x Python architecture**. For the Rust v3.0 rewrite (single binary, Lua plugins, RAGE/SAFE mode), see [RUSTY_V3.md](RUSTY_V3.md).
-
----
-
 # Oxigotchi Architecture
 
-> A deep technical guide to how Oxigotchi works, why it was built this way, and how to hack on it.
+> Technical guide to how Oxigotchi works. Covers both the current Rust v3.0 daemon and the legacy Python v2.x system.
+
+For user-facing documentation, see [RUSTY_V3.md](RUSTY_V3.md).
 
 ---
 
@@ -111,7 +109,42 @@ The Pi Zero 2W's hardware watchdog timer is enabled. If the kernel hangs and no 
 #### Boot diagnostics (`bootlog.service`)
 Writes diagnostic info to the boot partition on every startup for post-mortem analysis. Also performs SSH key auto-heal if the SSH host keys are missing or corrupted.
 
-### Component Architecture
+### Component Architecture (v3.0 Rust)
+
+```
+┌──────────────────────────────────────────────────┐
+│         rusty-oxigotchi (single Rust binary)      │
+│                                                    │
+│  ┌────────┐ ┌─────────┐ ┌──────┐ ┌────────────┐  │
+│  │   ao   │ │ display │ │ web  │ │    lua     │  │
+│  │(AO mgr)│ │ (e-ink) │ │(axum)│ │ (plugins)  │  │
+│  └────┬───┘ └────┬────┘ └──┬───┘ └──────┬─────┘  │
+│       │          │         │             │         │
+│  ┌────┴───┐ ┌────┴────┐   │        ┌────┴─────┐  │
+│  │recovery│ │pisugar  │   │        │personality│  │
+│  │(heal)  │ │(battery)│   │        │(mood, XP) │  │
+│  └────┬───┘ └─────────┘   │        └──────────┘  │
+│       │                    │                       │
+│  ┌────┴──────┐  ┌─────────┴──────┐                │
+│  │ bluetooth │  │    capture     │                │
+│  │ (tether)  │  │ (tmpfs + SD)   │                │
+│  └───────────┘  └────────────────┘                │
+├────────────────────────────────────────────────────┤
+│   AngryOxide (subprocess)    Waveshare SPI         │
+│   stdout -> reader thread    (250x122 e-ink)       │
+│        │                                           │
+│    wlan0mon (monitor mode)                         │
+│        │                                           │
+│    BCM43436B0 (WiFi chip via SDIO)                 │
+│        │                                           │
+│    PSM reset (ioctl 0x500 every 15 min)            │
+│    modprobe cycle (crash loop detection)           │
+│    GPIO 41 recovery (hard power cycle)             │
+│    hw watchdog (kernel hang reboot)                │
+└────────────────────────────────────────────────────┘
+```
+
+### Component Architecture (v2.x Python, legacy)
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -159,22 +192,116 @@ The plugin saves runtime configuration (targets, whitelist, rate, attack toggles
 - On explicit user changes via the web dashboard
 - Debounced to at most once per 30 seconds to minimize disk writes
 
-### Rusty Oxigotchi (v3.0 — Future)
+### Rusty Oxigotchi v3.0 (Current)
 
-The full Rust rewrite replaces the entire Python + bettercap + pwngrid stack with a single static binary:
+The full Rust rewrite replaces the entire Python + bettercap + pwngrid stack with a single ~5MB static binary. Source code is in `rust/src/`.
 
-| What | v2.x (Python) | v3.0 (Rust) |
-|------|---------------|-------------|
-| Binary | 150MB+ Python venv | ~5MB static binary |
-| RAM | ~170MB (Python + bettercap + AO) | ~5-10MB |
-| Boot | ~20 seconds | <5 seconds |
-| WiFi | AO subprocess + plugin glue | AO as Rust crate, compiled in |
-| Display | Python PIL + SPI via library | Native SPI via `rppal` crate |
-| Web | Flask (Python) | axum (async Rust) + htmx |
-| Plugins | Python plugin system | Compiled Rust modules |
-| SD wear | Reduced (tmpfs, journal tuning) | Near-zero (RAM-only logging) |
+#### Module Architecture
 
-Development is tracked in [RUST_REWRITE_PLAN.md](RUST_REWRITE_PLAN.md). The `rust/` directory has the initial scaffold with 199 passing tests.
+```
+rust/src/
+  main.rs           # Daemon entry point, boot sequence, epoch loop
+  ao.rs             # AngryOxide subprocess management, stdout parsing
+  attacks/mod.rs    # Attack scheduling, whitelist, per-type toggles
+  bluetooth/mod.rs  # BT PAN tethering, hci_uart reset, phone pairing
+  capture/mod.rs    # Capture file management, hcxpcapngtool, WPA-SEC upload
+  config/mod.rs     # TOML config parsing
+  display/          # E-ink display driver (SPI), framebuffer, face sprites, fonts
+    mod.rs          # Screen abstraction, draw methods
+    buffer.rs       # 250x122 1-bit framebuffer
+    driver.rs       # Waveshare 2.13" V4 SPI protocol
+    faces.rs        # 120x66 1-bit face bitmaps (compiled in)
+    fonts.rs        # ProFont bitmap font rendering
+  epoch.rs          # Epoch loop state machine (Scan -> Attack -> Capture -> Display -> Sleep)
+  lua/              # Lua 5.4 plugin runtime (mlua, vendored)
+    mod.rs          # Plugin loading, sandboxed execution, indicator registration
+    config.rs       # plugins.toml parsing and merging
+    state.rs        # Epoch state table construction for Lua hooks
+  migration/mod.rs  # Pwnagotchi -> Oxigotchi config migration
+  network.rs        # USB RNDIS networking, IP display rotation, internet checks
+  personality/      # Mood, XP, faces, status messages, jokes
+    mod.rs          # Mood engine, XP tracker, personality state
+    jokes.rs        # Bull-themed joke database
+    messages.rs     # Context-aware status message generator
+    variety.rs      # Face variety engine (milestones, idle rotation, rare faces)
+  pisugar/mod.rs    # PiSugar3 battery monitoring, button events, watchdog
+  recovery/mod.rs   # Self-healing: health checks, modprobe cycle, GPIO recovery, PSM reset
+  web/              # axum HTTP server (port 8080)
+    mod.rs          # REST API routes, shared daemon state
+    html.rs         # Embedded HTML/CSS/JS dashboard (single-page app)
+  wifi/mod.rs       # Monitor mode, channel hopping, AP tracking, beacon parsing
+```
+
+#### Self-Healing Stack (v3.0)
+
+```
+Layer 1: PSM Watchdog Counter Reset
+  Every 15 min, write zeros to firmware PSM/DPC/RSSI counter addresses
+  via SDIO RAMRW (nexmon ioctl 0x500). Prevents 2.5-hour degradation.
+
+Layer 2: AO Crash Loop Detection
+  If AO crashes 3+ times (SIGABRT from degraded firmware), report
+  interface as "unresponsive" and trigger soft recovery (modprobe cycle).
+
+Layer 3: Soft Recovery (modprobe cycle)
+  ip link set wlan0mon down
+  ip link set wlan0 down
+  modprobe -r brcmfmac    (unload WiFi driver)
+  modprobe brcmfmac       (reload with patched firmware)
+  Poll for wlan0 to reappear, restart monitor mode, restart AO.
+  Max 3 attempts with 60-second cooldown.
+
+Layer 4: Hard Recovery (GPIO power cycle)
+  modprobe -r brcmfmac
+  Unbind MMC controller (3f300000.mmcnr)
+  GPIO 41 (WL_REG_ON) -> LOW (power off chip)
+  Wait 3 seconds
+  GPIO 41 -> HIGH (power on)
+  Rebind MMC, modprobe brcmfmac, restart AO.
+  Max 2 attempts.
+
+Layer 5: GiveUp (graceful failure)
+  After all attempts exhausted, stop trying to recover WiFi.
+  Daemon stays running — SSH, web dashboard, USB networking all remain accessible.
+  The daemon NEVER reboots the Pi from crash recovery.
+
+Layer 6: Hardware Watchdog
+  PiSugar3 watchdog and/or Pi hardware watchdog timer.
+  If the kernel hangs entirely, the Pi reboots.
+```
+
+#### tmpfs Capture Pipeline
+
+```
+AO writes to /tmp/ao_captures/ (tmpfs = RAM)
+    |
+    v
+Each epoch: hcxpcapngtool validates .pcapng in RAM
+    |
+    v
+Files with valid .22000 -> moved to /home/pi/captures/ (SD card)
+Files without handshakes -> deleted from tmpfs
+    |
+    v
+.22000 files uploaded to WPA-SEC (if API key configured)
+    |
+    v
+Cracked passwords fetched from WPA-SEC every ~25 minutes
+```
+
+Zero SD card writes during active attacks. Only proven handshakes touch the SD card.
+
+#### SDIO RAMRW for PSM Reset
+
+The BCM43436B0 firmware has internal watchdog counters that accumulate during monitor mode operation. After ~2.5 hours, these counters can reach thresholds that cause firmware degradation.
+
+The daemon writes zeros to these counter addresses every 15 minutes using nexmon's ioctl 0x500 (SDIO RAMRW). This is implemented via a raw netlink socket that sends a WLC_SET_VAR message to the brcmfmac driver. The addresses are the firmware's PSM, DPC, and RSSI watchdog counter locations.
+
+If the nexmon ioctl is not available (stock firmware without nexmon DKMS module), the write silently fails and is skipped.
+
+#### v7 Firmware Patch Roadmap
+
+The current firmware patch (v6) addresses 5 crash vectors via patched firmware binary. The v7 roadmap explores using ARM DWT (Data Watchpoint and Trace) hardware to automatically reset watchdog counters at the hardware level, eliminating the need for periodic SDIO RAMRW resets from userspace. A DWT watchpoint on the PSM counter address would trap the write and reset it in-place, making the firmware fully autonomous.
 
 ---
 
