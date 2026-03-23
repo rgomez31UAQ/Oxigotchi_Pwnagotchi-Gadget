@@ -243,14 +243,22 @@ pub fn parse_scan_all_devices(output: &str) -> Vec<(String, String)> {
             if !parts.is_empty() {
                 let mac = parts[0].to_string();
                 let name = if parts.len() >= 2 { parts[1].to_string() } else { String::new() };
-                // Skip entries where name is just the MAC echoed back
-                if !name.is_empty() && !name.contains('-') && name != mac {
+                // Skip entries with no name or where name looks like a MAC address
+                if !name.is_empty() && name != mac && !is_mac_like(&name) {
                     devices.push((mac, name));
                 }
             }
         }
     }
     devices
+}
+
+/// Check if a string looks like a MAC address (e.g., "AA-BB-CC-DD-EE-FF" or "AA:BB:CC:DD:EE:FF").
+fn is_mac_like(s: &str) -> bool {
+    // MAC addresses are 17 chars: XX:XX:XX:XX:XX:XX or XX-XX-XX-XX-XX-XX
+    if s.len() != 17 { return false; }
+    let sep = if s.contains(':') { ':' } else { '-' };
+    s.split(sep).count() == 6 && s.split(sep).all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Parse an IPv4 address from `ip -4 addr show bnep0` output.
@@ -1180,6 +1188,61 @@ mod tests {
     #[test]
     fn test_build_discoverable_off_args() {
         assert_eq!(build_discoverable_off_args(), vec!["discoverable", "off"]);
+    }
+
+    #[test]
+    fn test_build_discoverable_on_args() {
+        assert_eq!(build_discoverable_on_args(), vec!["discoverable", "on"]);
+    }
+
+    #[test]
+    fn test_parse_scan_all_devices_basic() {
+        let output = "[NEW] Device AA:BB:CC:DD:EE:FF My Phone\n[NEW] Device 11:22:33:44:55:66 Galaxy S24";
+        let devices = parse_scan_all_devices(output);
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0], ("AA:BB:CC:DD:EE:FF".into(), "My Phone".into()));
+        assert_eq!(devices[1], ("11:22:33:44:55:66".into(), "Galaxy S24".into()));
+    }
+
+    #[test]
+    fn test_parse_scan_all_devices_skips_mac_names() {
+        let output = "[NEW] Device AA:BB:CC:DD:EE:FF AA-BB-CC-DD-EE-FF\n[NEW] Device 11:22:33:44:55:66 Real Phone";
+        let devices = parse_scan_all_devices(output);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].1, "Real Phone");
+    }
+
+    #[test]
+    fn test_parse_scan_all_devices_allows_hyphenated_names() {
+        let output = "[NEW] Device AA:BB:CC:DD:EE:FF Galaxy S24-Ultra\n[NEW] Device 11:22:33:44:55:66 Mi-Band";
+        let devices = parse_scan_all_devices(output);
+        assert_eq!(devices.len(), 2);
+        assert_eq!(devices[0].1, "Galaxy S24-Ultra");
+        assert_eq!(devices[1].1, "Mi-Band");
+    }
+
+    #[test]
+    fn test_parse_scan_all_devices_empty() {
+        assert!(parse_scan_all_devices("").is_empty());
+        assert!(parse_scan_all_devices("some random log output").is_empty());
+    }
+
+    #[test]
+    fn test_parse_scan_all_devices_ansi() {
+        let output = "\x1b[1;34m[NEW] Device AA:BB:CC:DD:EE:FF My Phone\x1b[0m";
+        let devices = parse_scan_all_devices(output);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].1, "My Phone");
+    }
+
+    #[test]
+    fn test_is_mac_like() {
+        assert!(is_mac_like("AA-BB-CC-DD-EE-FF"));
+        assert!(is_mac_like("aa:bb:cc:dd:ee:ff"));
+        assert!(!is_mac_like("Galaxy S24-Ultra"));
+        assert!(!is_mac_like("Mi-Band"));
+        assert!(!is_mac_like("short"));
+        assert!(!is_mac_like(""));
     }
 
     #[test]

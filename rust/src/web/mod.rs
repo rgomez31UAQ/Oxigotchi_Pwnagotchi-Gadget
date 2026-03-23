@@ -4,8 +4,8 @@
 //! and configuring oxigotchi. The axum router shares DaemonState via
 //! Arc<Mutex<DaemonState>>.
 //!
-//! All 15 dashboard cards from the Python angryoxide.py plugin are
-//! replicated here with htmx auto-refresh and the same dark theme.
+//! 21 dashboard cards organized by user-journey (At-a-Glance, Hardware,
+//! Hunting, Loot, Connectivity, Status, Management) with vanilla JS auto-refresh.
 
 use axum::{
     extract::{State, Path as AxumPath},
@@ -73,6 +73,7 @@ pub struct DaemonState {
     pub wifi_aps_tracked: usize,
     pub wifi_channels: Vec<u8>,
     pub wifi_dwell_ms: u64,
+    pub autohunt_enabled: bool,
 
     // -- bluetooth --
     pub bt_state: String,
@@ -199,6 +200,7 @@ impl DaemonState {
             wifi_aps_tracked: 0,
             wifi_channels: vec![1, 6, 11],
             wifi_dwell_ms: 2000,
+            autohunt_enabled: true,
             bt_state: "Off".into(),
             bt_connected: false,
             bt_device_name: String::new(),

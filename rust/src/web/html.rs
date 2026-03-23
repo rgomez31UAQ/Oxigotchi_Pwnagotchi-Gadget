@@ -825,17 +825,14 @@ function btScan() {
     btn.disabled = true;
     document.getElementById('bt-scan-results').innerHTML = '<div style="color:#888;font-size:12px">Scanning for nearby devices (~10s)...</div>';
     api('POST', '/api/bluetooth/scan', {}).then(function() {
-        // Poll for results
+        // Poll for results every 2s
         var poll = setInterval(function() {
             api('GET', '/api/bluetooth/scan').then(function(devices) {
                 if (!devices) return;
-                // Check if scan is done (results came back or timeout)
-                if (devices.length > 0 || btn.textContent === 'Scanning...') {
-                    btn.textContent = 'Scan for Devices';
-                    btn.disabled = false;
-                }
                 if (devices.length > 0) {
                     clearInterval(poll);
+                    btn.textContent = 'Scan for Devices';
+                    btn.disabled = false;
                     var html = '<div style="font-size:11px;color:#888;margin-bottom:4px">Found ' + devices.length + ' device(s). Tap to pair:</div>';
                     devices.forEach(function(d) {
                         html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #0f3460">' +
@@ -847,11 +844,14 @@ function btScan() {
                 }
             });
         }, 2000);
-        // Stop polling after 20s regardless
+        // Stop polling after 20s — scan done or no devices found
         setTimeout(function() {
             clearInterval(poll);
             btn.textContent = 'Scan for Devices';
             btn.disabled = false;
+            if (document.getElementById('bt-scan-results').innerHTML.indexOf('Scanning') !== -1) {
+                document.getElementById('bt-scan-results').innerHTML = '<div style="color:#888;font-size:12px">No devices found. Make sure your phone\'s Bluetooth is on.</div>';
+            }
         }, 20000);
     });
 }

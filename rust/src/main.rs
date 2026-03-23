@@ -93,6 +93,8 @@ struct Daemon {
     upload_queue: capture::UploadQueue,
     discord_webhook_url: String,
     discord_enabled: bool,
+    /// Whether AO should auto-hunt channels vs use the configured channel list.
+    autohunt: bool,
     /// tmpfs directory for AO captures (validated before moving to SD).
     tmpfs_capture_dir: String,
 }
@@ -148,6 +150,7 @@ impl Daemon {
             upload_queue: capture::UploadQueue::new(),
             discord_webhook_url: String::new(),
             discord_enabled: false,
+            autohunt: true,
             tmpfs_capture_dir: ensure_tmpfs_capture_dir(),
         }
     }
@@ -818,6 +821,10 @@ impl Daemon {
                 self.wifi.channel_config.dwell_ms = dwell;
                 info!("web: dwell set to {}ms", dwell);
             }
+            if let Some(autohunt) = cfg.autohunt {
+                self.autohunt = autohunt;
+                info!("web: autohunt set to {autohunt}");
+            }
         }
 
         // Process pending WPA-SEC key
@@ -991,6 +998,8 @@ impl Daemon {
             "wpasec_key": self.wpasec_config.api_key,
             "discord_webhook_url": self.discord_webhook_url,
             "discord_enabled": self.discord_enabled,
+            "autohunt": self.autohunt,
+            "name": self.config.name,
         });
         drop(s);
         let path = "/var/lib/oxigotchi/state.json";
@@ -1079,6 +1088,14 @@ impl Daemon {
         if let Some(enabled) = state.get("discord_enabled").and_then(|v| v.as_bool()) {
             self.discord_enabled = enabled;
         }
+        if let Some(autohunt) = state.get("autohunt").and_then(|v| v.as_bool()) {
+            self.autohunt = autohunt;
+        }
+        if let Some(name) = state.get("name").and_then(|v| v.as_str()) {
+            if !name.is_empty() {
+                self.config.name = name.to_string();
+            }
+        }
 
         info!("loaded runtime state from {path}");
     }
@@ -1133,6 +1150,7 @@ impl Daemon {
         s.wifi_aps_tracked = self.wifi.tracker.count();
         s.wifi_channels = self.wifi.channel_config.channels.clone();
         s.wifi_dwell_ms = self.wifi.channel_config.dwell_ms;
+        s.autohunt_enabled = self.autohunt;
 
         s.bt_state = self.bluetooth.status_str().to_string(); // long form for web
         s.bt_connected = bt_conn;
