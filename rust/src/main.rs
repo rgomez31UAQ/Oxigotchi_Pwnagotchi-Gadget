@@ -743,6 +743,9 @@ impl Daemon {
         };
         if !plugin_updates.is_empty() {
             for update in &plugin_updates {
+                if let Some(enabled) = update.enabled {
+                    self.lua.set_plugin_enabled(&update.name, enabled);
+                }
                 if let (Some(x), Some(y)) = (update.x, update.y) {
                     let x = x.clamp(0, 249);
                     let y = y.clamp(0, 121);
@@ -1229,13 +1232,13 @@ impl Daemon {
         }).collect();
 
         // Sync plugin list for web dashboard
-        s.plugin_list = self.lua.get_web_plugin_list().into_iter().map(|(meta, x, y)| {
+        s.plugin_list = self.lua.get_web_plugin_list().into_iter().map(|(meta, enabled, x, y)| {
             web::PluginInfo {
                 name: meta.name,
                 version: meta.version,
                 author: meta.author,
                 tag: meta.tag,
-                enabled: true,
+                enabled,
                 x,
                 y,
             }

@@ -74,6 +74,7 @@ struct LoadedPlugin {
     env_key: LuaRegistryKey,
     config_x: i32,
     config_y: i32,
+    enabled: bool,
 }
 
 /// The Lua plugin runtime. Owns the Lua VM and all loaded plugins.
@@ -134,6 +135,7 @@ impl PluginRuntime {
             env_key,
             config_x: config.x,
             config_y: config.y,
+            enabled: config.enabled,
         });
 
         Ok(())
@@ -142,6 +144,7 @@ impl PluginRuntime {
     /// Call on_epoch(state) on every loaded plugin. Errors are caught and logged.
     pub fn tick_epoch(&self, epoch_state: &state::EpochState) {
         for plugin in &self.plugins {
+            if !plugin.enabled { continue; }
             if let Err(e) = self.tick_one(plugin, epoch_state) {
                 log::warn!("plugin {} on_epoch error: {}", plugin.name, e);
             }
@@ -165,9 +168,9 @@ impl PluginRuntime {
 
     /// Get plugin info for the web dashboard (name, version, author, tag, x, y).
     /// Returns the base config position (what on_load receives), not derived indicator positions.
-    pub fn get_web_plugin_list(&self) -> Vec<(PluginMeta, i32, i32)> {
+    pub fn get_web_plugin_list(&self) -> Vec<(PluginMeta, bool, i32, i32)> {
         self.plugins.iter().map(|p| {
-            (p.meta.clone(), p.config_x, p.config_y)
+            (p.meta.clone(), p.enabled, p.config_x, p.config_y)
         }).collect()
     }
 
@@ -208,8 +211,21 @@ impl PluginRuntime {
     /// indicators have offsets from the base (e.g., values at config.y + 10).
     pub fn get_plugin_configs(&self) -> Vec<(String, bool, i32, i32)> {
         self.plugins.iter().map(|p| {
-            (p.name.clone(), true, p.config_x, p.config_y)
+            (p.name.clone(), p.enabled, p.config_x, p.config_y)
         }).collect()
+    }
+
+    /// Enable or disable a plugin by name.
+    pub fn set_plugin_enabled(&mut self, plugin_name: &str, enabled: bool) {
+        if let Some(p) = self.plugins.iter_mut().find(|p| p.name == plugin_name) {
+            p.enabled = enabled;
+            log::info!("plugin {plugin_name}: enabled={enabled}");
+        }
+    }
+
+    /// Check if a plugin is enabled.
+    pub fn is_plugin_enabled(&self, plugin_name: &str) -> bool {
+        self.plugins.iter().find(|p| p.name == plugin_name).map(|p| p.enabled).unwrap_or(false)
     }
 
     /// Update a plugin's base config position (called when web dashboard changes position).
