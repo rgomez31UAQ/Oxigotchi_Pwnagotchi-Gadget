@@ -358,6 +358,18 @@ impl Daemon {
             self.prev_cpu_sample = Some(sample);
         }
 
+        // ---- PSM counter reset (every 30 epochs = ~15 min) ----
+        if self.mode == OperatingMode::Rage
+            && self.epoch_loop.metrics.epoch > 0
+            && self.epoch_loop.metrics.epoch % 30 == 0
+        {
+            if let Err(e) = recovery::reset_watchdog_counters() {
+                log::debug!("PSM counter reset skipped: {e}");
+            } else {
+                info!("PSM/DPC/RSSI watchdog counters reset (preventive)");
+            }
+        }
+
         // ---- Sync state to web ----
         self.sync_to_web();
 

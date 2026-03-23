@@ -594,6 +594,62 @@ fn run_modprobe_load(module: &str) -> Result<(), String> {
     run_command("modprobe", &[module])
 }
 
+// ---------------------------------------------------------------------------
+// PSM watchdog counter reset via SDIO RAMRW (nexmon 0x500)
+// ---------------------------------------------------------------------------
+
+/// Firmware RAM addresses for watchdog counters (from firmware analysis).
+/// Writing zeros to these addresses resets the counters, preventing PSM wedge.
+const PSM_COUNTER_ADDR: u32 = 0x0003_F99C;
+const DPC_COUNTER_ADDR: u32 = 0x0003_F9A4;
+const RSSI_COUNTER_ADDR: u32 = 0x0003_F9A0;
+
+/// Reset PSM/DPC/RSSI watchdog counters via SDIO RAMRW (nexmon 0x500).
+///
+/// Sends a netlink message to the nexmon kernel module to write zeros
+/// to the firmware's watchdog counter addresses. This prevents the
+/// ~2.5 hour PSM accumulation that causes firmware degradation.
+///
+/// Requires: brcmfmac-nexmon DKMS module loaded, wlan0 interface up.
+#[cfg(unix)]
+pub fn reset_watchdog_counters() -> Result<(), String> {
+    // Build netlink messages for each counter
+    for (name, addr) in &[
+        ("PSM", PSM_COUNTER_ADDR),
+        ("DPC", DPC_COUNTER_ADDR),
+        ("RSSI", RSSI_COUNTER_ADDR),
+    ] {
+        // Use the test tool as a subprocess (simpler than raw netlink from Rust)
+        let result = std::process::Command::new("python3")
+            .args([
+                "/usr/local/bin/test_sdio_ramrw.py",
+                "write",
+                &format!("0x{:X}", addr),
+                "00000000",
+            ])
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                log::debug!("reset {name} counter at 0x{addr:05X}");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::warn!("reset {name} counter failed: {stderr}");
+            }
+            Err(e) => {
+                return Err(format!("reset {name} counter: {e}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn reset_watchdog_counters() -> Result<(), String> {
+    Ok(())
+}
+
 /// Write a string to a sysfs path.
 fn write_sysfs(path: &str, value: &str) -> Result<(), String> {
     #[cfg(unix)]
