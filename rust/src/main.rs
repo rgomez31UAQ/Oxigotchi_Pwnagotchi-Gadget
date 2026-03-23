@@ -948,6 +948,7 @@ impl Daemon {
         s.ao_pid = ao_pid;
         s.ao_crash_count = ao_crashes;
         s.ao_uptime = ao_uptime;
+        s.gpsd_available = self.ao.gpsd_detected;
 
         s.xp = self.epoch_loop.personality.xp.xp;
         s.level = self.epoch_loop.personality.xp.level;

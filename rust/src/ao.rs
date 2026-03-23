@@ -83,6 +83,8 @@ pub struct AoManager {
     pub ao_ap_count: Arc<AtomicU32>,
     /// Signals the reader thread to stop.
     pub shutdown_flag: Arc<AtomicBool>,
+    /// Whether gpsd was detected at startup.
+    pub gpsd_detected: bool,
 }
 
 impl AoManager {
@@ -101,6 +103,7 @@ impl AoManager {
             next_restart: None,
             ao_ap_count: Arc::new(AtomicU32::new(0)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            gpsd_detected: false,
         }
     }
 
@@ -127,6 +130,9 @@ impl AoManager {
         if self.config.no_setup {
             args.push("--no-setup".into());
         }
+        if self.gpsd_detected {
+            args.push("--gpsd".into());
+        }
         args
     }
 
@@ -137,6 +143,12 @@ impl AoManager {
         }
         if self.state == AoState::Failed {
             return Err("AO permanently stopped after too many crashes".into());
+        }
+
+        // Probe gpsd availability
+        self.gpsd_detected = gpsd_available();
+        if self.gpsd_detected {
+            info!("gpsd detected at 127.0.0.1:2947, enabling --gpsd");
         }
 
         // Check if binary exists
@@ -398,6 +410,23 @@ impl Default for AoManager {
     fn default() -> Self {
         Self::new(AoConfig::default())
     }
+}
+
+/// Check if gpsd is reachable at localhost:2947 (TCP connect with 1s timeout).
+#[cfg(unix)]
+pub fn gpsd_available() -> bool {
+    use std::net::TcpStream;
+    TcpStream::connect_timeout(
+        &"127.0.0.1:2947".parse().unwrap(),
+        Duration::from_secs(1),
+    )
+    .is_ok()
+}
+
+/// gpsd is not available on non-unix platforms.
+#[cfg(not(unix))]
+pub fn gpsd_available() -> bool {
+    false
 }
 
 // Unix-only helpers for process signaling

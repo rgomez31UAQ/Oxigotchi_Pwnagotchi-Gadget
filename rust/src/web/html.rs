@@ -214,6 +214,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="health-item"><span class="dot dot-gray" id="h-wifi"></span>WiFi</div>
 <div class="health-item"><span class="dot dot-gray" id="h-ao"></span>AO</div>
 <div class="health-item"><span class="dot dot-gray" id="h-recovery"></span>Recovery</div>
+<div class="health-item"><span class="dot dot-gray" id="h-gps"></span>GPS</div>
 </div>
 <div class="status-grid">
 <div class="label">State</div><div class="value" id="rec-state">-</div>
@@ -249,6 +250,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="label">Memory</div><div class="value" id="sys-mem">-</div>
 <div class="label">Disk</div><div class="value" id="sys-disk">-</div>
 <div class="label">Sys Uptime</div><div class="value" id="sys-uptime">-</div>
+<div class="label">GPS</div><div class="value" id="sys-gps">-</div>
 </div>
 </div>
 
@@ -525,6 +527,11 @@ function refreshRecovery() {
         adot.className = 'dot ' + (d.ao_state === 'RUNNING' ? 'dot-green' : 'dot-red');
         var rdot = document.getElementById('h-recovery');
         rdot.className = 'dot ' + (d.ao_crash_count === 0 ? 'dot-green' : 'dot-yellow');
+        var gdot = document.getElementById('h-gps');
+        gdot.className = 'dot ' + (d.gpsd_available ? 'dot-green' : 'dot-gray');
+        var gpsEl = document.getElementById('sys-gps');
+        gpsEl.textContent = d.gpsd_available ? 'Connected' : 'N/A';
+        gpsEl.style.color = d.gpsd_available ? '#00d4aa' : '#888';
         document.getElementById('sys-uptime').textContent = fmtUptime(d.uptime_secs);
     });
 }

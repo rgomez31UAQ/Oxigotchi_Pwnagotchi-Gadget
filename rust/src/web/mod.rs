@@ -89,6 +89,9 @@ pub struct DaemonState {
     pub ao_crash_count: u32,
     pub ao_uptime: String,
 
+    // -- gps --
+    pub gpsd_available: bool,
+
     // -- personality / XP --
     pub xp: u64,
     pub level: u32,
@@ -203,6 +206,7 @@ impl DaemonState {
             ao_pid: 0,
             ao_crash_count: 0,
             ao_uptime: "N/A".into(),
+            gpsd_available: false,
             xp: 0,
             level: 1,
             cpu_temp_c: 0.0,
@@ -329,6 +333,7 @@ pub struct HealthResponse {
     pub ao_pid: u32,
     pub ao_crash_count: u32,
     pub ao_uptime: String,
+    pub gpsd_available: bool,
 }
 
 /// Mode switch request for POST /api/mode.
@@ -727,6 +732,7 @@ async fn health_handler(State(state): State<SharedState>) -> Json<HealthResponse
         ao_pid: s.ao_pid,
         ao_crash_count: s.ao_crash_count,
         ao_uptime: s.ao_uptime.clone(),
+        gpsd_available: s.gpsd_available,
     })
 }
 
@@ -1594,6 +1600,7 @@ mod tests {
             battery_charging: false, battery_available: true,
             uptime_secs: 3600, ao_state: "RUNNING".into(),
             ao_pid: 1234, ao_crash_count: 0, ao_uptime: "01:00:00".into(),
+            gpsd_available: true,
         };
         let json = serde_json::to_string(&health).unwrap();
         assert!(json.contains("\"ao_pid\":1234"));

@@ -888,7 +888,7 @@ pub struct SystemInfo {
 impl SystemInfo {
     /// Read system info from /proc and /sys on Linux.
     /// Pass a previous CpuSample to compute CPU usage %; None on first call.
-    pub fn read(prev_cpu: &Option<CpuSample>) -> (Self, Option<CpuSample>) {
+    pub fn read(_prev_cpu: &Option<CpuSample>) -> (Self, Option<CpuSample>) {
         #[cfg(target_os = "linux")]
         {
             let cpu_temp_c = if let Ok(content) =
