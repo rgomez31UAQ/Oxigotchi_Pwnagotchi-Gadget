@@ -329,14 +329,37 @@ impl Daemon {
 
         for _ in 0..ticks {
             std::thread::sleep(Duration::from_secs(IP_ROTATE_SECS));
+
+            // Update channel indicator every tick (AO hops every ~5s)
+            let ch = self.ao.channel();
+            if ch > 0 {
+                let ch_str = format!("CH:{ch}");
+                // ao_status format: "AO: X/Y | Zm | CH:N"
+                let hs = self.epoch_loop.metrics.handshakes;
+                let caps = self.captures.count();
+                let up_secs = self.ao.start_time.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+                let uptime = if up_secs < 60 {
+                    format!("{up_secs}s")
+                } else if up_secs < 3600 {
+                    format!("{}m", up_secs / 60)
+                } else {
+                    let h = up_secs / 3600;
+                    let m = (up_secs % 3600) / 60;
+                    if m == 0 { format!("{h}h") } else { format!("{h}h{m}m") }
+                };
+                let ao_text = format!("AO: {hs}/{caps} | {uptime} | {ch_str}");
+                self.lua.update_indicator_value("ao_status", &ao_text);
+            }
+
             if self.mode == OperatingMode::Safe {
                 self.network.rotate_display(false);
                 let ip_str = self.network.display_ip_str(
                     self.bluetooth.ip_address.as_deref(),
                 );
                 self.lua.update_indicator_value("ip_display", &ip_str);
-                self.update_display();
             }
+
+            self.update_display();
         }
         if remainder > 0 {
             std::thread::sleep(Duration::from_secs(remainder));
@@ -767,12 +790,8 @@ impl Daemon {
             ao_uptime_str: ao_uptime,
             ao_uptime_secs: ao_up_secs,
             ao_channels: {
-                let chs = &self.wifi.channel_config.channels;
-                if chs.is_empty() {
-                    "AH".to_string()
-                } else {
-                    chs.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",")
-                }
+                let ch = self.ao.channel();
+                if ch > 0 { ch.to_string() } else { "?".to_string() }
             },
             battery_level: bat_level,
             battery_charging: bat_charging,
