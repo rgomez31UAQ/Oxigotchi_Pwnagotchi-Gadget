@@ -3,10 +3,27 @@
 //! Spawns, monitors, stops, and restarts the angryoxide binary.
 
 use log::{error, info, warn};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// AP info parsed from AO stdout attack/status lines.
+#[derive(Debug, Clone)]
+pub struct AoApInfo {
+    /// BSSID as lowercase hex without colons (12 chars).
+    pub bssid: String,
+    /// Channel this AP was seen on (0 if unknown).
+    pub channel: u8,
+    /// Number of attack events seen for this AP.
+    pub hit_count: u32,
+    /// Whether a handshake/PMKID was captured for this AP.
+    pub captured: bool,
+}
+
+/// Shared AP list type for the reader thread.
+pub type SharedApMap = Arc<Mutex<HashMap<String, AoApInfo>>>;
 
 /// AO process state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +104,8 @@ pub struct AoManager {
     pub shutdown_flag: Arc<AtomicBool>,
     /// Whether gpsd was detected at startup.
     pub gpsd_detected: bool,
+    /// Structured AP data parsed from AO stdout (shared with reader thread).
+    pub ao_ap_list: SharedApMap,
 }
 
 impl AoManager {
@@ -107,12 +126,18 @@ impl AoManager {
             ao_channel: Arc::new(AtomicU32::new(0)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             gpsd_detected: false,
+            ao_ap_list: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     /// Get the current AP count parsed from AO stdout.
     pub fn ap_count(&self) -> u32 {
         self.ao_ap_count.load(Ordering::Relaxed)
+    }
+
+    /// Get a snapshot of all APs seen by AO.
+    pub fn ap_snapshot(&self) -> Vec<AoApInfo> {
+        self.ao_ap_list.lock().map(|m| m.values().cloned().collect()).unwrap_or_default()
     }
 
     /// Get the current channel parsed from AO stdout.
@@ -179,9 +204,12 @@ impl AoManager {
             let args = self.build_args();
             info!("starting AO: {} {}", self.config.binary, args.join(" "));
 
-            // Reset shutdown flag before spawning
+            // Reset shutdown flag and AP data before spawning
             self.shutdown_flag.store(false, Ordering::Relaxed);
             self.ao_ap_count.store(0, Ordering::Relaxed);
+            if let Ok(mut ap_map) = self.ao_ap_list.lock() {
+                ap_map.clear();
+            }
 
             match std::process::Command::new(&self.config.binary)
                 .args(&args)
@@ -199,11 +227,12 @@ impl AoManager {
                         let ap_count = Arc::clone(&self.ao_ap_count);
                         let channel = Arc::clone(&self.ao_channel);
                         let shutdown = Arc::clone(&self.shutdown_flag);
+                        let ap_list = Arc::clone(&self.ao_ap_list);
                         if let Err(e) = std::thread::Builder::new()
                             .name("ao-stdout-reader".into())
                             .spawn(move || {
                                 info!("AO stdout reader thread started");
-                                ao_stdout_reader(stdout, ap_count, channel, shutdown);
+                                ao_stdout_reader(stdout, ap_count, channel, shutdown, ap_list);
                             })
                         {
                             error!("failed to spawn AO stdout reader: {e}");
@@ -528,12 +557,12 @@ fn ao_stdout_reader(
     ap_count: Arc<AtomicU32>,
     ao_channel: Arc<AtomicU32>,
     shutdown: Arc<AtomicBool>,
+    ap_list: SharedApMap,
 ) {
-    use std::collections::HashSet;
     use std::io::{BufRead, BufReader};
 
     let reader = BufReader::new(stdout);
-    let mut seen_bssids: HashSet<String> = HashSet::new();
+    let mut current_channel: u8 = 0;
     // Regex-free ANSI escape stripper
     let strip_ansi = |s: &str| -> String {
         let mut out = String::with_capacity(s.len());
@@ -569,30 +598,49 @@ fn ao_stdout_reader(
                     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
                     if let Ok(ch) = digits.parse::<u32>() {
                         ao_channel.store(ch, Ordering::Relaxed);
+                        if ch <= 255 { current_channel = ch as u8; }
                     }
                 }
 
                 // Track unique BSSIDs from attack/info lines
-                if line.contains("Retrieval")
+                let is_attack = line.contains("Retrieval")
                     || line.contains("Disassoc")
                     || line.contains("Deauth")
                     || line.contains("PMKID")
-                    || line.contains("Association")
-                {
+                    || line.contains("Association");
+
+                if is_attack {
                     if let Some(bssid) = extract_bssid(&line) {
-                        seen_bssids.insert(bssid);
-                        ap_count.store(seen_bssids.len() as u32, Ordering::Relaxed);
+                        if let Ok(mut map) = ap_list.lock() {
+                            let entry = map.entry(bssid.clone()).or_insert_with(|| AoApInfo {
+                                bssid: bssid,
+                                channel: current_channel,
+                                hit_count: 0,
+                                captured: false,
+                            });
+                            entry.hit_count += 1;
+                            entry.channel = current_channel;
+                            ap_count.store(map.len() as u32, Ordering::Relaxed);
+                        }
                     }
                 }
 
-                // Log capture events
+                // Log capture events and mark AP as captured
                 let lower = line.to_ascii_lowercase();
-                if lower.contains("handshake")
+                let is_capture = lower.contains("handshake")
                     || lower.contains("pmkid")
                     || lower.contains("captured")
-                    || lower.contains("hash")
-                {
+                    || lower.contains("hash");
+                if is_capture {
                     info!("AO capture event: {}", &line[..line.len().min(120)]);
+                    // Mark the AP in this line as captured
+                    if let Some(bssid) = extract_bssid(&line) {
+                        if let Ok(mut map) = ap_list.lock() {
+                            if let Some(ap) = map.get_mut(&bssid) {
+                                ap.captured = true;
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {

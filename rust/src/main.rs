@@ -1097,6 +1097,8 @@ impl Daemon {
 
         s.wifi_state = format!("{:?}", self.wifi.state);
         s.wifi_aps_tracked = self.wifi.tracker.count();
+        s.wifi_channels = self.wifi.channel_config.channels.clone();
+        s.wifi_dwell_ms = self.wifi.channel_config.dwell_ms;
 
         s.bt_state = self.bluetooth.status_str().to_string(); // long form for web
         s.bt_connected = bt_conn;
@@ -1123,8 +1125,8 @@ impl Daemon {
         s.screen_height = self.screen.fb.height;
         s.screen_bytes = self.screen.fb.as_bytes().to_vec();
 
-        // Sync AP list for web dashboard (cross-reference with captures for handshake status)
-        s.ap_list = self.wifi.tracker.sorted_by_rssi().iter().map(|ap| {
+        // Sync AP list for web dashboard — merge WiFi tracker + AO stdout data
+        let mut ap_entries: Vec<web::ApEntry> = self.wifi.tracker.sorted_by_rssi().iter().map(|ap| {
             let has_hs = self.captures.files.iter().any(|f| {
                 f.has_handshake && f.bssid == ap.bssid
             });
@@ -1137,6 +1139,28 @@ impl Daemon {
                 has_handshake: has_hs,
             }
         }).collect();
+
+        // Add APs seen by AO that aren't already in the WiFi tracker
+        let ao_aps = self.ao.ap_snapshot();
+        let existing_bssids: std::collections::HashSet<String> =
+            ap_entries.iter().map(|e| e.bssid.replace(':', "").to_lowercase()).collect();
+        for ao_ap in &ao_aps {
+            if !existing_bssids.contains(&ao_ap.bssid) {
+                // Format BSSID with colons: aabbccddeeff -> AA:BB:CC:DD:EE:FF
+                let bssid_fmt = ao_ap.bssid.as_bytes().chunks(2)
+                    .map(|c| std::str::from_utf8(c).unwrap_or("??").to_uppercase())
+                    .collect::<Vec<_>>().join(":");
+                ap_entries.push(web::ApEntry {
+                    bssid: bssid_fmt,
+                    ssid: "(AO)".into(),
+                    rssi: 0, // no RSSI from stdout
+                    channel: ao_ap.channel,
+                    clients: ao_ap.hit_count,
+                    has_handshake: ao_ap.captured,
+                });
+            }
+        }
+        s.ap_list = ap_entries;
 
         // Sync whitelist for web dashboard
         s.whitelist = self.attacks.whitelist.iter().map(|mac| {
