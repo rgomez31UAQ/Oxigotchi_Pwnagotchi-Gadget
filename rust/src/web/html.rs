@@ -513,8 +513,11 @@ function refreshWifi() {
         document.getElementById('wifi-dwell').textContent = d.dwell_ms + 'ms';
         // Populate channel config card — skip if user recently applied changes (cooldown)
         if (Date.now() < _chConfigCooldown) return;
-        document.getElementById('ch-list').value = d.channels.join(',');
-        renderChannelButtons(d.channels);
+        if (!d.autohunt_enabled) {
+            document.getElementById('ch-list').value = d.channels.join(',');
+            _savedChannels = d.channels.slice();
+        }
+        renderChannelButtons(d.autohunt_enabled ? [] : d.channels);
         var dwInput = document.getElementById('ch-dwell');
         if (dwInput && !dwInput.matches(':active')) { dwInput.value = d.dwell_ms; document.getElementById('ch-dwell-val').textContent = d.dwell_ms; }
         var ahToggle = document.getElementById('autohunt-toggle');
@@ -732,22 +735,33 @@ function removeWhitelist(val) {
     });
 }
 
+var _savedChannels = [1, 6, 11]; // remembered channels when autohunt is toggled off
+
 function renderChannelButtons(activeChannels) {
     var container = document.getElementById('ch-btns');
     if (!container) return;
+    var autohunt = document.getElementById('autohunt-toggle');
+    var isAutohunt = autohunt && autohunt.checked;
     var safe = [1, 6, 11];
     var html = '';
     for (var ch = 1; ch <= 13; ch++) {
-        var active = activeChannels.indexOf(ch) !== -1;
+        var active = !isAutohunt && activeChannels.indexOf(ch) !== -1;
         var isSafe = safe.indexOf(ch) !== -1;
-        var bg = active ? (isSafe ? '#00d4aa' : '#e67e22') : '#0f3460';
-        var fg = active ? '#1a1a2e' : '#888';
-        html += '<button onclick="toggleChannel(' + ch + ')" style="width:36px;height:32px;border:none;border-radius:6px;background:' + bg + ';color:' + fg + ';font-family:inherit;font-size:13px;font-weight:bold;cursor:pointer">' + ch + '</button>';
+        var bg, fg;
+        if (isAutohunt) {
+            bg = '#0a1628'; fg = '#444';
+        } else {
+            bg = active ? (isSafe ? '#00d4aa' : '#e67e22') : '#0f3460';
+            fg = active ? '#1a1a2e' : '#888';
+        }
+        var disabled = isAutohunt ? ' pointer-events:none;opacity:0.5;' : '';
+        html += '<button onclick="toggleChannel(' + ch + ')" style="width:36px;height:32px;border:none;border-radius:6px;background:' + bg + ';color:' + fg + ';font-family:inherit;font-size:13px;font-weight:bold;cursor:pointer;' + disabled + '">' + ch + '</button>';
     }
     container.innerHTML = html;
 }
 
 function toggleChannel(ch) {
+    if (document.getElementById('autohunt-toggle').checked) return;
     var input = document.getElementById('ch-list');
     var channels = input.value.split(',').map(function(c){ return parseInt(c.trim()); }).filter(function(c){ return !isNaN(c) && c > 0; });
     var idx = channels.indexOf(ch);
@@ -759,6 +773,7 @@ function toggleChannel(ch) {
     }
     if (!channels.length) channels = [1]; // at least one channel
     input.value = channels.join(',');
+    _savedChannels = channels.slice();
     renderChannelButtons(channels);
 }
 
@@ -778,15 +793,22 @@ function applyChannels() {
 }
 
 function toggleAutohunt(enabled) {
-    var chStr = document.getElementById('ch-list').value.trim();
+    var input = document.getElementById('ch-list');
     var dwell = parseInt(document.getElementById('ch-dwell').value) || 2000;
-    var channels = null;
-    if (chStr) {
-        channels = chStr.split(',').map(function(c){ return parseInt(c.trim()); }).filter(function(c){ return !isNaN(c) && c > 0 && c <= 14; });
+    if (enabled) {
+        // Save current channels before greying out
+        var cur = input.value.split(',').map(function(c){ return parseInt(c.trim()); }).filter(function(c){ return !isNaN(c) && c > 0; });
+        if (cur.length) _savedChannels = cur;
+        renderChannelButtons([]);
+    } else {
+        // Restore saved channels
+        input.value = _savedChannels.join(',');
+        renderChannelButtons(_savedChannels);
     }
+    var channels = enabled ? null : _savedChannels;
     _chConfigCooldown = Date.now() + 45000;
     api('POST', '/api/channels', {channels: channels, dwell_ms: dwell, autohunt: enabled}).then(function(r) {
-        if (r && r.ok) toast('Autohunt ' + (enabled ? 'ON' : 'OFF'));
+        if (r && r.ok) toast('Autohunt ' + (enabled ? 'ON — AO scans all channels' : 'OFF — using selected channels'));
     });
 }
 
