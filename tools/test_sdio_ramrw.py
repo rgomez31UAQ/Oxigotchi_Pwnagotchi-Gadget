@@ -31,10 +31,27 @@ DPC_THRESHOLD = 0x011430
 RSSI_THRESHOLD = 0x011460
 
 def build_nexmon_nlmsg(cmd, set_flag, payload):
-    """Build a netlink message for the nexmon kernel module."""
-    # nexudp_ioctl_header: nex[4] + cmd[4] + set[4] + payload[N]
-    nex_magic = b'NEX\x00'
-    frame = nex_magic + struct.pack('<II', cmd, set_flag) + payload
+    """Build a netlink message for the nexmon kernel module.
+
+    Header format (from core.c):
+      struct nexudp_header {
+          char nex[3];            // "NEX"
+          char type;              // NEXUDP_IOCTL = 0
+          int securitycookie;     // 0
+      };
+      struct nexudp_ioctl_header {
+          nexudp_header;          // 8 bytes
+          unsigned int cmd;       // 4 bytes
+          unsigned int set;       // 4 bytes
+          char payload[1];        // variable
+      };
+    Total header: 16 bytes before payload.
+    """
+    # nexudp_header: nex[3] + type[1] + securitycookie[4]
+    nexudp_hdr = b'NEX' + struct.pack('<bI', 0, 0)  # type=0 (IOCTL), cookie=0
+    # ioctl fields: cmd[4] + set[4]
+    ioctl_hdr = struct.pack('<II', cmd, set_flag)
+    frame = nexudp_hdr + ioctl_hdr + payload
 
     # nlmsghdr: len[4] + type[2] + flags[2] + seq[4] + pid[4]
     nlmsg_len = 16 + len(frame)
