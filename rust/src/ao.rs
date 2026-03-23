@@ -202,6 +202,7 @@ impl AoManager {
                         if let Err(e) = std::thread::Builder::new()
                             .name("ao-stdout-reader".into())
                             .spawn(move || {
+                                info!("AO stdout reader thread started");
                                 ao_stdout_reader(stdout, ap_count, channel, shutdown);
                             })
                         {
@@ -533,6 +534,21 @@ fn ao_stdout_reader(
 
     let reader = BufReader::new(stdout);
     let mut seen_bssids: HashSet<String> = HashSet::new();
+    // Regex-free ANSI escape stripper
+    let strip_ansi = |s: &str| -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut in_escape = false;
+        for c in s.chars() {
+            if in_escape {
+                if c.is_ascii_alphabetic() { in_escape = false; }
+            } else if c == '\x1b' {
+                in_escape = true;
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    };
 
     for line_result in reader.lines() {
         if shutdown.load(Ordering::Relaxed) {
@@ -540,7 +556,8 @@ fn ao_stdout_reader(
             break;
         }
         match line_result {
-            Ok(line) => {
+            Ok(raw_line) => {
+                let line = strip_ansi(&raw_line);
                 // Try explicit AP count from status line first
                 if let Some(count) = parse_ao_line(&line) {
                     ap_count.store(count, Ordering::Relaxed);
