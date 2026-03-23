@@ -756,7 +756,7 @@ impl Daemon {
             uptime_secs: self.epoch_loop.uptime_secs(),
             epoch: m.epoch,
             mode: self.mode.as_str().to_string(),
-            channel: m.channel,
+            channel: { let ch = self.ao.channel(); if ch > 0 { ch as u8 } else { m.channel } },
             aps_seen: self.ao.ap_count(),
             handshakes: m.handshakes,
             captures_total: self.captures.count(),
@@ -766,7 +766,10 @@ impl Daemon {
             ao_crash_count: ao_crashes,
             ao_uptime_str: ao_uptime,
             ao_uptime_secs: ao_up_secs,
-            ao_channels: "AH".to_string(), // autohunt — AO handles channel hopping
+            ao_channels: {
+                let ch = self.ao.channel();
+                if ch > 0 { ch.to_string() } else { "AH".to_string() }
+            },
             battery_level: bat_level,
             battery_charging: bat_charging,
             battery_voltage_mv: bat_mv,
@@ -913,7 +916,7 @@ impl Daemon {
         s.uptime_str = self.epoch_loop.uptime_str();
         s.mode = self.mode.as_str().to_string();
         s.epoch = m.epoch;
-        s.channel = m.channel;
+        s.channel = { let ch = self.ao.channel(); if ch > 0 { ch as u8 } else { m.channel } };
         s.aps_seen = self.ao.ap_count();
         s.handshakes = m.handshakes;
         s.blind_epochs = m.blind_epochs;

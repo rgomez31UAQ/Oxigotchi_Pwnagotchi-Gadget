@@ -81,6 +81,8 @@ pub struct AoManager {
     next_restart: Option<Instant>,
     /// AP count parsed from AO stdout (shared with reader thread).
     pub ao_ap_count: Arc<AtomicU32>,
+    /// Current channel parsed from AO stdout (shared with reader thread).
+    pub ao_channel: Arc<AtomicU32>,
     /// Signals the reader thread to stop.
     pub shutdown_flag: Arc<AtomicBool>,
     /// Whether gpsd was detected at startup.
@@ -102,6 +104,7 @@ impl AoManager {
             start_time: None,
             next_restart: None,
             ao_ap_count: Arc::new(AtomicU32::new(0)),
+            ao_channel: Arc::new(AtomicU32::new(0)),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             gpsd_detected: false,
         }
@@ -110,6 +113,11 @@ impl AoManager {
     /// Get the current AP count parsed from AO stdout.
     pub fn ap_count(&self) -> u32 {
         self.ao_ap_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the current channel parsed from AO stdout.
+    pub fn channel(&self) -> u32 {
+        self.ao_channel.load(Ordering::Relaxed)
     }
 
     /// Build the command-line arguments for angryoxide.
@@ -189,11 +197,12 @@ impl AoManager {
                     // discarded — thread exits on stdout EOF when child dies)
                     if let Some(stdout) = child.stdout.take() {
                         let ap_count = Arc::clone(&self.ao_ap_count);
+                        let channel = Arc::clone(&self.ao_channel);
                         let shutdown = Arc::clone(&self.shutdown_flag);
                         if let Err(e) = std::thread::Builder::new()
                             .name("ao-stdout-reader".into())
                             .spawn(move || {
-                                ao_stdout_reader(stdout, ap_count, shutdown);
+                                ao_stdout_reader(stdout, ap_count, channel, shutdown);
                             })
                         {
                             error!("failed to spawn AO stdout reader: {e}");
@@ -516,6 +525,7 @@ fn extract_bssid(line: &str) -> Option<String> {
 fn ao_stdout_reader(
     stdout: std::process::ChildStdout,
     ap_count: Arc<AtomicU32>,
+    ao_channel: Arc<AtomicU32>,
     shutdown: Arc<AtomicBool>,
 ) {
     use std::collections::HashSet;
@@ -534,6 +544,15 @@ fn ao_stdout_reader(
                 // Try explicit AP count from status line first
                 if let Some(count) = parse_ao_line(&line) {
                     ap_count.store(count, Ordering::Relaxed);
+                }
+
+                // Parse channel from status lines: "Channel: 6"
+                if let Some(pos) = line.find("Channel:") {
+                    let rest = line[pos + 8..].trim();
+                    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                    if let Ok(ch) = digits.parse::<u32>() {
+                        ao_channel.store(ch, Ordering::Relaxed);
+                    }
                 }
 
                 // Track unique BSSIDs from attack/info lines
