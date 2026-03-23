@@ -542,7 +542,7 @@ impl Personality {
         // Question phase just ended — switch to punchline
         if self.joke_phase == 0 && self.joke_index.is_some() && self.joke_epochs_left == 0 {
             self.joke_phase = 1;
-            self.joke_epochs_left = 2; // punchline for 3 total (this + 2 remaining)
+            self.joke_epochs_left = 0; // punchline for 1 epoch (~5-10s with sub-epoch refresh)
             if let Some(idx) = self.joke_index {
                 let joke_list = jokes::jokes_for_face(&self.joke_face);
                 if idx < joke_list.len() {
@@ -574,7 +574,7 @@ impl Personality {
                 let question = joke_list[idx].0.to_string();
                 self.joke_index = Some(idx);
                 self.joke_phase = 0;
-                self.joke_epochs_left = 1; // question for 2 total (this + 1)
+                self.joke_epochs_left = 0; // question for 1 epoch (~10s with sub-epoch refresh)
                 self.joke_face = face_name;
                 self.current_status = question;
                 self.status_display_epochs = 1;
