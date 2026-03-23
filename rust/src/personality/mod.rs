@@ -689,10 +689,15 @@ impl XpTracker {
 
     /// XP needed to complete the given level.
     ///
-    /// Formula: level * 100.
+    /// Exponential curve: level^1.05 * 5. Early levels are fast,
+    /// high levels are a grind. ~7 months of daily use to reach 999.
+    /// Lv1=5, Lv10=56, Lv100=630, Lv500=3900, Lv999=18000.
     pub fn xp_needed_for_level(level: u32) -> u64 {
-        level as u64 * 100
+        ((level as f64).powf(1.05) * 5.0).max(1.0) as u64
     }
+
+    /// Maximum level.
+    pub const MAX_LEVEL: u32 = 999;
 
     /// XP needed to complete the current level.
     pub fn xp_to_next_level(&self) -> u64 {
@@ -708,6 +713,10 @@ impl XpTracker {
 
         let mut leveled = false;
         loop {
+            if self.level >= Self::MAX_LEVEL {
+                self.xp = 0; // capped
+                break;
+            }
             let needed = self.xp_to_next_level();
             if self.xp >= needed {
                 self.xp -= needed;
@@ -742,9 +751,23 @@ impl XpTracker {
         self.epoch_counter > 0 && self.epoch_counter % Self::SAVE_INTERVAL == 0
     }
 
-    /// Increment epoch counter. Call once per epoch.
+    /// Increment epoch counter and award passive XP. Call once per epoch.
+    /// The bull gains XP just by being active — +1 per epoch base.
     pub fn tick_epoch(&mut self) {
         self.epoch_counter += 1;
+        self.award(1); // passive XP for scanning
+    }
+
+    /// Award XP for seeing APs this epoch. +1 per AP seen.
+    pub fn award_aps(&mut self, ap_count: u32) {
+        if ap_count > 0 {
+            self.award(ap_count as u64);
+        }
+    }
+
+    /// Award XP for capturing a handshake. +100 per handshake.
+    pub fn award_handshake(&mut self) {
+        self.award(100);
     }
 
     /// Save XP state to disk. Uses atomic write (write .tmp, rename).

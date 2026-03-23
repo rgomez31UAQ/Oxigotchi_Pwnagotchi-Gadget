@@ -588,7 +588,8 @@ impl Daemon {
         self.epoch_loop.personality.generate_status();
 
         // Periodic XP save (every 5 epochs)
-        self.epoch_loop.personality.xp.tick_epoch();
+        self.epoch_loop.personality.xp.tick_epoch(); // +1 passive XP
+        self.epoch_loop.personality.xp.award_aps(self.ao.ap_count()); // +1 per AP
         if self.epoch_loop.personality.xp.should_save() {
             let mood = self.epoch_loop.personality.mood.value();
             if let Err(e) = self.epoch_loop.personality.xp.save(mood) {
