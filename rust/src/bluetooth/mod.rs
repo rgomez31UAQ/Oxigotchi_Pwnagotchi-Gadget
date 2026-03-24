@@ -854,6 +854,16 @@ mod tests {
 
     #[test]
     fn test_connect_success_non_unix() {
+        // Skip on non-Pi Linux — nmcli/bluetoothctl not available in WSL
+        if cfg!(unix) && std::process::Command::new("nmcli")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_err()
+        {
+            return;
+        }
         let config = BtConfig {
             phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
@@ -1052,6 +1062,16 @@ mod tests {
 
     #[test]
     fn test_toggle_connect_disconnect() {
+        // Skip on non-Pi Linux — nmcli/bluetoothctl not available in WSL
+        if cfg!(unix) && std::process::Command::new("nmcli")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_err()
+        {
+            return;
+        }
         let config = BtConfig {
             phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
@@ -1066,6 +1086,16 @@ mod tests {
 
     #[test]
     fn test_toggle_from_off() {
+        // Skip on non-Pi Linux — nmcli/bluetoothctl not available in WSL
+        if cfg!(unix) && std::process::Command::new("nmcli")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_err()
+        {
+            return;
+        }
         let config = BtConfig {
             phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
@@ -1078,6 +1108,16 @@ mod tests {
 
     #[test]
     fn test_toggle_from_error() {
+        // Skip on non-Pi Linux — nmcli/bluetoothctl not available in WSL
+        if cfg!(unix) && std::process::Command::new("nmcli")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_err()
+        {
+            return;
+        }
         let config = BtConfig {
             phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()

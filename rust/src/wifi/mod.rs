@@ -1279,6 +1279,10 @@ mod tests {
 
     #[test]
     fn test_wifi_manager_state() {
+        // Skip on non-Pi — needs real wlan0 interface for iw commands
+        if std::fs::metadata("/sys/class/net/wlan0").is_err() {
+            return;
+        }
         let mut wm = WifiManager::new();
         assert_eq!(wm.state, WifiState::Down);
         wm.start_monitor().unwrap();

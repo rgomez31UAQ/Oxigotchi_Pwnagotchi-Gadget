@@ -1838,6 +1838,10 @@ mod tests {
 
     #[test]
     fn test_daemon_boot() {
+        // Skip on non-Pi Linux — boot() calls start_monitor() which needs wlan0
+        if std::fs::metadata("/sys/class/net/wlan0").is_err() {
+            return;
+        }
         let mut daemon = make_daemon();
         daemon.boot();
         // WiFi should be in monitor mode (stub always succeeds)
@@ -2046,6 +2050,10 @@ mod tests {
     /// Integration test: create a Daemon, run 3 full epoch cycles.
     #[test]
     fn test_integration_three_epochs() {
+        // Skip on non-Pi Linux — boot() calls start_monitor() which needs wlan0
+        if std::fs::metadata("/sys/class/net/wlan0").is_err() {
+            return;
+        }
         let mut daemon = make_daemon();
 
         daemon.epoch_loop.epoch_duration = Duration::from_secs(0);
@@ -2095,6 +2103,10 @@ mod tests {
 
     #[test]
     fn test_sync_to_web() {
+        // Skip on non-Pi Linux — boot() calls start_monitor() which needs wlan0
+        if std::fs::metadata("/sys/class/net/wlan0").is_err() {
+            return;
+        }
         let mut daemon = make_daemon();
         daemon.boot();
         daemon.sync_to_web();

@@ -530,6 +530,10 @@ mod tests {
 
     #[test]
     fn test_transition_to_wifi_stub() {
+        // Skip on non-Pi Linux — needs real wlan0 for iw commands
+        if std::fs::metadata("/sys/class/net/wlan0").is_err() {
+            return;
+        }
         // On non-unix, all stubs succeed so this should work end-to-end
         let dir = tempfile::tempdir().unwrap();
         let lock_path = dir.path().join("radio.lock");
@@ -548,6 +552,10 @@ mod tests {
 
     #[test]
     fn test_transition_to_bt_stub() {
+        // Skip on non-Pi Linux — needs real wlan0 for iw commands
+        if std::fs::metadata("/sys/class/net/wlan0").is_err() {
+            return;
+        }
         // On non-unix, all stubs succeed
         let dir = tempfile::tempdir().unwrap();
         let lock_path = dir.path().join("radio.lock");
@@ -569,6 +577,10 @@ mod tests {
 
     #[test]
     fn test_roundtrip_wifi_bt_wifi() {
+        // Skip on non-Pi Linux — needs real wlan0 for iw commands
+        if std::fs::metadata("/sys/class/net/wlan0").is_err() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let lock_path = dir.path().join("radio.lock");
         let lock_str = lock_path.to_str().unwrap();
