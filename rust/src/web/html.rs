@@ -961,8 +961,278 @@ function saveSettings() {
     });
 }
 
-// --- Initial load & auto-refresh ---
+// --- WebSocket live updates with polling fallback ---
+
+var _ws = null;
+var _pollTimers = [];
+var _wsConnected = false;
+
+function updateStatusFromWs(d) {
+    document.getElementById('s-ch').textContent = d.channel;
+    document.getElementById('s-aps').textContent = d.aps_seen;
+    document.getElementById('s-pwnd').textContent = d.handshakes;
+    document.getElementById('s-epoch').textContent = d.epoch;
+    document.getElementById('s-uptime').textContent = d.uptime;
+    document.getElementById('mode-rage').classList.toggle('active', d.mode === 'RAGE' || d.mode === 'AO');
+    document.getElementById('mode-safe').classList.toggle('active', d.mode === 'SAFE' || d.mode === 'PWN');
+    var nameInput = document.getElementById('setting-name');
+    if (nameInput && !nameInput.matches(':focus')) nameInput.value = d.name || '';
+}
+
+function updateBatteryFromWs(b) {
+    if (b.available) {
+        document.getElementById('bat-level').textContent = b.level + '%';
+        document.getElementById('bat-level').style.color = b.critical ? '#e94560' : (b.low ? '#f0c040' : '#00d4aa');
+        document.getElementById('bat-state').textContent = b.charging ? 'Charging' : 'Discharging';
+        document.getElementById('bat-voltage').textContent = (b.voltage_mv / 1000).toFixed(2) + 'V';
+        document.getElementById('bat-bar').style.width = b.level + '%';
+        document.getElementById('bat-bar').style.background = b.critical ? '#e94560' : (b.low ? '#f0c040' : '#00d4aa');
+    } else {
+        document.getElementById('bat-level').textContent = 'N/A';
+        document.getElementById('bat-state').textContent = 'Not detected';
+        document.getElementById('bat-voltage').textContent = '-';
+    }
+}
+
+function updateBluetoothFromWs(d) {
+    document.getElementById('bt-status').textContent = d.connected ? 'Connected' : d.state;
+    document.getElementById('bt-status').style.color = d.connected ? '#00d4aa' : '#888';
+    document.getElementById('bt-device').textContent = d.device_name || '-';
+    document.getElementById('bt-ip').textContent = d.ip || '-';
+    document.getElementById('bt-internet').textContent = d.internet_available ? 'Yes' : 'No';
+    document.getElementById('bt-internet').style.color = d.internet_available ? '#00d4aa' : '#888';
+    document.getElementById('bt-retries').textContent = d.retry_count;
+}
+
+function updateWifiFromWs(d) {
+    document.getElementById('wifi-state').textContent = d.state;
+    document.getElementById('wifi-state').style.color = d.state === 'Monitor' ? '#00d4aa' : '#e94560';
+    document.getElementById('wifi-ch').textContent = d.channel;
+    document.getElementById('wifi-aps').textContent = d.aps_tracked;
+    document.getElementById('wifi-channels').textContent = d.channels.join(', ') || '-';
+    document.getElementById('wifi-dwell').textContent = d.dwell_ms + 'ms';
+    if (Date.now() < _chConfigCooldown) return;
+    if (!d.autohunt_enabled) {
+        document.getElementById('ch-list').value = d.channels.join(',');
+        _savedChannels = d.channels.slice();
+    }
+    renderChannelButtons(d.autohunt_enabled ? [] : d.channels);
+    var dwInput = document.getElementById('ch-dwell');
+    if (dwInput && !dwInput.matches(':active')) { dwInput.value = d.dwell_ms; document.getElementById('ch-dwell-val').textContent = d.dwell_ms; }
+    var ahToggle = document.getElementById('autohunt-toggle');
+    if (ahToggle) ahToggle.checked = d.autohunt_enabled;
+}
+
+function updateAttacksFromWs(d) {
+    document.getElementById('s-rate').textContent = d.attack_rate;
+    ['deauth','pmkid','csa','disassoc','anon_reassoc','rogue_m2'].forEach(function(k) {
+        var cb = document.getElementById('atk-'+k);
+        if (cb) cb.checked = d[k];
+    });
+    [1,2,3].forEach(function(n) {
+        document.getElementById('rate-'+n).classList.toggle('active', n === d.attack_rate);
+    });
+}
+
+function updateCapturesFromWs(d) {
+    document.getElementById('cap-total').textContent = d.total_files;
+    document.getElementById('cap-hs').textContent = d.handshake_files;
+    document.getElementById('cap-pending').textContent = d.pending_upload;
+    document.getElementById('cap-size').textContent = fmtBytes(d.total_size_bytes);
+    var el = document.getElementById('cap-list');
+    if (!d.files || !d.files.length) {
+        el.innerHTML = '<div style="color:#555;font-size:12px">No captures yet</div>';
+        return;
+    }
+    el.innerHTML = d.files.map(function(f) {
+        return '<div class="capture-item"><a href="/api/download/' + encodeURIComponent(f.filename) + '" style="color:#00d4aa;text-decoration:none">' + esc(f.filename) + '</a> <span style="color:#555">(' + fmtBytes(f.size_bytes) + ')</span></div>';
+    }).join('');
+}
+
+function updateRecoveryFromWs(rec, h) {
+    document.getElementById('rec-state').textContent = rec.state;
+    document.getElementById('rec-state').style.color = rec.state === 'Healthy' ? '#00d4aa' : '#f0c040';
+    document.getElementById('rec-total').textContent = rec.total_recoveries;
+    document.getElementById('rec-last').textContent = rec.last_recovery;
+    document.getElementById('rec-crashes').textContent = h.ao_crash_count;
+    document.getElementById('rec-crashes').style.color = h.ao_crash_count > 0 ? '#f0c040' : '#e0e0e0';
+    document.getElementById('rec-pid').textContent = h.ao_pid || '-';
+    document.getElementById('rec-ao-up').textContent = h.ao_uptime;
+    var wdot = document.getElementById('h-wifi');
+    wdot.className = 'dot ' + (h.wifi_state === 'Monitor' ? 'dot-green' : 'dot-red');
+    var adot = document.getElementById('h-ao');
+    adot.className = 'dot ' + (h.ao_state === 'RUNNING' ? 'dot-green' : 'dot-red');
+    var rdot = document.getElementById('h-recovery');
+    rdot.className = 'dot ' + (h.ao_crash_count === 0 ? 'dot-green' : 'dot-yellow');
+    var gdot = document.getElementById('h-gps');
+    gdot.className = 'dot ' + (h.gpsd_available ? 'dot-green' : 'dot-gray');
+    var gpsEl = document.getElementById('sys-gps');
+    gpsEl.textContent = h.gpsd_available ? 'Connected' : 'N/A';
+    gpsEl.style.color = h.gpsd_available ? '#00d4aa' : '#888';
+    document.getElementById('sys-uptime').textContent = fmtUptime(h.uptime_secs);
+}
+
+function updatePersonalityFromWs(d) {
+    document.getElementById('p-mood').textContent = Math.round(d.mood * 100) + '%';
+    document.getElementById('p-face').textContent = d.face;
+    document.getElementById('p-xp').textContent = d.xp;
+    document.getElementById('p-level').textContent = d.level;
+    document.getElementById('p-blind').textContent = d.blind_epochs;
+    document.getElementById('mood-bar').style.width = Math.round(d.mood * 100) + '%';
+    var moodColor = d.mood > 0.7 ? '#00d4aa' : (d.mood > 0.3 ? '#f0c040' : '#e94560');
+    document.getElementById('mood-bar').style.background = moodColor;
+}
+
+function updateSystemFromWs(d) {
+    document.getElementById('sys-temp').textContent = d.cpu_temp_c > 0 ? d.cpu_temp_c.toFixed(1) + '\u00B0C' : '-';
+    document.getElementById('sys-temp').style.color = d.cpu_temp_c > 70 ? '#e94560' : (d.cpu_temp_c > 55 ? '#f0c040' : '#00d4aa');
+    document.getElementById('sys-cpu').textContent = d.cpu_percent > 0 ? d.cpu_percent.toFixed(0) + '%' : '-';
+    document.getElementById('sys-mem').textContent = d.mem_total_mb > 0 ? d.mem_used_mb + '/' + d.mem_total_mb + ' MB' : '-';
+    document.getElementById('sys-disk').textContent = d.disk_total_mb > 0 ? d.disk_used_mb + '/' + d.disk_total_mb + ' MB' : '-';
+}
+
+function updateCrackedFromWs(list) {
+    var el = document.getElementById('cracked-list');
+    if (!list || !list.length) {
+        el.innerHTML = '<div style="color:#555;font-size:12px">No cracked passwords yet</div>';
+        return;
+    }
+    el.innerHTML = list.map(function(c) {
+        return '<div style="padding:4px 0;border-bottom:1px solid #0f346022">' +
+            '<span style="color:#00d4aa;font-weight:bold">' + esc(c.ssid || c.bssid) + '</span>' +
+            (c.bssid ? ' <span style="color:#666;font-size:10px">[' + esc(c.bssid) + ']</span>' : '') +
+            '<br><span style="color:#f0c040;font-family:monospace;font-size:12px">' + esc(c.password) + '</span></div>';
+    }).join('');
+}
+
+function updateApsFromWs(aps) {
+    var el = document.getElementById('ap-tbody');
+    if (!aps || !aps.length) {
+        el.innerHTML = '<tr><td colspan="6" style="color:#555">No APs detected</td></tr>';
+        return;
+    }
+    aps.sort(function(a,b){ return b.rssi - a.rssi; });
+    el.innerHTML = aps.map(function(ap) {
+        var rssiColor = ap.rssi > -50 ? '#00d4aa' : (ap.rssi > -70 ? '#f0c040' : '#e94560');
+        var hsIcon = ap.has_handshake ? '<span style="color:#00d4aa" title="Handshake captured">&#9734;</span>' : '';
+        return '<tr><td>' + esc(ap.ssid || '<hidden>') + '</td>' +
+            '<td style="color:#888;font-size:10px">' + esc(ap.bssid) + '</td>' +
+            '<td style="color:' + rssiColor + '">' + ap.rssi + '</td>' +
+            '<td>' + ap.channel + '</td>' +
+            '<td>' + ap.clients + '</td>' +
+            '<td>' + hsIcon + '</td></tr>';
+    }).join('');
+}
+
+function updateWhitelistFromWs(entries) {
+    var el = document.getElementById('wl-list');
+    if (!entries || !entries.length) {
+        el.innerHTML = '<div style="color:#555;font-size:12px">No whitelist entries</div>';
+        return;
+    }
+    var html = '<table class="ap-table"><thead><tr><th>Value</th><th>Type</th><th></th></tr></thead><tbody>';
+    entries.forEach(function(e) {
+        html += '<tr><td>' + esc(e.value) + '</td><td>' + esc(e.entry_type) + '</td>' +
+            '<td><button class="wl-btn-rm" onclick="removeWhitelist(\'' + esc(e.value) + '\')">Remove</button></td></tr>';
+    });
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+
+function updatePluginsFromWs(plugins) {
+    if (!plugins) return;
+    var html = '';
+    plugins.forEach(function(p) {
+        var tagColor = p.tag === 'default' ? '#00d4aa' : '#f0c040';
+        html += '<div class="toggle-row">' +
+            '<div class="toggle-info">' +
+            '<div class="toggle-label">' + esc(p.name) +
+            ' <span style="color:' + tagColor + ';font-size:10px;padding:1px 6px;border:1px solid ' + tagColor + ';border-radius:8px;margin-left:6px">' + esc(p.tag) + '</span>' +
+            ' <span style="color:#666;font-size:10px;margin-left:4px">v' + esc(p.version) + '</span></div>' +
+            '<div class="toggle-desc" style="margin-top:4px">' +
+            'x: <input type="number" min="0" max="249" value="' + p.x + '" style="width:48px;background:#0a1628;color:#e0e0e0;border:1px solid #0f3460;border-radius:4px;padding:2px 4px;font-size:11px" onchange="updatePlugin(\'' + esc(p.name) + '\',this.parentNode)">' +
+            ' y: <input type="number" min="0" max="121" value="' + p.y + '" style="width:48px;background:#0a1628;color:#e0e0e0;border:1px solid #0f3460;border-radius:4px;padding:2px 4px;font-size:11px" onchange="updatePlugin(\'' + esc(p.name) + '\',this.parentNode)">' +
+            '</div></div>' +
+            '<label class="switch"><input type="checkbox" ' + (p.enabled ? 'checked' : '') + ' onchange="togglePlugin(\'' + esc(p.name) + '\',this.checked)"><span class="slider"></span></label>' +
+            '</div>';
+    });
+    document.getElementById('plugins-list').innerHTML = html || '<div style="color:#555;font-size:12px">No plugins loaded</div>';
+}
+
+function updateAllCards(state) {
+    if (state.epoch !== undefined) updateStatusFromWs(state);
+    if (state.battery) updateBatteryFromWs(state.battery);
+    if (state.bluetooth) updateBluetoothFromWs(state.bluetooth);
+    if (state.wifi) updateWifiFromWs(state.wifi);
+    if (state.attacks) updateAttacksFromWs(state.attacks);
+    if (state.captures) updateCapturesFromWs(state.captures);
+    if (state.recovery && state.health) updateRecoveryFromWs(state.recovery, state.health);
+    if (state.personality) updatePersonalityFromWs(state.personality);
+    if (state.system) updateSystemFromWs(state.system);
+    if (state.cracked) updateCrackedFromWs(state.cracked);
+    if (state.aps) updateApsFromWs(state.aps);
+    if (state.whitelist) updateWhitelistFromWs(state.whitelist);
+    if (state.plugins) updatePluginsFromWs(state.plugins);
+}
+
+function startPolling() {
+    if (_pollTimers.length > 0) return; // already polling
+    _pollTimers.push(setInterval(refreshStatus, 5000));
+    _pollTimers.push(setInterval(refreshBattery, 15000));
+    _pollTimers.push(setInterval(refreshBluetooth, 15000));
+    _pollTimers.push(setInterval(refreshWifi, 5000));
+    _pollTimers.push(setInterval(refreshAttacks, 10000));
+    _pollTimers.push(setInterval(refreshCaptures, 30000));
+    _pollTimers.push(setInterval(refreshRecovery, 15000));
+    _pollTimers.push(setInterval(refreshPersonality, 10000));
+    _pollTimers.push(setInterval(refreshSystem, 15000));
+    _pollTimers.push(setInterval(refreshCracked, 60000));
+    _pollTimers.push(setInterval(refreshPlugins, 15000));
+    _pollTimers.push(setInterval(refreshAps, 10000));
+    _pollTimers.push(setInterval(refreshWhitelist, 30000));
+    _pollTimers.push(setInterval(refreshLogs, 10000));
+    _pollTimers.push(setInterval(refreshWpaSec, 30000));
+    _pollTimers.push(setInterval(refreshDiscord, 30000));
+}
+
+function stopPolling() {
+    _pollTimers.forEach(function(t) { clearInterval(t); });
+    _pollTimers = [];
+}
+
+function connectWebSocket() {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    _ws = new WebSocket(proto + '//' + location.host + '/ws');
+
+    _ws.onopen = function() {
+        _wsConnected = true;
+        stopPolling();
+    };
+
+    _ws.onmessage = function(event) {
+        try {
+            var state = JSON.parse(event.data);
+            updateAllCards(state);
+        } catch(e) {
+            console.error('WS parse error:', e);
+        }
+    };
+
+    _ws.onclose = function() {
+        _wsConnected = false;
+        // Fallback to polling, retry WS after 3s
+        startPolling();
+        setTimeout(connectWebSocket, 3000);
+    };
+
+    _ws.onerror = function() {
+        // onclose will fire after onerror
+    };
+}
+
+// --- Initial load ---
 renderChannelButtons([1, 6, 11]); // default until refreshWifi populates
+// Do one immediate fetch of all cards to populate before WS connects
 refreshStatus();
 setTimeout(refreshBattery, 500);
 setTimeout(refreshBluetooth, 1000);
@@ -979,22 +1249,11 @@ setTimeout(refreshWhitelist, 6000);
 setTimeout(refreshWpaSec, 6500);
 setTimeout(refreshDiscord, 7000);
 
-setInterval(refreshStatus, 5000);
-setInterval(refreshBattery, 15000);
-setInterval(refreshBluetooth, 15000);
-setInterval(refreshWifi, 5000);
-setInterval(refreshAttacks, 10000);
-setInterval(refreshCaptures, 30000);
-setInterval(refreshRecovery, 15000);
-setInterval(refreshPersonality, 10000);
-setInterval(refreshSystem, 15000);
-setInterval(refreshCracked, 60000);
-setInterval(refreshPlugins, 15000);
-setInterval(refreshAps, 10000);
-setInterval(refreshWhitelist, 30000);
-setInterval(refreshLogs, 10000);
-setInterval(refreshWpaSec, 30000);
-setInterval(refreshDiscord, 30000);
+// Start polling as initial strategy; WS will take over once connected
+startPolling();
+// Connect WebSocket for live updates
+connectWebSocket();
+// Display image stays on its own interval (binary, not suitable for WS)
 setInterval(function(){ document.getElementById('eink-img').src='/api/display.png?t='+Date.now(); }, 5000);
 </script>
 </body>
