@@ -101,7 +101,7 @@ class TestBinary:
         assert rc == 0
 
     def test_binary_running(self):
-        out, rc = ssh_cmd("pgrep -x rusty-oxigotch")
+        out, rc = ssh_cmd("pgrep -f rusty-oxigotchi")
         assert rc == 0
         assert int(out.split('\n')[0]) > 0
 
@@ -121,24 +121,25 @@ class TestWebAPI:
             assert resp.status == 200
 
     def test_api_state_returns_json(self):
-        state = api_get("/api/state")
+        state = api_get("/api/status")
         assert "epoch" in state
         assert "mode" in state
 
-    def test_api_state_has_required_fields(self):
-        state = api_get("/api/state")
+    def test_api_status_has_required_fields(self):
+        state = api_get("/api/status")
         required = [
             "epoch", "mode", "channel", "aps_seen", "handshakes",
-            "battery_level", "mood", "uptime_secs", "ao_state",
+            "mood", "face", "name", "version", "uptime",
         ]
         for field in required:
             assert field in state, f"Missing field: {field}"
 
-    def test_api_state_types(self):
-        state = api_get("/api/state")
+    def test_api_status_types(self):
+        state = api_get("/api/status")
         assert isinstance(state["epoch"], int)
         assert isinstance(state["mood"], (int, float))
         assert isinstance(state["mode"], str)
+        assert isinstance(state["name"], str)
 
 
 # ── Plugins ────────────────────────────────────────────────────────────
