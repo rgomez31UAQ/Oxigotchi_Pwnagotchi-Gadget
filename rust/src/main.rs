@@ -1352,6 +1352,8 @@ impl Daemon {
         s.handshake_files = self.captures.handshake_count();
         s.pending_upload = self.captures.pending_upload_count();
         s.total_capture_size = self.captures.total_size();
+        s.session_captures = self.ao.session_captures();
+        s.session_handshakes = self.ao.session_handshakes();
         s.capture_list = self.captures.files.iter().map(|f| {
             web::CaptureEntry {
                 filename: f.path.file_name()
@@ -1789,6 +1791,8 @@ impl Daemon {
             handshake_files: self.captures.handshake_count(),
             pending_upload: self.captures.pending_upload_count(),
             total_size_bytes: self.captures.total_size(),
+            session_captures: self.ao.session_captures(),
+            session_handshakes: self.ao.session_handshakes(),
             files: vec![],
         }
     }

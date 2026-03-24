@@ -63,6 +63,10 @@ pub struct DaemonState {
     pub pending_upload: usize,
     pub total_capture_size: u64,
     pub capture_list: Vec<CaptureEntry>,
+    /// Session captures: pcapng files created by AO in tmpfs this session.
+    pub session_captures: u32,
+    /// Session handshakes: validated captures moved to SD this session.
+    pub session_handshakes: u32,
 
     // -- battery --
     pub battery_level: u8,
@@ -203,6 +207,8 @@ impl DaemonState {
             pending_upload: 0,
             total_capture_size: 0,
             capture_list: Vec::new(),
+            session_captures: 0,
+            session_handshakes: 0,
             battery_level: 100,
             battery_charging: false,
             battery_voltage_mv: 4200,
@@ -454,6 +460,8 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
             handshake_files: s.handshake_files,
             pending_upload: s.pending_upload,
             total_size_bytes: s.total_capture_size,
+            session_captures: s.session_captures,
+            session_handshakes: s.session_handshakes,
             files: s.capture_list.clone(),
         },
         cracked: s.cracked.clone(),
@@ -539,6 +547,8 @@ pub struct CaptureInfo {
     pub handshake_files: usize,
     pub pending_upload: usize,
     pub total_size_bytes: u64,
+    pub session_captures: u32,
+    pub session_handshakes: u32,
     pub files: Vec<CaptureEntry>,
 }
 
@@ -987,6 +997,8 @@ async fn captures_handler(State(state): State<SharedState>) -> Json<CaptureInfo>
         handshake_files: s.handshake_files,
         pending_upload: s.pending_upload,
         total_size_bytes: s.total_capture_size,
+        session_captures: s.session_captures,
+        session_handshakes: s.session_handshakes,
         files: s.capture_list.clone(),
     })
 }
@@ -2023,7 +2035,9 @@ mod tests {
     fn test_capture_info_serialize() {
         let info = CaptureInfo {
             total_files: 10, handshake_files: 3,
-            pending_upload: 2, total_size_bytes: 1024000, files: vec![],
+            pending_upload: 2, total_size_bytes: 1024000,
+            session_captures: 5, session_handshakes: 2,
+            files: vec![],
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"handshake_files\":3"));
