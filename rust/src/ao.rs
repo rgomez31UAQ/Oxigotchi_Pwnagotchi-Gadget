@@ -246,7 +246,7 @@ impl AoManager {
                                 ao_stdout_reader(stdout, ap_count, channel, shutdown, ap_list);
                             })
                         {
-                            error!("failed to spawn AO stdout reader: {e}");
+                            error!("failed to spawn AO stderr reader: {e}");
                         }
                     }
 
