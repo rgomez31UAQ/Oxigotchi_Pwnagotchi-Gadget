@@ -8,14 +8,18 @@
 //! Hunting, Loot, Connectivity, Status, Management) with vanilla JS auto-refresh.
 
 use axum::{
-    extract::{State, Path as AxumPath},
-    response::{Html, Json},
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        FromRef, State, Path as AxumPath,
+    },
+    response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::broadcast;
 
 mod html;
 use html::DASHBOARD_HTML;
@@ -267,6 +271,202 @@ impl DaemonState {
 
 /// Shared state type used by axum handlers.
 pub type SharedState = Arc<Mutex<DaemonState>>;
+
+/// Combined axum state: daemon shared state + WebSocket broadcast sender.
+#[derive(Clone)]
+pub struct AppState {
+    pub shared: SharedState,
+    pub ws_tx: broadcast::Sender<String>,
+}
+
+impl FromRef<AppState> for SharedState {
+    fn from_ref(app: &AppState) -> Self {
+        app.shared.clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket full-state snapshot (all dashboard data in one JSON push)
+// ---------------------------------------------------------------------------
+
+/// Combined snapshot of all dashboard-visible state, broadcast over WebSocket.
+/// Field names intentionally match the individual REST API responses so the
+/// frontend `updateAllCards()` can consume the same keys.
+#[derive(Debug, Clone, Serialize)]
+struct WsSnapshot {
+    // -- status --
+    name: String,
+    version: String,
+    uptime: String,
+    epoch: u64,
+    channel: u8,
+    aps_seen: u32,
+    handshakes: u32,
+    blind_epochs: u32,
+    mood: f32,
+    face: String,
+    status_message: String,
+    mode: String,
+    // -- battery --
+    battery: BatteryInfo,
+    // -- attacks --
+    attacks: AttackStats,
+    // -- wifi --
+    wifi: WifiInfo,
+    // -- bluetooth --
+    bluetooth: BluetoothInfo,
+    // -- personality --
+    personality: PersonalityInfo,
+    // -- system --
+    system: SystemInfoSnapshot,
+    // -- recovery + health --
+    recovery: RecoveryInfo,
+    health: HealthResponse,
+    // -- captures --
+    captures: CaptureInfo,
+    // -- cracked --
+    cracked: Vec<CrackedEntry>,
+    // -- aps --
+    aps: Vec<ApEntry>,
+    // -- whitelist --
+    whitelist: Vec<WhitelistEntry>,
+    // -- plugins --
+    plugins: Vec<PluginInfo>,
+    // -- radio --
+    radio: RadioResponse,
+}
+
+/// System info snapshot for WS (uses cached values, not live reads).
+#[derive(Debug, Clone, Serialize)]
+struct SystemInfoSnapshot {
+    cpu_temp_c: f32,
+    mem_used_mb: u32,
+    mem_total_mb: u32,
+    disk_used_mb: u32,
+    disk_total_mb: u32,
+    cpu_percent: f32,
+    uptime_secs: u64,
+}
+
+/// Build a full WsSnapshot from the current DaemonState.
+fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
+    WsSnapshot {
+        name: s.name.clone(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime: s.uptime_str.clone(),
+        epoch: s.epoch,
+        channel: s.channel,
+        aps_seen: s.aps_seen,
+        handshakes: s.handshakes,
+        blind_epochs: s.blind_epochs,
+        mood: s.mood,
+        face: s.face.clone(),
+        status_message: s.status_message.clone(),
+        mode: s.mode.clone(),
+        battery: BatteryInfo {
+            level: s.battery_level,
+            charging: s.battery_charging,
+            voltage_mv: s.battery_voltage_mv,
+            low: s.battery_low,
+            critical: s.battery_critical,
+            available: s.battery_available,
+        },
+        attacks: AttackStats {
+            total_attacks: s.total_attacks,
+            total_handshakes: s.total_handshakes_attacks,
+            attack_rate: s.attack_rate,
+            deauths_this_epoch: s.deauths_this_epoch,
+            deauth: s.attack_deauth,
+            pmkid: s.attack_pmkid,
+            csa: s.attack_csa,
+            disassoc: s.attack_disassoc,
+            anon_reassoc: s.attack_anon_reassoc,
+            rogue_m2: s.attack_rogue_m2,
+        },
+        wifi: WifiInfo {
+            state: s.wifi_state.clone(),
+            channel: s.channel,
+            aps_tracked: s.wifi_aps_tracked,
+            channels: s.wifi_channels.clone(),
+            dwell_ms: s.wifi_dwell_ms,
+            autohunt_enabled: s.autohunt_enabled,
+        },
+        bluetooth: BluetoothInfo {
+            connected: s.bt_connected,
+            state: s.bt_state.clone(),
+            device_name: s.bt_device_name.clone(),
+            ip: s.bt_ip.clone(),
+            phone_mac: s.bt_phone_mac.clone(),
+            internet_available: s.bt_internet_available,
+            retry_count: s.bt_retry_count,
+        },
+        personality: PersonalityInfo {
+            mood: s.mood,
+            face: s.face.clone(),
+            blind_epochs: s.blind_epochs,
+            total_handshakes: s.handshakes,
+            total_aps_seen: s.aps_seen,
+            xp: s.xp,
+            level: s.level,
+        },
+        system: SystemInfoSnapshot {
+            cpu_temp_c: s.cpu_temp_c,
+            mem_used_mb: s.mem_used_mb,
+            mem_total_mb: s.mem_total_mb,
+            disk_used_mb: s.disk_used_mb,
+            disk_total_mb: s.disk_total_mb,
+            cpu_percent: s.cpu_percent,
+            uptime_secs: s.boot_time.elapsed().as_secs(),
+        },
+        recovery: RecoveryInfo {
+            state: s.recovery_state.clone(),
+            total_recoveries: s.recovery_total,
+            soft_retries: s.recovery_soft_retries,
+            hard_retries: s.recovery_hard_retries,
+            last_recovery: s.recovery_last_str.clone(),
+            diagnostic_count: 0,
+        },
+        health: HealthResponse {
+            wifi_state: s.wifi_state.clone(),
+            battery_level: s.battery_level,
+            battery_charging: s.battery_charging,
+            battery_available: s.battery_available,
+            uptime_secs: s.boot_time.elapsed().as_secs(),
+            ao_state: s.ao_state.clone(),
+            ao_pid: s.ao_pid,
+            ao_crash_count: s.ao_crash_count,
+            ao_uptime: s.ao_uptime.clone(),
+            gpsd_available: s.gpsd_available,
+        },
+        captures: CaptureInfo {
+            total_files: s.capture_files,
+            handshake_files: s.handshake_files,
+            pending_upload: s.pending_upload,
+            total_size_bytes: s.total_capture_size,
+            files: s.capture_list.clone(),
+        },
+        cracked: s.cracked.clone(),
+        aps: s.ap_list.clone(),
+        whitelist: s.whitelist.clone(),
+        plugins: s.plugin_list.clone(),
+        radio: RadioResponse {
+            mode: s.radio_mode.clone(),
+            pid: s.radio_pid,
+            owner: "daemon".into(),
+        },
+    }
+}
+
+/// Broadcast the current state to all connected WebSocket clients.
+/// Called by the daemon after each `sync_to_web()`.
+pub fn broadcast_state(shared: &SharedState, ws_tx: &broadcast::Sender<String>) {
+    let s = shared.lock().unwrap();
+    let snapshot = build_ws_snapshot(&s);
+    drop(s); // release mutex before serializing
+    if let Ok(json) = serde_json::to_string(&snapshot) {
+        let _ = ws_tx.send(json); // ignore error if no subscribers
+    }
+}
 
 // ---------------------------------------------------------------------------
 // API response types
@@ -1445,11 +1645,71 @@ async fn download_zip_handler(State(state): State<SharedState>) -> axum::respons
 }
 
 // ---------------------------------------------------------------------------
+// WebSocket handler
+// ---------------------------------------------------------------------------
+
+/// GET /ws -> WebSocket upgrade for live state push.
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(app): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws(socket, app.ws_tx.subscribe()))
+}
+
+/// Handle a single WebSocket connection: forward broadcast messages to the client.
+async fn handle_ws(mut socket: WebSocket, mut rx: broadcast::Receiver<String>) {
+    loop {
+        tokio::select! {
+            // Server push: broadcast state to client
+            result = rx.recv() => {
+                match result {
+                    Ok(json) => {
+                        if socket.send(Message::Text(json)).await.is_err() {
+                            break; // client disconnected
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        log::debug!("ws client lagged by {n} messages");
+                        // continue — next recv() will get the latest
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            // Client message (ping/pong or close)
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(data))) => {
+                        if socket.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    _ => {} // ignore other messages
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+/// Create a broadcast channel for WebSocket live updates.
+/// Returns the sender (for the daemon to broadcast) and a receiver (dropped immediately).
+/// The sender is passed to `build_router` and stored by the daemon.
+pub fn create_ws_broadcast() -> broadcast::Sender<String> {
+    let (tx, _) = broadcast::channel::<String>(16);
+    tx
+}
 
 /// Build the axum router with all routes, sharing daemon state.
-pub fn build_router(state: SharedState) -> Router {
+pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Router {
+    let app = AppState {
+        shared: state,
+        ws_tx,
+    };
     Router::new()
         .route("/", get(dashboard_handler))
+        .route("/ws", get(ws_handler))
         .route(API_STATUS, get(status_handler))
         .route(API_CAPTURES, get(captures_handler))
         .route(API_HEALTH, get(health_handler))
@@ -1484,13 +1744,13 @@ pub fn build_router(state: SharedState) -> Router {
         .route(API_BT_SCAN, get(bt_scan_results_handler).post(bt_scan_handler))
         .route(API_BT_PAIR, post(bt_pair_handler))
         .route(API_RADIO, get(radio_get_handler).post(radio_post_handler))
-        .with_state(state)
+        .with_state(app)
 }
 
 /// Start the axum web server on 0.0.0.0:8080.
 /// This function is async and should be spawned as a tokio task.
-pub async fn start_server(state: SharedState) {
-    let app = build_router(state);
+pub async fn start_server(state: SharedState, ws_tx: broadcast::Sender<String>) {
+    let app = build_router(state, ws_tx);
     let listener = match tokio::net::TcpListener::bind("0.0.0.0:8080").await {
         Ok(l) => l,
         Err(e) => {
@@ -1523,7 +1783,8 @@ mod tests {
     /// Helper: build the router with test state.
     fn test_router() -> (Router, SharedState) {
         let state = test_state();
-        let router = build_router(state.clone());
+        let ws_tx = create_ws_broadcast();
+        let router = build_router(state.clone(), ws_tx);
         (router, state)
     }
 
@@ -1805,7 +2066,8 @@ mod tests {
     #[test]
     fn test_build_router_compiles() {
         let state = test_state();
-        let _router = build_router(state);
+        let ws_tx = create_ws_broadcast();
+        let _router = build_router(state, ws_tx);
     }
 
     // === Dashboard HTML tests ===
@@ -2277,7 +2539,8 @@ mod tests {
     #[tokio::test]
     async fn test_download_zip_endpoint_exists() {
         let state = test_state();
-        let router = build_router(state);
+        let ws_tx = create_ws_broadcast();
+        let router = build_router(state, ws_tx);
         let (status, _body) = get(&router, "/api/download/all").await;
         // get() returns (u16, String); 200 = OK with empty zip for nonexistent capture dir
         assert_eq!(status, 200);

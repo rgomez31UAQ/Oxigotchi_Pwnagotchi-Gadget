@@ -10,6 +10,7 @@ mod capture;
 mod config;
 mod display;
 mod epoch;
+mod firmware;
 mod personality;
 mod pisugar;
 mod network;
@@ -89,6 +90,7 @@ struct Daemon {
     radio: radio::RadioManager,
     mode: OperatingMode,
     shared_state: web::SharedState,
+    ws_tx: tokio::sync::broadcast::Sender<String>,
     prev_cpu_sample: Option<personality::CpuSample>,
     lua: lua::PluginRuntime,
     wpasec_config: capture::WpaSecConfig,
@@ -102,7 +104,7 @@ struct Daemon {
 }
 
 impl Daemon {
-    fn new(config: config::Config, shared_state: web::SharedState) -> Self {
+    fn new(config: config::Config, shared_state: web::SharedState, ws_tx: tokio::sync::broadcast::Sender<String>) -> Self {
         let screen = display::Screen::new(config.display.clone());
         let epoch_loop = epoch::EpochLoop::new(Duration::from_secs(EPOCH_DURATION_SECS));
         let wifi = wifi::WifiManager::new();
@@ -147,6 +149,7 @@ impl Daemon {
             radio: radio::RadioManager::new(),
             mode: OperatingMode::Rage,
             shared_state,
+            ws_tx,
             prev_cpu_sample: None,
             lua: lua::PluginRuntime::new(),
             wpasec_config: capture::WpaSecConfig::default(),
@@ -299,6 +302,7 @@ impl Daemon {
 
         // Initial state sync to web
         self.sync_to_web();
+        web::broadcast_state(&self.shared_state, &self.ws_tx);
     }
 
     /// Run one full epoch: Scan -> Attack -> Capture -> Display -> Sleep.
@@ -380,6 +384,7 @@ impl Daemon {
 
         // ---- Sync state to web ----
         self.sync_to_web();
+        web::broadcast_state(&self.shared_state, &self.ws_tx);
 
         // ---- Sleep + watchdog ----
         self.epoch_loop.next_phase(); // -> Sleep
@@ -1042,6 +1047,7 @@ impl Daemon {
             level: self.epoch_loop.personality.xp.level,
             xp: self.epoch_loop.personality.xp.xp,
             status_message: self.epoch_loop.personality.status_msg(),
+            epoch_phase_status: self.epoch_loop.status_message(),
             cpu_temp: si.cpu_temp_c,
             mem_used_mb: si.mem_used_mb,
             mem_total_mb: si.mem_total_mb,
@@ -1703,14 +1709,18 @@ async fn main() {
     // Create shared state for web server <-> daemon communication
     let shared_state = Arc::new(Mutex::new(web::DaemonState::new(&config.name)));
 
+    // Create WebSocket broadcast channel for live dashboard updates
+    let ws_tx = web::create_ws_broadcast();
+
     // Start web server in a tokio task
     let web_state = shared_state.clone();
+    let web_ws_tx = ws_tx.clone();
     tokio::spawn(async move {
-        web::start_server(web_state).await;
+        web::start_server(web_state, web_ws_tx).await;
     });
 
     // Run the daemon main loop in a blocking thread (it uses std::thread::sleep)
-    let mut daemon = Daemon::new(config, shared_state);
+    let mut daemon = Daemon::new(config, shared_state, ws_tx);
     tokio::task::spawn_blocking(move || {
         daemon.boot();
         info!("entering main epoch loop");
@@ -1729,7 +1739,8 @@ mod tests {
     fn make_daemon() -> Daemon {
         let config = config::Config::defaults();
         let shared_state = Arc::new(Mutex::new(web::DaemonState::new(&config.name)));
-        Daemon::new(config, shared_state)
+        let ws_tx = web::create_ws_broadcast();
+        Daemon::new(config, shared_state, ws_tx)
     }
 
     #[test]
