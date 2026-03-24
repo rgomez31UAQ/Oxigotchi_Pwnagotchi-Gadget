@@ -968,6 +968,134 @@ pub fn freq_to_channel(freq: u16) -> Option<u8> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// Adaptive Channel Scorer
+// ---------------------------------------------------------------------------
+
+/// Per-channel statistics for adaptive channel selection.
+#[derive(Debug, Clone)]
+pub struct ChannelStats {
+    /// Number of APs seen on this channel this epoch.
+    pub ap_count: u32,
+    /// Sum of RSSI values (for averaging).
+    pub total_rssi: i64,
+    /// Total clients across all APs on this channel.
+    pub client_count: u32,
+    /// Number of handshake/PMKID captures on this channel.
+    pub captures: u32,
+    /// How many epochs since we last visited this channel.
+    pub epochs_since_visit: u32,
+}
+
+impl Default for ChannelStats {
+    fn default() -> Self {
+        Self {
+            ap_count: 0,
+            total_rssi: 0,
+            client_count: 0,
+            captures: 0,
+            epochs_since_visit: 0,
+        }
+    }
+}
+
+impl ChannelStats {
+    /// Compute a weighted score for this channel.
+    ///
+    /// Weights: AP density 0.35, RSSI 0.2, clients 0.2, captures 0.15, curiosity 0.1.
+    fn score(&self) -> f64 {
+        let ap_score = (self.ap_count as f64).min(10.0) / 10.0;
+        let rssi_score = if self.ap_count > 0 {
+            let avg = (self.total_rssi / self.ap_count as i64) as f64;
+            ((avg + 100.0) / 60.0).clamp(0.0, 1.0) // -100dBm=0, -40dBm=1
+        } else {
+            0.0
+        };
+        let client_score = (self.client_count as f64).min(20.0) / 20.0;
+        let capture_score = (self.captures as f64).min(5.0) / 5.0;
+        let curiosity = (self.epochs_since_visit as f64).min(30.0) / 30.0;
+
+        ap_score * 0.35 + rssi_score * 0.2 + client_score * 0.2
+            + capture_score * 0.15 + curiosity * 0.1
+    }
+}
+
+/// Scores WiFi channels 1-13 by AP density, RSSI, client count, capture history,
+/// and a curiosity bonus for unvisited channels. Used to auto-select the most
+/// productive channels when autohunt is enabled.
+pub struct ChannelScorer {
+    /// Per-channel stats. Index 0 is unused; channels 1-13 map to indices 1-13.
+    stats: [ChannelStats; 14],
+    /// How many top channels to return from `top_channels()`.
+    top_n: usize,
+}
+
+impl ChannelScorer {
+    /// Create a new scorer that selects the top `top_n` channels.
+    pub fn new(top_n: usize) -> Self {
+        Self {
+            stats: std::array::from_fn(|_| ChannelStats::default()),
+            top_n,
+        }
+    }
+
+    /// Record an AP observation on a given channel.
+    pub fn record_ap(&mut self, channel: u8, rssi: i8, clients: u32) {
+        if (1..=13).contains(&channel) {
+            let s = &mut self.stats[channel as usize];
+            s.ap_count += 1;
+            s.total_rssi += rssi as i64;
+            s.client_count += clients;
+        }
+    }
+
+    /// Record a handshake/PMKID capture on a channel.
+    pub fn record_capture(&mut self, channel: u8) {
+        if (1..=13).contains(&channel) {
+            self.stats[channel as usize].captures += 1;
+        }
+    }
+
+    /// Mark a channel as visited this epoch (resets its curiosity counter).
+    pub fn mark_visited(&mut self, channel: u8) {
+        if (1..=13).contains(&channel) {
+            self.stats[channel as usize].epochs_since_visit = 0;
+        }
+    }
+
+    /// Advance the epoch: increment epochs_since_visit for all channels.
+    pub fn tick_epoch(&mut self) {
+        for ch in 1..=13 {
+            self.stats[ch].epochs_since_visit += 1;
+        }
+    }
+
+    /// Reset per-epoch AP/client counters (call at epoch start before feeding new data).
+    pub fn reset_epoch_counts(&mut self) {
+        for ch in 1..=13 {
+            self.stats[ch].ap_count = 0;
+            self.stats[ch].total_rssi = 0;
+            self.stats[ch].client_count = 0;
+        }
+    }
+
+    /// Return the top N channels sorted by score (highest first).
+    pub fn top_channels(&self) -> Vec<u8> {
+        let mut scored: Vec<(u8, f64)> = (1..=13u8)
+            .map(|ch| (ch, self.stats[ch as usize].score()))
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        scored.iter().take(self.top_n).map(|(ch, _)| *ch).collect()
+    }
+
+    /// Get scores for all channels 1-13 (for web dashboard display).
+    pub fn all_scores(&self) -> Vec<(u8, f64)> {
+        (1..=13u8)
+            .map(|ch| (ch, self.stats[ch as usize].score()))
+            .collect()
+    }
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -1758,5 +1886,96 @@ mod tests {
     fn test_total_clients_empty() {
         let tracker = ApTracker::new();
         assert_eq!(tracker.total_clients(), 0);
+    }
+
+    // ---- Channel scorer tests ----
+
+    #[test]
+    fn test_channel_scorer_selects_best_channels() {
+        let mut scorer = ChannelScorer::new(3);
+        scorer.record_ap(1, -40, 5);   // ch1: strong AP, 5 clients
+        scorer.record_ap(6, -70, 1);   // ch6: weak AP, 1 client
+        scorer.record_ap(11, -50, 3);  // ch11: medium AP, 3 clients
+        scorer.record_ap(1, -45, 2);   // ch1: another AP
+        scorer.record_capture(1);       // ch1: got a handshake
+
+        let best = scorer.top_channels();
+        assert_eq!(best[0], 1); // ch1 should be #1 (most APs, capture bonus)
+    }
+
+    #[test]
+    fn test_channel_scorer_curiosity_bonus() {
+        let mut scorer = ChannelScorer::new(3);
+        scorer.record_ap(1, -40, 5);
+        scorer.record_ap(6, -40, 5);
+        // Mark all channels except 11 as visited each epoch.
+        // This gives ch11 maximum curiosity while the others reset each tick.
+        for _ in 0..30 {
+            for ch in 1..=13u8 {
+                if ch != 11 {
+                    scorer.mark_visited(ch);
+                }
+            }
+            scorer.tick_epoch();
+        }
+        let best = scorer.top_channels();
+        // ch11 should appear due to curiosity (30 epochs unvisited = max curiosity)
+        assert!(best.contains(&11),
+            "ch11 should be in top 3 due to curiosity bonus, got {:?}", best);
+    }
+
+    #[test]
+    fn test_channel_scorer_all_scores_returns_13() {
+        let scorer = ChannelScorer::new(3);
+        let scores = scorer.all_scores();
+        assert_eq!(scores.len(), 13);
+        // All channels should have score 0.0 with no data
+        for (ch, score) in &scores {
+            assert!(*ch >= 1 && *ch <= 13);
+            assert_eq!(*score, 0.0, "empty channel {ch} should have 0 score");
+        }
+    }
+
+    #[test]
+    fn test_channel_scorer_reset_epoch_counts() {
+        let mut scorer = ChannelScorer::new(3);
+        scorer.record_ap(1, -40, 5);
+        scorer.record_ap(6, -70, 1);
+        scorer.reset_epoch_counts();
+        // After reset, AP-related scores should be zero (captures + curiosity remain)
+        let s1 = scorer.stats[1].ap_count;
+        let s6 = scorer.stats[6].ap_count;
+        assert_eq!(s1, 0);
+        assert_eq!(s6, 0);
+    }
+
+    #[test]
+    fn test_channel_scorer_out_of_range_ignored() {
+        let mut scorer = ChannelScorer::new(3);
+        scorer.record_ap(0, -40, 5);   // out of range
+        scorer.record_ap(14, -40, 5);  // out of range
+        scorer.record_ap(255, -40, 5); // out of range
+        scorer.record_capture(0);
+        scorer.record_capture(14);
+        scorer.mark_visited(0);
+        scorer.mark_visited(14);
+        // All scores should still be zero
+        for (_, score) in scorer.all_scores() {
+            assert_eq!(score, 0.0);
+        }
+    }
+
+    #[test]
+    fn test_channel_scorer_capture_boosts_score() {
+        let mut scorer = ChannelScorer::new(3);
+        // Two channels with identical AP data
+        scorer.record_ap(1, -50, 3);
+        scorer.record_ap(6, -50, 3);
+        // But ch1 has a capture
+        scorer.record_capture(1);
+        let scores = scorer.all_scores();
+        let s1 = scores.iter().find(|(ch, _)| *ch == 1).unwrap().1;
+        let s6 = scores.iter().find(|(ch, _)| *ch == 6).unwrap().1;
+        assert!(s1 > s6, "channel with capture should score higher");
     }
 }
