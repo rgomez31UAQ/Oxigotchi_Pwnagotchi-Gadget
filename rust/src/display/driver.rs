@@ -610,8 +610,8 @@ pub fn flush_to_hardware(fb: &FrameBuffer, config: &DisplayConfig) -> Result<(),
     let start = Instant::now();
     match guard.as_mut() {
         None => {
-            // First call: full init + clear + base image (matches Python boot)
-            log::info!("display: first flush — init + clear + base (rotation={})", config.rotation);
+            // First call (or recovery): full init + clear + base image
+            log::info!("display: init + clear + base (rotation={})", config.rotation);
             let hal = RppalHal::new()?;
             let mut driver = Ssd1680Driver::new(hal, config.rotation);
             driver.init()?;
@@ -621,8 +621,12 @@ pub fn flush_to_hardware(fb: &FrameBuffer, config: &DisplayConfig) -> Result<(),
             *guard = Some(driver);
         }
         Some(driver) => {
-            // Partial refresh only — matches Python (never does full refresh after init)
-            driver.flush_partial(fb)?;
+            if let Err(e) = driver.flush_partial(fb) {
+                // BUSY timeout or SPI failure — drop driver, reinit next epoch
+                log::warn!("display: partial flush failed ({e}), will reinit next epoch");
+                *guard = None;
+                return Err(e);
+            }
             driver.partial_count += 1;
             if driver.partial_count % 50 == 0 {
                 log::info!("display: partial refresh #{} OK ({:.0}ms)", driver.partial_count, start.elapsed().as_millis());

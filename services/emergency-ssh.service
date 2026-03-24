@@ -1,0 +1,15 @@
+[Unit]
+Description=Emergency SSH
+After=network.target
+Wants=network.target
+Conflicts=ssh.service
+
+[Service]
+Type=simple
+ExecStartPre=/bin/bash -c "test -f /etc/ssh/ssh_host_ed25519_key || ssh-keygen -A"
+ExecStart=/usr/sbin/sshd -D -p 22 -o PasswordAuthentication=yes -o PermitRootLogin=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+[Unit]
+Description=NetworkManager and usb0 IP watchdog
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'systemctl is-active --quiet NetworkManager || systemctl start NetworkManager; ip addr show usb0 | grep -q 10.0.0.2 || ip addr add 10.0.0.2/24 dev usb0 2>/dev/null; ip link set usb0 up 2>/dev/null'

@@ -1,0 +1,8 @@
+[Unit]
+Description=Bluetooth Keep-Alive for Phone Tethering
+After=bluetooth.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/bt-keepalive.sh
+TimeoutStartSec=30

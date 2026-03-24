@@ -1,14 +1,19 @@
 [Unit]
 Description=Rusty Oxigotchi - WiFi capture daemon
-After=network.target wlan-keepalive.service
-Wants=wlan-keepalive.service
+After=network.target NetworkManager.service wlan-keepalive.service
+Wants=network.target wlan-keepalive.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/rusty-oxigotchi
-Environment=RUST_LOG=info
-Restart=always
+Restart=on-failure
 RestartSec=5
+Environment=RUST_LOG=info
+StandardOutput=journal
+StandardError=journal
+Nice=-5
 
 [Install]
 WantedBy=multi-user.target

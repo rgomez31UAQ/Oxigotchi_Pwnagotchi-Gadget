@@ -2,12 +2,12 @@
 Description=Oxigotchi Boot Splash
 DefaultDependencies=no
 Before=pwnagotchi.service
-After=local-fs.target sysinit.target epd-startup.service
+After=local-fs.target sysinit.target
 
 [Service]
 Type=oneshot
-ExecStart=/home/pi/.pwn/bin/python3 /usr/local/bin/oxagotchi-splash.py /etc/pwnagotchi/custom-plugins/faces/awake.png
-ExecStop=/home/pi/.pwn/bin/python3 /usr/local/bin/oxagotchi-splash.py /etc/pwnagotchi/custom-plugins/faces/shutdown.png
+ExecStart=/home/pi/.pwn/bin/python3 /usr/local/bin/oxigotchi-splash.py /etc/pwnagotchi/custom-plugins/faces/awake.png
+ExecStop=/home/pi/.pwn/bin/python3 /usr/local/bin/oxigotchi-splash.py /etc/pwnagotchi/custom-plugins/faces/shutdown.png
 RemainAfterExit=yes
 TimeoutStartSec=30
 TimeoutStopSec=30

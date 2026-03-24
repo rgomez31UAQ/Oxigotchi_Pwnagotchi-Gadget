@@ -1,0 +1,9 @@
+[Unit]
+Description=Check NetworkManager every 3 minutes
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=180
+
+[Install]
+WantedBy=timers.target

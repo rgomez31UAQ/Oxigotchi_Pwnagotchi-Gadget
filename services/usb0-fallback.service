@@ -1,0 +1,11 @@
+[Unit]
+Description=USB0 IP fallback
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/usb0-fallback.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

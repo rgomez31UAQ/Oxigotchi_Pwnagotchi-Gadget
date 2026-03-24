@@ -5,6 +5,7 @@ Wants=wlan-keepalive.service
 
 [Service]
 Type=simple
+ExecStartPre=/bin/sleep 30
 ExecStart=/usr/local/bin/wifi-watchdog.sh
 Restart=always
 RestartSec=5

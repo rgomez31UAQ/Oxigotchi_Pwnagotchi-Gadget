@@ -1,0 +1,14 @@
+[Unit]
+Description=Ensure usb0 has 10.0.0.2
+After=network-pre.target sys-subsystem-net-devices-usb0.device
+Wants=sys-subsystem-net-devices-usb0.device
+
+[Service]
+Type=oneshot
+ExecStart=-/sbin/ip addr add 10.0.0.2/24 dev usb0
+ExecStart=/sbin/ip link set usb0 up
+RemainAfterExit=yes
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
