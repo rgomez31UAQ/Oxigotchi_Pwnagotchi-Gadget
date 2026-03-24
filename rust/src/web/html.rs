@@ -338,6 +338,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="health-item"><span class="dot dot-gray" id="h-wifi"></span>WiFi</div>
 <div class="health-item"><span class="dot dot-gray" id="h-ao"></span>AO</div>
 <div class="health-item"><span class="dot dot-gray" id="h-recovery"></span>Recovery</div>
+<div class="health-item"><span class="dot dot-gray" id="h-firmware"></span>Firmware</div>
 <div class="health-item"><span class="dot dot-gray" id="h-gps"></span>GPS</div>
 </div>
 <div class="status-grid">
@@ -347,6 +348,9 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="label">Last Recovery</div><div class="value" id="rec-last">-</div>
 <div class="label">AO PID</div><div class="value" id="rec-pid">-</div>
 <div class="label">AO Uptime</div><div class="value" id="rec-ao-up">-</div>
+<div class="label">Firmware</div><div class="value" id="fw-health">-</div>
+<div class="label">Crash Suppress</div><div class="value" id="fw-crash">-</div>
+<div class="label">HardFault</div><div class="value" id="fw-fault">-</div>
 </div>
 </div>
 
@@ -564,6 +568,15 @@ function refreshRecovery() {
         document.getElementById('rec-state').style.color = d.state === 'Healthy' ? '#00d4aa' : '#f0c040';
         document.getElementById('rec-total').textContent = d.total_recoveries;
         document.getElementById('rec-last').textContent = d.last_recovery;
+        // Firmware health
+        document.getElementById('fw-health').textContent = d.fw_health || '-';
+        var fwColor = d.fw_health === 'Healthy' ? '#00d4aa' : d.fw_health === 'Degraded' ? '#f0c040' : d.fw_health === 'Critical' ? '#e74c3c' : '#888';
+        document.getElementById('fw-health').style.color = fwColor;
+        document.getElementById('fw-crash').textContent = d.fw_crash_suppress != null ? d.fw_crash_suppress : '-';
+        document.getElementById('fw-fault').textContent = d.fw_hardfault != null ? d.fw_hardfault : '-';
+        // Firmware health dot
+        var fdot = document.getElementById('h-firmware');
+        fdot.className = 'dot ' + (d.fw_health === 'Healthy' ? 'dot-green' : d.fw_health === 'Degraded' ? 'dot-yellow' : d.fw_health === 'Critical' ? 'dot-red' : 'dot-gray');
     });
     api('GET', '/api/health').then(function(d) {
         if (!d) return;
@@ -1058,6 +1071,14 @@ function updateRecoveryFromWs(rec, h) {
     document.getElementById('rec-crashes').style.color = h.ao_crash_count > 0 ? '#f0c040' : '#e0e0e0';
     document.getElementById('rec-pid').textContent = h.ao_pid || '-';
     document.getElementById('rec-ao-up').textContent = h.ao_uptime;
+    // Firmware health from recovery payload
+    document.getElementById('fw-health').textContent = rec.fw_health || '-';
+    var fwColor = rec.fw_health === 'Healthy' ? '#00d4aa' : rec.fw_health === 'Degraded' ? '#f0c040' : rec.fw_health === 'Critical' ? '#e74c3c' : '#888';
+    document.getElementById('fw-health').style.color = fwColor;
+    document.getElementById('fw-crash').textContent = rec.fw_crash_suppress != null ? rec.fw_crash_suppress : '-';
+    document.getElementById('fw-fault').textContent = rec.fw_hardfault != null ? rec.fw_hardfault : '-';
+    var fdot = document.getElementById('h-firmware');
+    fdot.className = 'dot ' + (rec.fw_health === 'Healthy' ? 'dot-green' : rec.fw_health === 'Degraded' ? 'dot-yellow' : rec.fw_health === 'Critical' ? 'dot-red' : 'dot-gray');
     var wdot = document.getElementById('h-wifi');
     wdot.className = 'dot ' + (h.wifi_state === 'Monitor' ? 'dot-green' : 'dot-red');
     var adot = document.getElementById('h-ao');

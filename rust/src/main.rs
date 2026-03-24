@@ -101,6 +101,8 @@ struct Daemon {
     discord_enabled: bool,
     /// Whether AO should auto-hunt channels vs use the configured channel list.
     autohunt: bool,
+    /// Adaptive channel scorer: ranks channels 1-13 by AP density, RSSI, etc.
+    channel_scorer: wifi::ChannelScorer,
     /// tmpfs directory for AO captures (validated before moving to SD).
     tmpfs_capture_dir: String,
 }
@@ -161,6 +163,7 @@ impl Daemon {
             discord_webhook_url: String::new(),
             discord_enabled: false,
             autohunt: true,
+            channel_scorer: wifi::ChannelScorer::new(3),
             tmpfs_capture_dir: ensure_tmpfs_capture_dir(),
         }
     }
@@ -370,6 +373,40 @@ impl Daemon {
                         self.firmware_monitor.crash_suppress, self.firmware_monitor.hardfault);
                 }
                 _ => {}
+            }
+        }
+
+        // ---- Adaptive channel scoring (RAGE mode only) ----
+        if self.mode == OperatingMode::Rage {
+            self.channel_scorer.reset_epoch_counts();
+
+            // Feed AP data from WiFi tracker (has RSSI + client counts)
+            for ap in self.wifi.tracker.sorted_by_rssi() {
+                self.channel_scorer.record_ap(ap.channel, ap.rssi, ap.client_count);
+            }
+
+            // Feed capture info from AO (which APs had captures this session)
+            for ao_ap in &self.ao.ap_snapshot() {
+                if ao_ap.captured {
+                    self.channel_scorer.record_capture(ao_ap.channel);
+                }
+            }
+
+            // Mark the current AO channel as visited
+            let current_ch = self.ao.channel() as u8;
+            self.channel_scorer.mark_visited(current_ch);
+            self.channel_scorer.tick_epoch();
+
+            // When autohunt is ON, update AO's channel config with the best channels
+            if self.autohunt {
+                let best = self.channel_scorer.top_channels();
+                if !best.is_empty() {
+                    self.wifi.channel_config.channels = best.clone();
+                    self.ao.config.channels = best;
+                    info!("adaptive channels: top {} -> {:?}",
+                        self.wifi.channel_config.channels.len(),
+                        self.wifi.channel_config.channels);
+                }
             }
         }
 
