@@ -788,12 +788,12 @@ impl Daemon {
             info!("persisted plugin positions to plugins.toml");
         }
 
-        // Process pending whitelist add/remove
-        let (wl_add, wl_remove) = {
+        // Process pending whitelist adds (batch — supports multiple per epoch)
+        let (wl_adds, wl_removes) = {
             let mut s = self.shared_state.lock().unwrap();
-            (s.pending_whitelist_add.take(), s.pending_whitelist_remove.take())
+            (std::mem::take(&mut s.pending_whitelist_adds), std::mem::take(&mut s.pending_whitelist_removes))
         };
-        if let Some(add) = wl_add {
+        for add in wl_adds {
             let entry = wifi::parse_whitelist_entry(&add.value);
             match entry {
                 wifi::WhitelistEntry::Bssid(mac) => {
@@ -804,14 +804,13 @@ impl Daemon {
                     }
                 }
                 wifi::WhitelistEntry::Ssid(ssid) => {
-                    // Add to wifi tracker's SSID whitelist
                     self.wifi.tracker.add_ssid_whitelist(&ssid);
                     info!("web: whitelist added SSID {ssid}");
                     any_command = true;
                 }
             }
         }
-        if let Some(remove) = wl_remove {
+        for remove in wl_removes {
             let parts: Vec<&str> = remove.split(':').collect();
             if parts.len() == 6 {
                 let mut mac = [0u8; 6];

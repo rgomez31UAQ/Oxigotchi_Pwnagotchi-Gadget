@@ -142,8 +142,8 @@ pub struct DaemonState {
 
     // -- whitelist --
     pub whitelist: Vec<WhitelistEntry>,
-    pub pending_whitelist_add: Option<WhitelistAdd>,
-    pub pending_whitelist_remove: Option<String>,
+    pub pending_whitelist_adds: Vec<WhitelistAdd>,
+    pub pending_whitelist_removes: Vec<String>,
 
     // -- channel config --
     pub pending_channel_config: Option<ChannelConfig>,
@@ -245,8 +245,8 @@ impl DaemonState {
             pending_plugin_updates: Vec::new(),
             ap_list: Vec::new(),
             whitelist: Vec::new(),
-            pending_whitelist_add: None,
-            pending_whitelist_remove: None,
+            pending_whitelist_adds: Vec::new(),
+            pending_whitelist_removes: Vec::new(),
             pending_channel_config: None,
             wpasec_api_key: String::new(),
             pending_wpasec_key: None,
@@ -999,7 +999,7 @@ async fn whitelist_add_handler(
     Json(body): Json<WhitelistAdd>,
 ) -> Json<ActionResponse> {
     let mut s = state.lock().unwrap();
-    s.pending_whitelist_add = Some(body);
+    s.pending_whitelist_adds.push(body);
     Json(ActionResponse {
         ok: true,
         message: "Whitelist add queued".into(),
@@ -1012,7 +1012,7 @@ async fn whitelist_remove_handler(
     Json(body): Json<WhitelistRemove>,
 ) -> Json<ActionResponse> {
     let mut s = state.lock().unwrap();
-    s.pending_whitelist_remove = Some(body.value);
+    s.pending_whitelist_removes.push(body.value);
     Json(ActionResponse {
         ok: true,
         message: "Whitelist remove queued".into(),
