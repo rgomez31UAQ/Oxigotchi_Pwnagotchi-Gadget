@@ -253,6 +253,20 @@ No. The firmware patches are for the BCM43436B0 chip in the Pi Zero 2W only. Oth
 **Can I write plugins?**
 Yes. Oxigotchi v3 uses Lua 5.4 plugins. Place `.lua` files in `/etc/oxigotchi/plugins/`. Plugins can register indicators on the e-ink display and react to epoch, handshake, crash, and BT events. See [docs/RUSTY_V3.md](docs/RUSTY_V3.md) for the full plugin API.
 
+**Is `sudo apt update && sudo apt upgrade -y` safe?**
+Yes. The dangerous packages are held and won't upgrade:
+
+| Held Package | Why |
+|-------------|-----|
+| `linux-image-*` | Kernel pinned to 6.12.62 (nexmon compatibility) |
+| `firmware-brcm80211`, `firmware-nexmon` | Protects patched WiFi firmware |
+| `brcmfmac-nexmon-dkms` | Prevents nexmon module rebuild |
+| `libpcap-dev`, `libpcap0.8-dev` | AO dependency version lock |
+
+A dpkg hook (`/etc/apt/apt.conf.d/99-protect-firmware`) backs up the patched firmware before any apt operation. If a package update somehow overwrites it, `verify-oxigotchi` auto-restores from the `.pre-apt` backup.
+
+After any upgrade, run `sudo verify-oxigotchi` to confirm nothing broke. To see what's held: `apt-mark showhold`.
+
 **Can I switch back to stock pwnagotchi?**
 The legacy pwnagotchi and bettercap services are disabled on first boot. You can re-enable them with `systemctl enable pwnagotchi bettercap`, but the Rust daemon is designed to fully replace them. To fully remove the firmware patch: `sudo pwnoxide-mode rollback-fw`.
 
