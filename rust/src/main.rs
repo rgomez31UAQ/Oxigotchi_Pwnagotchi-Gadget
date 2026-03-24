@@ -1034,6 +1034,7 @@ impl Daemon {
             "whitelist": self.attacks.whitelist.iter().map(|m|
                 m.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
             ).collect::<Vec<String>>(),
+            "ssid_whitelist": self.wifi.tracker.ssid_whitelist,
             "wpasec_key": self.wpasec_config.api_key,
             "discord_webhook_url": self.discord_webhook_url,
             "discord_enabled": self.discord_enabled,
@@ -1112,6 +1113,16 @@ impl Daemon {
                             self.attacks.whitelist.push(mac);
                         }
                     }
+                }
+            }
+        }
+
+        // Apply SSID whitelist
+        if let Some(ssids) = state.get("ssid_whitelist").and_then(|v| v.as_array()) {
+            for entry in ssids {
+                if let Some(ssid) = entry.as_str() {
+                    self.wifi.tracker.add_ssid_whitelist(ssid);
+                    info!("state: restored SSID whitelist: {ssid}");
                 }
             }
         }
