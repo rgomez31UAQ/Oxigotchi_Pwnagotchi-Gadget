@@ -222,8 +222,17 @@ impl AoManager {
                 ap_map.clear();
             }
 
-            match std::process::Command::new(&self.config.binary)
-                .args(&args)
+            // Use `script -qc` to force a pseudo-terminal, making AO
+            // think it's writing to a terminal (line-buffered) instead of
+            // a pipe (full-buffered). stdbuf -oL doesn't work reliably
+            // with Rust binaries that use BufWriter internally.
+            let script_cmd = format!(
+                "{} {}",
+                &self.config.binary,
+                args.join(" ")
+            );
+            match std::process::Command::new("script")
+                .args(["-qc", &script_cmd, "/dev/null"])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
                 .spawn()
