@@ -605,6 +605,27 @@ impl Daemon {
         );
         let _ = tmpfs_manager.scan_directory();
 
+        // Update session_captures from tmpfs scan (catches files stdout parsing missed)
+        let pcapng_count = tmpfs_manager.files.iter()
+            .filter(|f| f.path.extension().map(|e| e == "pcapng").unwrap_or(false))
+            .count() as u32;
+        if pcapng_count > 0 {
+            // Use store with max to only ratchet upward (stdout reader may have counted more)
+            let current = self.ao.session_captures.load(std::sync::atomic::Ordering::Relaxed);
+            if pcapng_count > current {
+                self.ao.session_captures.store(pcapng_count, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+
+        // Truncate kismet file if it exceeds 50MB to prevent tmpfs exhaustion
+        let kismet_path = format!("{}/capture.kismet", self.tmpfs_capture_dir);
+        if let Ok(meta) = std::fs::metadata(&kismet_path) {
+            if meta.len() > 50 * 1024 * 1024 {
+                info!("kismet file {}MB, truncating", meta.len() / 1024 / 1024);
+                let _ = std::fs::File::create(&kismet_path); // truncate to zero
+            }
+        }
+
         // 2. Convert new captures in tmpfs via hcxpcapngtool
         if !tmpfs_manager.files.is_empty() {
             let (converted, _no_hs, failed) = capture::batch_convert(&mut tmpfs_manager);
@@ -625,6 +646,11 @@ impl Daemon {
         );
         if moved > 0 || deleted > 0 {
             info!("capture pipeline: {moved} saved to SD, {deleted} junk deleted from RAM");
+        }
+
+        // Track validated captures moved to SD as session handshakes
+        if moved > 0 {
+            self.ao.session_handshakes.fetch_add(moved as u32, std::sync::atomic::Ordering::Relaxed);
         }
 
         // 4. Scan permanent dir for upload tracking + new handshake detection
