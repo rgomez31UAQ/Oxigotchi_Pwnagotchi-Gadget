@@ -88,11 +88,13 @@ struct Daemon {
     watchdog: recovery::Watchdog,
     ao: ao::AoManager,
     radio: radio::RadioManager,
+    firmware_monitor: firmware::FirmwareMonitor,
     mode: OperatingMode,
     shared_state: web::SharedState,
     ws_tx: tokio::sync::broadcast::Sender<String>,
     prev_cpu_sample: Option<personality::CpuSample>,
     lua: lua::PluginRuntime,
+    plugin_watcher: Option<lua::PluginWatcher>,
     wpasec_config: capture::WpaSecConfig,
     upload_queue: capture::UploadQueue,
     discord_webhook_url: String,
@@ -147,11 +149,13 @@ impl Daemon {
             watchdog,
             ao,
             radio: radio::RadioManager::new(),
+            firmware_monitor: firmware::FirmwareMonitor::new(),
             mode: OperatingMode::Rage,
             shared_state,
             ws_tx,
             prev_cpu_sample: None,
             lua: lua::PluginRuntime::new(),
+            plugin_watcher: None, // initialized in boot() after plugin dir is confirmed
             wpasec_config: capture::WpaSecConfig::default(),
             upload_queue: capture::UploadQueue::new(),
             discord_webhook_url: String::new(),
@@ -268,6 +272,15 @@ impl Daemon {
         let loaded = self.lua.load_plugins_from_dir("/etc/oxigotchi/plugins", &plugin_configs);
         info!("loaded {loaded} Lua plugin(s)");
 
+        // Start watching plugin directory for hot-reload
+        match lua::PluginWatcher::new("/etc/oxigotchi/plugins") {
+            Ok(watcher) => {
+                info!("plugin hot-reload watcher active");
+                self.plugin_watcher = Some(watcher);
+            }
+            Err(e) => log::warn!("plugin watcher not available: {e}"),
+        }
+
         // USB RNDIS network setup
         self.network.probe();
         if self.network.usb0_state != network::Usb0State::Absent {
@@ -344,6 +357,22 @@ impl Daemon {
             self.network.rotate_display(true);
         }
 
+        // ---- Firmware health (RAGE mode only) ----
+        if self.mode == OperatingMode::Rage {
+            let fw_health = self.firmware_monitor.poll();
+            match fw_health {
+                firmware::FirmwareHealth::Critical => {
+                    log::warn!("firmware: CRITICAL -- counters spiking (crash={}, fault={}), triggering preemptive recovery",
+                        self.firmware_monitor.crash_suppress, self.firmware_monitor.hardfault);
+                }
+                firmware::FirmwareHealth::Degraded => {
+                    log::info!("firmware: degraded -- counters increasing (crash={}, fault={})",
+                        self.firmware_monitor.crash_suppress, self.firmware_monitor.hardfault);
+                }
+                _ => {}
+            }
+        }
+
         // ---- Attack + Capture phases ----
         self.run_attack_phase(&mut result);
         self.run_capture_phase(&mut result);
@@ -358,6 +387,17 @@ impl Daemon {
         // ---- Lua plugins + display ----
         let epoch_state = self.build_epoch_state();
         self.lua.tick_epoch(&epoch_state);
+
+        // ---- Plugin hot-reload: check inotify for changed .lua files ----
+        if let Some(ref watcher) = self.plugin_watcher {
+            for name in watcher.check() {
+                info!("plugin {name}: file changed, reloading");
+                if let Err(e) = self.lua.reload_plugin(&name, watcher.dir()) {
+                    log::error!("plugin {name}: reload failed: {e}");
+                }
+            }
+        }
+
         self.update_display();
 
         // ---- CPU usage sampling ----
@@ -1048,6 +1088,9 @@ impl Daemon {
             xp: self.epoch_loop.personality.xp.xp,
             status_message: self.epoch_loop.personality.status_msg(),
             epoch_phase_status: self.epoch_loop.status_message(),
+            fw_crash_suppress: self.firmware_monitor.crash_suppress,
+            fw_hardfault: self.firmware_monitor.hardfault,
+            fw_health: format!("{:?}", self.firmware_monitor.health()),
             cpu_temp: si.cpu_temp_c,
             mem_used_mb: si.mem_used_mb,
             mem_total_mb: si.mem_total_mb,
@@ -1279,6 +1322,10 @@ impl Daemon {
 
         s.xp = self.epoch_loop.personality.xp.xp;
         s.level = self.epoch_loop.personality.xp.level;
+
+        s.fw_crash_suppress = self.firmware_monitor.crash_suppress;
+        s.fw_hardfault = self.firmware_monitor.hardfault;
+        s.fw_health = format!("{:?}", self.firmware_monitor.health());
 
         s.recovery_state = format!("{:?}", self.recovery.state);
         s.recovery_total = self.recovery.total_recoveries;

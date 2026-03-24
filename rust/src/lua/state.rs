@@ -49,6 +49,11 @@ pub struct EpochState {
     pub status_message: String,
     pub epoch_phase_status: String,
 
+    // firmware
+    pub fw_crash_suppress: u32,
+    pub fw_hardfault: u32,
+    pub fw_health: String,
+
     // system
     pub cpu_temp: f32,
     pub mem_used_mb: u32,
@@ -99,6 +104,10 @@ impl EpochState {
         t.set("xp", self.xp)?;
         t.set("status_message", self.status_message.as_str())?;
         t.set("epoch_phase_status", self.epoch_phase_status.as_str())?;
+
+        t.set("fw_crash_suppress", self.fw_crash_suppress)?;
+        t.set("fw_hardfault", self.fw_hardfault)?;
+        t.set("fw_health", self.fw_health.as_str())?;
 
         t.set("cpu_temp", self.cpu_temp)?;
         t.set("mem_used_mb", self.mem_used_mb)?;

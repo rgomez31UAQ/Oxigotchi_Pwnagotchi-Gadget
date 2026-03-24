@@ -110,6 +110,11 @@ pub struct DaemonState {
     pub cpu_percent: f32,
     pub boot_time: Instant,
 
+    // -- firmware health --
+    pub fw_crash_suppress: u32,
+    pub fw_hardfault: u32,
+    pub fw_health: String,
+
     // -- recovery --
     pub recovery_state: String,
     pub recovery_total: u32,
@@ -230,6 +235,9 @@ impl DaemonState {
             disk_total_mb: 0,
             cpu_percent: 0.0,
             boot_time: Instant::now(),
+            fw_crash_suppress: 0,
+            fw_hardfault: 0,
+            fw_health: "Unknown".into(),
             recovery_state: "Healthy".into(),
             recovery_total: 0,
             recovery_soft_retries: 0,
@@ -425,6 +433,9 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
             hard_retries: s.recovery_hard_retries,
             last_recovery: s.recovery_last_str.clone(),
             diagnostic_count: 0,
+            fw_crash_suppress: s.fw_crash_suppress,
+            fw_hardfault: s.fw_hardfault,
+            fw_health: s.fw_health.clone(),
         },
         health: HealthResponse {
             wifi_state: s.wifi_state.clone(),
@@ -658,6 +669,9 @@ pub struct RecoveryInfo {
     pub hard_retries: u32,
     pub last_recovery: String,
     pub diagnostic_count: usize,
+    pub fw_crash_suppress: u32,
+    pub fw_hardfault: u32,
+    pub fw_health: String,
 }
 
 /// Personality/mood info returned by /api/personality.
@@ -1126,6 +1140,9 @@ async fn recovery_handler(State(state): State<SharedState>) -> Json<RecoveryInfo
         hard_retries: s.recovery_hard_retries,
         last_recovery: s.recovery_last_str.clone(),
         diagnostic_count: 0,
+        fw_crash_suppress: s.fw_crash_suppress,
+        fw_hardfault: s.fw_hardfault,
+        fw_health: s.fw_health.clone(),
     })
 }
 
@@ -1977,6 +1994,8 @@ mod tests {
             state: "Healthy".into(), total_recoveries: 2,
             soft_retries: 1, hard_retries: 1,
             last_recovery: "5m ago".into(), diagnostic_count: 3,
+            fw_crash_suppress: 0, fw_hardfault: 0,
+            fw_health: "Unknown".into(),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"state\":\"Healthy\""));
