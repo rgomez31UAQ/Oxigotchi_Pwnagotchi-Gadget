@@ -528,8 +528,10 @@ impl Daemon {
         self.epoch_loop.phase = epoch::EpochPhase::Scan;
         self.recovery.log(recovery::DiagLevel::Info, "epoch scan start");
 
-        result.channel = 0; // AO handles channel hopping
-        result.aps_seen = self.wifi.tracker.count() as u32;
+        result.channel = self.ao.channel() as u8;
+        // Use AO's AP count (from stdout BSSID tracking) since AO owns the
+        // monitor interface — the beacon tracker can't read frames while AO runs.
+        result.aps_seen = self.ao.ap_count();
 
         // Health check on WiFi (RAGE mode only — SAFE mode intentionally has no monitor)
         if self.mode == OperatingMode::Rage && self.recovery.should_check() {
