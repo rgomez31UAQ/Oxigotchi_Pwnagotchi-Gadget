@@ -581,14 +581,17 @@ function setCapFilter(mode) {
 
 function setCaptureAll(enabled) {
     document.getElementById('capture-all-warning').style.display = enabled ? 'block' : 'none';
-    api('POST', '/api/capture-all', {enabled: enabled});
+    api('POST', '/api/capture-all', {enabled: enabled}).then(function(r) {
+        if (r && r.ok) toast(enabled ? 'Collect All enabled — AO restarting' : 'Verified Only enabled — AO restarting');
+    });
 }
 
 function capDisplayName(f) {
-    var ssid = f.ssid && f.ssid.length ? f.ssid : '(unknown)';
+    var ssid = f.ssid && f.ssid.length ? f.ssid : '';
     var mac = f.bssid_mac && f.bssid_mac !== '00:00:00:00:00:00' ? f.bssid_mac : '';
     var date = f.captured_date || '';
-    if (mac) return esc(ssid) + ' \u00b7 ' + esc(mac) + (date ? ' \u00b7 ' + esc(date) : '');
+    if (ssid && mac) return esc(ssid) + ' \u00b7 ' + esc(mac) + (date ? ' \u00b7 ' + esc(date) : '');
+    if (ssid) return esc(ssid) + ' \u00b7 ' + esc(f.filename) + (date ? ' \u00b7 ' + esc(date) : '');
     return esc(f.filename);
 }
 
@@ -1129,14 +1132,13 @@ function updateCapturesFromWs(d) {
     document.getElementById('cap-hs').textContent = d.handshake_files;
     document.getElementById('cap-pending').textContent = d.pending_upload;
     document.getElementById('cap-size').textContent = fmtBytes(d.total_size_bytes);
-    var el = document.getElementById('cap-list');
-    if (!d.files || !d.files.length) {
-        el.innerHTML = '<div style="color:#555;font-size:12px">No captures yet</div>';
-        return;
+    var tog = document.getElementById('capture-all-toggle');
+    if (tog && tog.checked !== d.capture_all) {
+        tog.checked = d.capture_all;
+        document.getElementById('capture-all-warning').style.display = d.capture_all ? 'block' : 'none';
     }
-    el.innerHTML = d.files.map(function(f) {
-        return '<div class="capture-item"><a href="/api/download/' + encodeURIComponent(f.filename) + '" style="color:#00d4aa;text-decoration:none">' + esc(f.filename) + '</a> <span style="color:#555">(' + fmtBytes(f.size_bytes) + ')</span></div>';
-    }).join('');
+    _capFiles = d.files || [];
+    renderCapList();
 }
 
 function updateRecoveryFromWs(rec, h) {

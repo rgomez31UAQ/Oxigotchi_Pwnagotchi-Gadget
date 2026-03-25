@@ -679,7 +679,9 @@ impl Daemon {
             }
         } else {
             // === COLLECT ALL MODE: AO writes directly to SD ===
-            // Run hcxpcapngtool on SD files so .22000 companions are created, but keep everything.
+            // Scan first so newly written files are visible before conversion.
+            let _ = self.captures.scan_directory();
+            // Run hcxpcapngtool so .22000 companions are created, but keep everything.
             let (converted, _no_hs, failed) = capture::batch_convert(&mut self.captures);
             if converted > 0 {
                 info!("collect-all: converted {converted} capture(s) to .22000 on SD");
