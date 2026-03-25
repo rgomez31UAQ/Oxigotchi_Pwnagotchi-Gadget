@@ -61,6 +61,8 @@ pub struct AoConfig {
     pub max_crashes: u32,
     /// Base backoff seconds for exponential restart delay.
     pub base_backoff_secs: u64,
+    /// SSID/MAC whitelist entries to pass to AO via --whitelist file.
+    pub whitelist: Vec<String>,
 }
 
 impl Default for AoConfig {
@@ -76,6 +78,7 @@ impl Default for AoConfig {
             headless: true,
             max_crashes: 10,
             base_backoff_secs: 5,
+            whitelist: Vec::new(),
         }
     }
 }
@@ -184,6 +187,15 @@ impl AoManager {
         }
         if self.gpsd_detected {
             args.push("--gpsd".into());
+        }
+        // Write whitelist file and pass to AO if entries exist
+        if !self.config.whitelist.is_empty() {
+            let wl_path = "/tmp/ao_whitelist.txt";
+            let content = self.config.whitelist.join("\n");
+            if std::fs::write(wl_path, &content).is_ok() {
+                args.push("--whitelist".into());
+                args.push(wl_path.into());
+            }
         }
         if !self.config.channels.is_empty() {
             args.push("--channel".into());

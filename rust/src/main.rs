@@ -298,11 +298,18 @@ impl Daemon {
             info!("usb0 not present, skipping network setup");
         }
 
+        // Load persisted runtime state BEFORE starting AO (whitelist, attack toggles, etc.)
+        self.load_runtime_state();
+
         // Point AO output prefix inside the tmpfs capture directory.
-        // AO uses --output as a filename prefix, appending -TIMESTAMP.pcapng.
-        // So /tmp/ao_captures/capture → /tmp/ao_captures/capture-2026-03-24_12-00-00.pcapng
         self.ao.config.output_dir = format!("{}/capture", self.tmpfs_capture_dir);
         info!("capture pipeline: AO output -> tmpfs ({})", self.tmpfs_capture_dir);
+
+        // Pass SSID whitelist to AO so it skips our own APs
+        self.ao.config.whitelist = self.wifi.tracker.ssid_whitelist.clone();
+        if !self.ao.config.whitelist.is_empty() {
+            info!("AO whitelist: {:?}", self.ao.config.whitelist);
+        }
 
         // Start AngryOxide subprocess
         match self.ao.start() {
@@ -317,9 +324,6 @@ impl Daemon {
         if let Err(e) = self.radio.acquire_lock(radio::RadioMode::Wifi) {
             log::warn!("failed to acquire WIFI radio lock on boot: {e}");
         }
-
-        // Load persisted runtime state (attack toggles, whitelist, WPA-SEC key, Discord)
-        self.load_runtime_state();
 
         // Initial state sync to web
         self.sync_to_web();
@@ -961,7 +965,8 @@ impl Daemon {
                 }
                 wifi::WhitelistEntry::Ssid(ssid) => {
                     self.wifi.tracker.add_ssid_whitelist(&ssid);
-                    info!("web: whitelist added SSID {ssid}");
+                    self.ao.config.whitelist = self.wifi.tracker.ssid_whitelist.clone();
+                    info!("web: whitelist added SSID {ssid} (AO restart needed)");
                     any_command = true;
                 }
             }
