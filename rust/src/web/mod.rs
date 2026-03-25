@@ -1038,6 +1038,7 @@ async fn capture_all_handler(
     Json(body): Json<CaptureAllRequest>,
 ) -> Json<ActionResponse> {
     let mut s = state.lock().unwrap();
+    s.capture_all = body.enabled; // optimistic: prevents WS from flipping checkbox back
     s.pending_capture_all = Some(body.enabled);
     Json(ActionResponse {
         ok: true,

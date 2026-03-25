@@ -636,6 +636,10 @@ impl Daemon {
         // session_captures is tracked by the AO stdout reader (EAPOL Message 1 events).
         // session_handshakes is incremented below.
 
+        // Snapshot handshake count before any scan/convert so new_handshakes is accurate
+        // in both modes. Must be taken here, before the collect-all branch runs batch_convert.
+        let handshakes_before = self.captures.handshake_count();
+
         if !self.capture_all {
             // === VERIFIED MODE: tmpfs → validate → SD ===
 
@@ -693,7 +697,6 @@ impl Daemon {
         }
 
         // 4. Scan permanent dir for upload tracking + new handshake detection
-        let handshakes_before = self.captures.handshake_count();
         match self.captures.scan_directory() {
             Ok(new) => {
                 if new > 0 {
@@ -1088,8 +1091,14 @@ impl Daemon {
                 self.ao.config.output_dir = format!("{}/capture", self.tmpfs_capture_dir);
                 info!("web: capture_all disabled — AO output -> tmpfs");
             }
-            info!("web: restarting AO for capture mode change");
-            let _ = self.ao.restart();
+            // Only restart AO in RAGE mode; in SAFE mode AO isn't running and the
+            // updated output_dir will take effect when RAGE mode is next entered.
+            if self.mode == OperatingMode::Rage {
+                info!("web: restarting AO for capture mode change");
+                let _ = self.ao.restart();
+            } else {
+                info!("web: capture mode updated (SAFE mode — AO restart deferred to RAGE entry)");
+            }
             any_command = true;
         }
 
