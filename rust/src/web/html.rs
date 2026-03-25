@@ -579,8 +579,14 @@ function setCapFilter(mode) {
     renderCapList();
 }
 
-function setCaptureAll(enabled) {
+function syncCaptureModeUi(enabled) {
+    var tog = document.getElementById('capture-all-toggle');
+    if (tog) tog.checked = !!enabled;
     document.getElementById('capture-all-warning').style.display = enabled ? 'block' : 'none';
+}
+
+function setCaptureAll(enabled) {
+    syncCaptureModeUi(enabled);
     api('POST', '/api/capture-all', {enabled: enabled}).then(function(r) {
         if (r && r.ok) toast(enabled ? 'Collect All enabled — AO restarting' : 'Verified Only enabled — AO restarting');
     });
@@ -622,12 +628,7 @@ function refreshCaptures() {
         document.getElementById('cap-hs').textContent = d.handshake_files;
         document.getElementById('cap-pending').textContent = d.pending_upload;
         document.getElementById('cap-size').textContent = fmtBytes(d.total_size_bytes);
-        // Sync capture mode toggle
-        var tog = document.getElementById('capture-all-toggle');
-        if (tog && tog.checked !== d.capture_all) {
-            tog.checked = d.capture_all;
-            document.getElementById('capture-all-warning').style.display = d.capture_all ? 'block' : 'none';
-        }
+        syncCaptureModeUi(d.capture_all);
         _capFiles = d.files || [];
         renderCapList();
     });
@@ -1132,11 +1133,7 @@ function updateCapturesFromWs(d) {
     document.getElementById('cap-hs').textContent = d.handshake_files;
     document.getElementById('cap-pending').textContent = d.pending_upload;
     document.getElementById('cap-size').textContent = fmtBytes(d.total_size_bytes);
-    var tog = document.getElementById('capture-all-toggle');
-    if (tog && tog.checked !== d.capture_all) {
-        tog.checked = d.capture_all;
-        document.getElementById('capture-all-warning').style.display = d.capture_all ? 'block' : 'none';
-    }
+    syncCaptureModeUi(d.capture_all);
     _capFiles = d.files || [];
     renderCapList();
 }

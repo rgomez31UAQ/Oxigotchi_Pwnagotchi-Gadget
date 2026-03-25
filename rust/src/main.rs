@@ -1095,6 +1095,8 @@ impl Daemon {
             // updated output_dir will take effect when RAGE mode is next entered.
             if self.mode == OperatingMode::Rage {
                 info!("web: restarting AO for capture mode change");
+                self.ao.session_captures.store(0, std::sync::atomic::Ordering::Relaxed);
+                self.ao.session_handshakes.store(0, std::sync::atomic::Ordering::Relaxed);
                 let _ = self.ao.restart();
             } else {
                 info!("web: capture mode updated (SAFE mode — AO restart deferred to RAGE entry)");
@@ -1930,19 +1932,6 @@ impl Daemon {
         }
     }
 
-    /// Build web capture info.
-    fn build_capture_info(&self) -> web::CaptureInfo {
-        web::CaptureInfo {
-            total_files: self.captures.count(),
-            handshake_files: self.captures.handshake_count(),
-            pending_upload: self.captures.pending_upload_count(),
-            total_size_bytes: self.captures.total_size(),
-            session_captures: self.ao.session_captures(),
-            session_handshakes: self.ao.session_handshakes(),
-            capture_all: self.capture_all,
-            files: vec![],
-        }
-    }
 }
 
 #[tokio::main]
@@ -2050,14 +2039,6 @@ mod tests {
         let stats = daemon.build_attack_stats();
         assert_eq!(stats.total_attacks, 0);
         assert_eq!(stats.attack_rate, ATTACK_RATE);
-    }
-
-    #[test]
-    fn test_daemon_build_capture_info() {
-        let daemon = make_daemon();
-        let info = daemon.build_capture_info();
-        assert_eq!(info.total_files, 0);
-        assert_eq!(info.pending_upload, 0);
     }
 
     #[test]

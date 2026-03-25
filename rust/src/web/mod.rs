@@ -2193,7 +2193,7 @@ mod tests {
         assert!(DASHBOARD_HTML.contains("card-plugins"), "missing plugins card");
         assert!(DASHBOARD_HTML.contains("card-aps"), "missing APs card");
         assert!(DASHBOARD_HTML.contains("card-whitelist"), "missing whitelist card");
-        assert!(DASHBOARD_HTML.contains("card-channels"), "missing channels card");
+        // card-channels merged into card-attacks (dwell + channel buttons + autohunt now live there)
         assert!(DASHBOARD_HTML.contains("card-logs"), "missing logs card");
         assert!(DASHBOARD_HTML.contains("card-wpasec"), "missing wpasec card");
         assert!(DASHBOARD_HTML.contains("card-discord"), "missing discord card");
@@ -2584,6 +2584,32 @@ mod tests {
         assert!(action.message.contains("shutdown"));
         let s = state.lock().unwrap();
         assert!(s.pending_shutdown);
+    }
+
+    #[tokio::test]
+    async fn test_post_capture_all_queues_and_optimistic() {
+        let (router, state) = test_router();
+        let (status, body) = post_json(&router, "/api/capture-all", r#"{"enabled":true}"#).await;
+        assert_eq!(status, 200);
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_capture_all, Some(true));
+        assert!(s.capture_all, "capture_all should be set optimistically");
+    }
+
+    #[tokio::test]
+    async fn test_post_capture_all_disable() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.capture_all = true;
+        }
+        let (status, _) = post_json(&router, "/api/capture-all", r#"{"enabled":false}"#).await;
+        assert_eq!(status, 200);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_capture_all, Some(false));
+        assert!(!s.capture_all);
     }
 
     #[tokio::test]
