@@ -5,6 +5,48 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// Parse BSSID and SSID from a .22000 companion file.
+/// Format: WPA*02*hash*AP_BSSID*CLIENT*SSID_HEX*...
+/// Returns ([bssid; 6], ssid_string). Falls back to zeroed BSSID and empty SSID.
+fn parse_22000_metadata(pcapng_path: &Path) -> ([u8; 6], String) {
+    let companion = pcapng_path.with_extension("22000");
+    let content = match std::fs::read_to_string(&companion) {
+        Ok(c) => c,
+        Err(_) => return ([0; 6], String::new()),
+    };
+    // Take the first line
+    let line = match content.lines().next() {
+        Some(l) => l,
+        None => return ([0; 6], String::new()),
+    };
+    let fields: Vec<&str> = line.split('*').collect();
+    if fields.len() < 6 {
+        return ([0; 6], String::new());
+    }
+    // Field 3 = AP BSSID (12 hex chars, no colons)
+    let bssid = {
+        let hex = fields[3];
+        if hex.len() == 12 {
+            let mut b = [0u8; 6];
+            for i in 0..6 {
+                b[i] = u8::from_str_radix(&hex[i*2..i*2+2], 16).unwrap_or(0);
+            }
+            b
+        } else {
+            [0; 6]
+        }
+    };
+    // Field 5 = SSID (hex-encoded)
+    let ssid = {
+        let hex = fields[5];
+        let bytes: Vec<u8> = (0..hex.len()/2)
+            .filter_map(|i| u8::from_str_radix(&hex[i*2..i*2+2], 16).ok())
+            .collect();
+        String::from_utf8(bytes).unwrap_or_default()
+    };
+    (bssid, ssid)
+}
+
 /// Metadata for a captured handshake file.
 #[derive(Debug, Clone)]
 pub struct CaptureFile {
@@ -182,11 +224,12 @@ impl CaptureManager {
                         }
                     }
                 } else {
-                    // New file
+                    // New file — extract BSSID from .22000 companion if it exists
+                    let (bssid, ssid) = parse_22000_metadata(&path);
                     self.files.push(CaptureFile {
                         path: path.clone(),
-                        ssid: String::new(),
-                        bssid: [0; 6],
+                        ssid,
+                        bssid,
                         has_handshake: converted,
                         uploaded: false,
                         size: meta.len(),

@@ -1467,13 +1467,27 @@ impl Daemon {
                 let bssid_fmt = ao_ap.bssid.as_bytes().chunks(2)
                     .map(|c| std::str::from_utf8(c).unwrap_or("??").to_uppercase())
                     .collect::<Vec<_>>().join(":");
+                // Check if we have a capture for this BSSID on SD
+                let ao_bssid_bytes: [u8; 6] = {
+                    let hex = &ao_ap.bssid;
+                    let mut b = [0u8; 6];
+                    if hex.len() == 12 {
+                        for i in 0..6 {
+                            b[i] = u8::from_str_radix(&hex[i*2..i*2+2], 16).unwrap_or(0);
+                        }
+                    }
+                    b
+                };
+                let has_hs = ao_ap.captured || self.captures.files.iter().any(|f| {
+                    f.has_handshake && f.bssid == ao_bssid_bytes
+                });
                 ap_entries.push(web::ApEntry {
                     bssid: bssid_fmt,
                     ssid: "(AO)".into(),
                     rssi: -100, // unknown RSSI — sorts to bottom
                     channel: ao_ap.channel,
                     clients: ao_ap.hit_count,
-                    has_handshake: ao_ap.captured,
+                    has_handshake: has_hs,
                 });
             }
         }
