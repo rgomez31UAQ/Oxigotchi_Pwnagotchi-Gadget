@@ -109,7 +109,7 @@ The pwnagotchi is a pet. The Oxigotchi is a workbull.
 - **XP & leveling** — The bull earns XP passively (+1 per epoch just for scanning, +1 per AP seen) and actively (+100 per handshake, +15 per association, +10 per deauth, +5 per new AP). An exponential curve (`level^1.3 * 5`) makes early levels fast and high levels a serious grind — max level **999** takes about **1 year** of daily use. XP persists across reboots.
 - **Live channel display** — The current AO channel updates on the e-ink screen every 5 seconds, parsed from AO's stdout.
 - **Channel hopping** — Default channels are 1, 6, 11 (non-overlapping 2.4GHz). Configurable from the dashboard with 13 toggleable channel buttons and a dwell time slider. Autohunt mode lets AO choose channels intelligently.
-- **Smart Skip** — Auto-whitelists APs with existing captures, focusing on new targets.
+- **Smart Skip** — Toggle in the dashboard (below attack rates) that skips APs you already have handshakes for. ON by default. Focuses AO on new targets instead of re-capturing from the same APs. Persists across reboots.
 - **Fast boot** — Under 5 seconds from power-on to scanning. No Python, no venv, no log parsing.
 - **RAGE/SAFE mode** — PiSugar3 button or dashboard toggles between WiFi attack mode (RAGE) and BT internet tethering mode (SAFE). The BCM43436B0's shared UART prevents both simultaneously.
 - **Self-healing stack** — PSM watchdog counter reset every 15 minutes, crash loop detection (3+ SIGABRT triggers modprobe recovery), exponential AO restart backoff, GPIO power cycle, graceful give-up (daemon stays up, never reboots).
