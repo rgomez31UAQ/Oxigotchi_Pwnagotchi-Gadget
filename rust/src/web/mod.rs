@@ -921,7 +921,7 @@ pub fn build_status(p: &StatusParams<'_>) -> StatusResponse {
 // ---------------------------------------------------------------------------
 
 /// Read CPU temperature from /sys/class/thermal on Linux.
-fn read_cpu_temp() -> f32 {
+pub fn read_cpu_temp() -> f32 {
     #[cfg(target_os = "linux")]
     {
         if let Ok(content) = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
@@ -934,7 +934,7 @@ fn read_cpu_temp() -> f32 {
 }
 
 /// Read memory info from /proc/meminfo on Linux.
-fn read_mem_info() -> (u32, u32) {
+pub fn read_mem_info() -> (u32, u32) {
     #[cfg(target_os = "linux")]
     {
         if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
@@ -958,7 +958,7 @@ fn read_mem_info() -> (u32, u32) {
 }
 
 /// Read disk usage for the root partition.
-fn read_disk_info() -> (u32, u32) {
+pub fn read_disk_info() -> (u32, u32) {
     #[cfg(target_os = "linux")]
     {
         // Use statvfs via libc

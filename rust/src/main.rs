@@ -1444,6 +1444,14 @@ impl Daemon {
         s.fw_hardfault = self.firmware_monitor.hardfault;
         s.fw_health = format!("{:?}", self.firmware_monitor.health());
 
+        // Refresh system metrics so WS broadcast has real values (not zeroes)
+        let cpu_temp = web::read_cpu_temp();
+        if cpu_temp > 0.0 { s.cpu_temp_c = cpu_temp; }
+        let (mem_used, mem_total) = web::read_mem_info();
+        if mem_total > 0 { s.mem_used_mb = mem_used; s.mem_total_mb = mem_total; }
+        let (disk_used, disk_total) = web::read_disk_info();
+        if disk_total > 0 { s.disk_used_mb = disk_used; s.disk_total_mb = disk_total; }
+
         s.recovery_state = format!("{:?}", self.recovery.state);
         s.recovery_total = self.recovery.total_recoveries;
         s.recovery_soft_retries = self.recovery.soft_retry_count;
