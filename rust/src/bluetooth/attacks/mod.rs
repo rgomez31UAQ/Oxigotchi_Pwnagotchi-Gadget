@@ -4,6 +4,10 @@
 //! [`BtAttackConfig`] struct that drives the offensive BT mode.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::Instant;
+
+pub mod target;
 
 // ---------------------------------------------------------------------------
 // BtAttackType — the 8 attack variants
@@ -289,6 +293,108 @@ impl BtAttackConfig {
 }
 
 // ---------------------------------------------------------------------------
+// BtCapture — payload variants captured during attacks
+// ---------------------------------------------------------------------------
+
+/// Captured artifact from a BT attack.
+#[derive(Debug, Clone)]
+pub enum BtCapture {
+    LinkKey { address: String, key: Vec<u8> },
+    PairingTranscript { address: String, data: Vec<u8> },
+    FuzzCrash { address: String, trigger: Vec<u8> },
+    VendorResult { opcode: u16, response: Vec<u8> },
+}
+
+// ---------------------------------------------------------------------------
+// BtAttackResult — outcome of a single attack attempt
+// ---------------------------------------------------------------------------
+
+/// Result of a single BT attack attempt.
+#[derive(Debug, Clone)]
+pub struct BtAttackResult {
+    pub attack_type: BtAttackType,
+    pub target_address: String,
+    pub target_name: Option<String>,
+    pub success: bool,
+    pub capture: Option<BtCapture>,
+    pub error: Option<String>,
+    pub timestamp: Instant,
+}
+
+// ---------------------------------------------------------------------------
+// BtAttackScheduler — manages active attacks, history, and concurrency
+// ---------------------------------------------------------------------------
+
+/// Maximum attack results kept in the rolling history.
+const MAX_HISTORY: usize = 100;
+
+/// Schedules and tracks BT attack sessions.
+pub struct BtAttackScheduler {
+    pub config: BtAttackConfig,
+    pub total_attacks: u64,
+    pub total_captures: u64,
+    /// device_id -> currently running attack type
+    pub active_attacks: HashMap<String, BtAttackType>,
+    /// Bounded rolling history of completed attack results.
+    pub attack_history: Vec<BtAttackResult>,
+}
+
+impl BtAttackScheduler {
+    /// Create a new scheduler with the given config.
+    pub fn new(config: BtAttackConfig) -> Self {
+        Self {
+            config,
+            total_attacks: 0,
+            total_captures: 0,
+            active_attacks: HashMap::new(),
+            attack_history: Vec::new(),
+        }
+    }
+
+    /// Attack types that are both toggled on and permitted at the current rage level.
+    pub fn active_attack_types(&self) -> Vec<BtAttackType> {
+        self.config.active_at_rage_level()
+    }
+
+    /// Record a completed attack result.
+    ///
+    /// Increments counters and appends to bounded history (oldest evicted
+    /// when full). The caller should call [`remove_active`] before this
+    /// to clear the device from the active set.
+    pub fn record(&mut self, result: BtAttackResult) {
+        self.total_attacks += 1;
+        if result.capture.is_some() {
+            self.total_captures += 1;
+        }
+        if self.attack_history.len() >= MAX_HISTORY {
+            self.attack_history.remove(0);
+        }
+        self.attack_history.push(result);
+    }
+
+    /// Mark a device as having an active attack.
+    pub fn mark_active(&mut self, device_id: &str, attack: BtAttackType) {
+        self.active_attacks.insert(device_id.to_string(), attack);
+    }
+
+    /// Remove a device from the active attack set (call when attack completes).
+    pub fn remove_active(&mut self, device_id: &str) {
+        self.active_attacks.remove(device_id);
+    }
+
+    /// Whether we have capacity for another concurrent attack.
+    pub fn can_attack(&self) -> bool {
+        (self.active_attacks.len() as u32) < self.config.max_concurrent_attacks
+    }
+
+    /// Number of currently active attack sessions.
+    pub fn active_count(&self) -> u32 {
+        self.active_attacks.len() as u32
+    }
+
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -454,5 +560,124 @@ stock_hcd = "/tmp/stock.hcd"
         assert_eq!(cfg.whitelist, vec!["AA:BB:CC"]);
         assert_eq!(cfg.capture_dir, "/tmp/bt_caps");
         assert!(!cfg.captures_count_as_xp);
+    }
+
+    // -----------------------------------------------------------------------
+    // BtAttackScheduler tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_scheduler_new() {
+        let sched = BtAttackScheduler::new(BtAttackConfig::default());
+        assert_eq!(sched.total_attacks, 0);
+        assert_eq!(sched.total_captures, 0);
+        assert!(sched.active_attacks.is_empty());
+        assert!(sched.attack_history.is_empty());
+    }
+
+    #[test]
+    fn test_scheduler_active_types_delegates() {
+        let sched = BtAttackScheduler::new(BtAttackConfig::default());
+        let types = sched.active_attack_types();
+        // Default config: rage=Low, on=[smp_downgrade, knob, vendor_cmd_unlock]
+        assert_eq!(types.len(), 3);
+        assert!(types.contains(&BtAttackType::SmpDowngrade));
+        assert!(types.contains(&BtAttackType::Knob));
+        assert!(types.contains(&BtAttackType::VendorCmdUnlock));
+    }
+
+    #[test]
+    fn test_scheduler_mark_active_and_can_attack() {
+        let mut cfg = BtAttackConfig::default();
+        cfg.max_concurrent_attacks = 2;
+        let mut sched = BtAttackScheduler::new(cfg);
+
+        assert!(sched.can_attack());
+        assert_eq!(sched.active_count(), 0);
+
+        sched.mark_active("d1", BtAttackType::Knob);
+        assert!(sched.can_attack());
+        assert_eq!(sched.active_count(), 1);
+
+        sched.mark_active("d2", BtAttackType::SmpDowngrade);
+        assert!(!sched.can_attack()); // at capacity
+        assert_eq!(sched.active_count(), 2);
+    }
+
+    #[test]
+    fn test_scheduler_remove_active() {
+        let mut sched = BtAttackScheduler::new(BtAttackConfig::default());
+        sched.mark_active("d1", BtAttackType::Knob);
+        assert_eq!(sched.active_count(), 1);
+
+        sched.remove_active("d1");
+        assert_eq!(sched.active_count(), 0);
+        assert!(sched.can_attack());
+    }
+
+    #[test]
+    fn test_scheduler_record_increments() {
+        let mut sched = BtAttackScheduler::new(BtAttackConfig::default());
+
+        // Record without capture
+        sched.record(BtAttackResult {
+            attack_type: BtAttackType::Knob,
+            target_address: "AA:BB:CC:DD:EE:FF".into(),
+            target_name: None,
+            success: false,
+            capture: None,
+            error: Some("timeout".into()),
+            timestamp: Instant::now(),
+        });
+        assert_eq!(sched.total_attacks, 1);
+        assert_eq!(sched.total_captures, 0);
+        assert_eq!(sched.attack_history.len(), 1);
+
+        // Record with capture
+        sched.record(BtAttackResult {
+            attack_type: BtAttackType::SmpDowngrade,
+            target_address: "11:22:33:44:55:66".into(),
+            target_name: Some("Phone".into()),
+            success: true,
+            capture: Some(BtCapture::LinkKey {
+                address: "11:22:33:44:55:66".into(),
+                key: vec![0xAA; 16],
+            }),
+            error: None,
+            timestamp: Instant::now(),
+        });
+        assert_eq!(sched.total_attacks, 2);
+        assert_eq!(sched.total_captures, 1);
+        assert_eq!(sched.attack_history.len(), 2);
+    }
+
+    #[test]
+    fn test_scheduler_history_bounded() {
+        let mut sched = BtAttackScheduler::new(BtAttackConfig::default());
+        for i in 0..150 {
+            sched.record(BtAttackResult {
+                attack_type: BtAttackType::L2capFuzz,
+                target_address: format!("AA:BB:CC:DD:{:02X}:{:02X}", i / 256, i % 256),
+                target_name: None,
+                success: false,
+                capture: None,
+                error: None,
+                timestamp: Instant::now(),
+            });
+        }
+        assert_eq!(sched.attack_history.len(), MAX_HISTORY); // capped at 100
+        assert_eq!(sched.total_attacks, 150); // counter still tracks all
+    }
+
+    #[test]
+    fn test_scheduler_mark_active_overwrites() {
+        let mut sched = BtAttackScheduler::new(BtAttackConfig::default());
+        sched.mark_active("d1", BtAttackType::Knob);
+        sched.mark_active("d1", BtAttackType::SmpDowngrade);
+        assert_eq!(sched.active_count(), 1);
+        assert_eq!(
+            sched.active_attacks.get("d1"),
+            Some(&BtAttackType::SmpDowngrade)
+        );
     }
 }
