@@ -45,6 +45,15 @@ input:checked+.slider:before{transform:translateX(22px)}
 .rate-btn.risky{border-color:#e67e22;color:#e67e22}
 .rate-btn.risky.active{background:#5a3000;color:#e67e22;border-color:#e67e22}
 .rate-btn:active{transform:scale(0.95)}
+.rage-card{margin-bottom:12px}
+.rage-row{display:flex;align-items:center;gap:12px;margin-top:8px}
+.rage-slider{flex:1;-webkit-appearance:none;appearance:none;height:8px;border-radius:4px;background:linear-gradient(90deg,#0f3460,#e67e22,#e74c3c);outline:none;opacity:0.9}
+.rage-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;border-radius:50%;background:#00d4aa;cursor:pointer;border:2px solid #0a1628}
+.rage-slider:disabled{opacity:0.3;cursor:not-allowed}
+.rage-slider:disabled::-webkit-slider-thumb{background:#555}
+.rage-level{font-size:20px;font-weight:bold;color:#00d4aa;min-width:80px;text-align:center}
+.rage-level.yolo{color:#e74c3c}
+.rage-disclaimer{color:#e67e22;font-size:11px;padding:6px 8px;background:#5a300033;border-radius:6px;margin-top:8px;display:none}
 .mode-btns{display:flex;gap:8px;margin-top:8px}
 .mode-btn{flex:1;padding:14px 0;border:2px solid #0f3460;border-radius:10px;background:transparent;color:#e0e0e0;font-size:16px;font-weight:bold;font-family:inherit;cursor:pointer;text-align:center;transition:.2s}
 .mode-btn.active{background:#00d4aa;color:#1a1a2e;border-color:#00d4aa}
@@ -118,7 +127,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="stat" style="cursor:help" title="Total handshakes and PMKIDs captured across all sessions — persists across restarts"><div class="label">PWND</div><div class="value" id="s-pwnd">-</div></div>
 <div class="stat" style="cursor:help" title="Charge counter — each charge is one full attack cycle (channel hop + attack pass)"><div class="label">CHARGES</div><div class="value" id="s-epoch">-</div></div>
 <div class="stat" style="cursor:help" title="Time since rusty-oxigotchi service started"><div class="label">UPTIME</div><div class="value" id="s-uptime">-</div></div>
-<div class="stat" style="cursor:help" title="AngryOxide attack rate. Rate 1 is max safe for BCM43436B0 — higher rates cause firmware crashes"><div class="label">RATE</div><div class="value" id="s-rate">-</div></div>
+<div class="stat" style="cursor:help" title="AngryOxide attack rate (1-3). All rates stable with v6 firmware patch"><div class="label">RATE</div><div class="value" id="s-rate">-</div></div>
 </div>
 </div>
 
@@ -188,6 +197,21 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
+<!-- RAGE Slider -->
+<div class="card rage-card">
+<div class="card-title">RAGE Slider</div>
+<div class="sub">Aggression preset &mdash; controls rate, dwell, and channels in one slider.</div>
+<div class="toggle-row" style="margin-top:8px">
+<div class="toggle-info"><div class="toggle-label">RAGE Mode</div><div class="toggle-desc" id="rage-desc">Custom &mdash; individual controls active</div></div>
+<label class="switch"><input type="checkbox" id="rage-toggle" onchange="toggleRage(this.checked)"><span class="slider"></span></label>
+</div>
+<div class="rage-row">
+<input type="range" class="rage-slider" id="rage-slider" min="1" max="7" value="4" oninput="slideRage(parseInt(this.value))" disabled>
+<div class="rage-level" id="rage-label">&mdash;</div>
+</div>
+<div class="rage-disclaimer" id="rage-yolo">&#9888; YOLO: Only combo that crashed in stress tests. AO may die &mdash; daemon auto-recovers.</div>
+</div>
+
 <!-- 8. Attack controls -->
 <div class="card" id="card-attacks">
 <div class="card-title">Attack Types</div>
@@ -219,11 +243,11 @@ input:checked+.slider:before{transform:translateX(22px)}
 
 <div style="margin-top:12px;padding-top:10px;border-top:1px solid #0f3460">
 <div style="font-size:12px;color:#888;margin-bottom:4px">Attack Rate</div>
-<div class="sub">Rate 1 is max safe for BCM43436B0. Higher rates cause firmware crashes.</div>
+<div class="sub">All rates stable with v6 firmware patch. Rate 3 + 500ms + all channels is the only crash combo.</div>
 <div class="rate-btns">
-<button class="rate-btn active" id="rate-1" onclick="setRate(1)">1<br><span style="font-size:10px;font-weight:normal;color:#888">Safe</span></button>
-<button class="rate-btn risky" id="rate-2" onclick="setRate(2)">2<br><span style="font-size:10px;font-weight:normal">Risky</span></button>
-<button class="rate-btn risky" id="rate-3" onclick="setRate(3)">3<br><span style="font-size:10px;font-weight:normal">Danger</span></button>
+<button class="rate-btn active" id="rate-1" onclick="setRate(1)">1<br><span style="font-size:10px;font-weight:normal;color:#888">Quiet</span></button>
+<button class="rate-btn" id="rate-2" onclick="setRate(2)">2<br><span style="font-size:10px;font-weight:normal">Normal</span></button>
+<button class="rate-btn risky" id="rate-3" onclick="setRate(3)">3<br><span style="font-size:10px;font-weight:normal">Aggressive</span></button>
 </div>
 </div>
 
@@ -237,7 +261,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div style="font-size:12px;color:#888;margin-bottom:4px">Dwell Time: <span id="ch-dwell-val">2000</span>ms</div>
 <input type="range" id="ch-dwell" class="ch-slider" min="500" max="10000" step="100" value="2000" oninput="document.getElementById('ch-dwell-val').textContent=this.value">
 </div>
-<div style="color:#e67e22;font-size:11px;padding:6px 8px;background:#5a300033;border-radius:6px;margin-bottom:8px">Warning: Some channels may cause BCM43436B0 firmware crashes. Stick to 1,6,11 for stability.</div>
+<div style="color:#27ae60;font-size:11px;padding:6px 8px;background:#1a472a33;border-radius:6px;margin-bottom:8px">All channel/dwell combos stable with v6 firmware patch. Only known crash: rate 3 + 500ms + all 13ch.</div>
 <button class="wl-btn wl-btn-add" onclick="applyChannels()">Apply</button>
 </div>
 
@@ -552,6 +576,11 @@ function refreshWifi() {
         if (ahToggle) ahToggle.checked = d.autohunt_enabled;
         var scToggle = document.getElementById('skip-captured-toggle');
         if (scToggle) scToggle.checked = d.skip_captured;
+        if (d.rage_level != null) {
+            updateRageLabel(d.rage_level, true);
+        } else {
+            updateRageLabel(0, false);
+        }
     });
 }
 
@@ -877,6 +906,7 @@ function toggleChannel(ch) {
 }
 
 function applyChannels() {
+    breakRage();
     var chStr = document.getElementById('ch-list').value.trim();
     var dwell = parseInt(document.getElementById('ch-dwell').value) || 2000;
     var autohunt = document.getElementById('autohunt-toggle').checked;
@@ -892,6 +922,7 @@ function applyChannels() {
 }
 
 function toggleAutohunt(enabled) {
+    breakRage();
     var input = document.getElementById('ch-list');
     var dwell = parseInt(document.getElementById('ch-dwell').value) || 2000;
     if (enabled) {
@@ -937,7 +968,62 @@ function toggleAttack(name, val) {
         toast('Attack ' + name + (val ? ' ON' : ' OFF'));
     });
 }
+var _rageNames = {1:'Chill',2:'Lurk',3:'Prowl',4:'Hunt',5:'RAGE',6:'FURY',7:'YOLO'};
+
+function updateRageLabel(level, enabled) {
+    var label = document.getElementById('rage-label');
+    var slider = document.getElementById('rage-slider');
+    var desc = document.getElementById('rage-desc');
+    var yolo = document.getElementById('rage-yolo');
+    var toggle = document.getElementById('rage-toggle');
+    if (enabled && level >= 1 && level <= 7) {
+        toggle.checked = true;
+        slider.disabled = false;
+        slider.value = level;
+        label.textContent = level + ' \u2014 ' + (_rageNames[level] || '?');
+        label.className = 'rage-level' + (level === 7 ? ' yolo' : '');
+        desc.textContent = _rageNames[level] + ' preset active';
+        yolo.style.display = level === 7 ? 'block' : 'none';
+    } else {
+        toggle.checked = false;
+        slider.disabled = true;
+        label.textContent = '\u2014';
+        label.className = 'rage-level';
+        desc.textContent = 'Custom \u2014 individual controls active';
+        yolo.style.display = 'none';
+    }
+}
+
+function toggleRage(on) {
+    if (on) {
+        var level = parseInt(document.getElementById('rage-slider').value) || 4;
+        api('POST', '/api/rage', {level: level}).then(function(r) {
+            if (r && r.ok) { updateRageLabel(level, true); toast('RAGE ' + _rageNames[level]); refreshWifi(); }
+        });
+    } else {
+        api('POST', '/api/rage', {level: null}).then(function(r) {
+            if (r && r.ok) { updateRageLabel(0, false); toast('Custom mode'); refreshWifi(); }
+        });
+    }
+}
+
+function slideRage(level) {
+    if (!document.getElementById('rage-toggle').checked) return;
+    api('POST', '/api/rage', {level: level}).then(function(r) {
+        if (r && r.ok) { updateRageLabel(level, true); toast('RAGE ' + _rageNames[level]); refreshWifi(); }
+    });
+}
+
+function breakRage() {
+    var toggle = document.getElementById('rage-toggle');
+    if (toggle.checked) {
+        api('POST', '/api/rage', {level: null});
+        updateRageLabel(0, false);
+    }
+}
+
 function setRate(r) {
+    breakRage();
     api('POST', '/api/rate', {rate: r}).then(function() {
         [1,2,3].forEach(function(n) {
             document.getElementById('rate-'+n).classList.toggle('active', n === r);
@@ -1128,6 +1214,11 @@ function updateWifiFromWs(d) {
     if (ahToggle) ahToggle.checked = d.autohunt_enabled;
     var scToggle = document.getElementById('skip-captured-toggle');
     if (scToggle) scToggle.checked = d.skip_captured;
+    if (d.rage_level != null) {
+        updateRageLabel(d.rage_level, true);
+    } else {
+        updateRageLabel(0, false);
+    }
 }
 
 function updateAttacksFromWs(d) {
