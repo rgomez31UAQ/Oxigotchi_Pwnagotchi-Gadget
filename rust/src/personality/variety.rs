@@ -8,8 +8,8 @@
 //! 5. Friend detection (when peer is found)
 //! 6. Upload face (when uploading captures)
 //! 3. Time-of-day (2-5am=sleep, 6-8am=motivated once, 22-1am=cool)
+//! 8. Random rare face (5% per epoch — breaks up idle loops)
 //! 4. Idle rotation (modulo 50 cycle: bored→lonely→demotivated→angry→sad)
-//! 8. Random rare face (5% per epoch)
 //! Default: awake
 
 use rand::Rng;
@@ -244,13 +244,13 @@ impl FaceVariety {
         if let Some(tod) = self.time_of_day_face() {
             return Some(tod);
         }
+        // 8. Random rare face — checked before idle so it can break up dry-spell loops
+        if let Some(rare) = self.rare_face {
+            return Some(rare);
+        }
         // 4. Idle rotation
         if let Some(idle) = self.idle_face() {
             return Some(idle);
-        }
-        // 8. Random rare face
-        if let Some(rare) = self.rare_face {
-            return Some(rare);
         }
         // Default: no override (caller uses "awake")
         None
