@@ -21,6 +21,9 @@ pub struct Config {
     /// Higher-level BT feature subsystem config.
     #[serde(default)]
     pub bt_feature: crate::bluetooth::model::config::BtFeatureConfig,
+    /// BT attack/offensive mode config.
+    #[serde(default)]
+    pub bt_attacks: crate::bluetooth::attacks::BtAttackConfig,
     /// GPU/runtime observation and optimization config.
     #[serde(default)]
     pub gpu: crate::gpu::config::GpuFeatureConfig,
@@ -252,6 +255,7 @@ impl Config {
             ui: UiConfig::default(),
             bluetooth: BluetoothConfig::default(),
             bt_feature: crate::bluetooth::model::config::BtFeatureConfig::default(),
+            bt_attacks: crate::bluetooth::attacks::BtAttackConfig::default(),
             gpu: crate::gpu::config::GpuFeatureConfig::default(),
             name: String::new(),
             whitelist: Vec::new(),

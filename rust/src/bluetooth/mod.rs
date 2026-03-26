@@ -7,6 +7,7 @@
 //! All Command calls are `#[cfg(unix)]` gated.
 
 pub mod adapter;
+pub mod attacks;
 pub mod coex;
 pub mod controller;
 pub mod discovery;

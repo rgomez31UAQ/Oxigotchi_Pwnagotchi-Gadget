@@ -6,6 +6,7 @@ pub enum BtMode {
     Passive,
     Telemetry,
     Lab,
+    Attack,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
