@@ -51,6 +51,9 @@ input:checked+.slider:before{transform:translateX(22px)}
 .rage-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;border-radius:50%;background:#00d4aa;cursor:pointer;border:2px solid #0a1628}
 .rage-slider:disabled{opacity:0.3;cursor:not-allowed}
 .rage-slider:disabled::-webkit-slider-thumb{background:#555}
+.rage-slider::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:#00d4aa;cursor:pointer;border:2px solid #0a1628}
+.rage-slider:disabled::-moz-range-thumb{background:#555}
+.rage-slider::-moz-range-track{height:8px;border-radius:4px;background:linear-gradient(90deg,#0f3460,#e67e22,#e74c3c)}
 .rage-level{font-size:20px;font-weight:bold;color:#00d4aa;min-width:80px;text-align:center}
 .rage-level.yolo{color:#e74c3c}
 .rage-disclaimer{color:#e67e22;font-size:11px;padding:6px 8px;background:#5a300033;border-radius:6px;margin-top:8px;display:none}
@@ -381,6 +384,8 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <div class="label">Mode</div><div class="value" id="gpu-mode">-</div>
 <div class="label">Signal</div><div class="value" id="gpu-signal">-</div>
 <div class="label">Submit</div><div class="value" id="gpu-submit">-</div>
+<div class="label">Policy</div><div class="value" id="gpu-policy">-</div>
+<div class="label">Threshold</div><div class="value" id="gpu-threshold">-</div>
 </div>
 </div>
 
@@ -581,6 +586,8 @@ function refreshGpu() {
             (d.signal === 'DisplayInspectOnly' ? '#888' : '#e0e0e0'));
         document.getElementById('gpu-submit').textContent = d.submit_seen ? 'Seen' : 'No';
         document.getElementById('gpu-submit').style.color = d.submit_seen ? '#00d4aa' : '#888';
+        document.getElementById('gpu-policy').textContent = d.snapshot_policy || '-';
+        document.getElementById('gpu-threshold').textContent = d.flush_threshold != null ? d.flush_threshold : '-';
     });
 }
 
@@ -1238,6 +1245,8 @@ function updateGpuFromWs(d) {
         (d.signal === 'DisplayInspectOnly' ? '#888' : '#e0e0e0'));
     document.getElementById('gpu-submit').textContent = d.submit_seen ? 'Seen' : 'No';
     document.getElementById('gpu-submit').style.color = d.submit_seen ? '#00d4aa' : '#888';
+    document.getElementById('gpu-policy').textContent = d.snapshot_policy || '-';
+    document.getElementById('gpu-threshold').textContent = d.flush_threshold != null ? d.flush_threshold : '-';
 }
 
 function updateWifiFromWs(d) {

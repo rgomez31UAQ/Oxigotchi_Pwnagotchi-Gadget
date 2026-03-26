@@ -295,8 +295,8 @@ impl Daemon {
         // Load Lua plugins — read persisted positions from plugins.toml, fall back to defaults
         let plugin_defaults = vec![
             lua::PluginConfig::default_for("ao_status", 0, 0),
-            lua::PluginConfig::default_for("aps", 145, 0),
-            lua::PluginConfig::default_for("uptime", 200, 0),
+            lua::PluginConfig::default_for("aps", 140, 0),
+            lua::PluginConfig::default_for("uptime", 190, 0),
             lua::PluginConfig::default_for("status_msg", 125, 20),
             lua::PluginConfig::default_for("sys_stats", 125, 85),
             lua::PluginConfig::default_for("ip_display", 0, 95),
@@ -1821,6 +1821,7 @@ impl Daemon {
         s.bt_feature_devices_now = self.bt_feature.state.summary.devices_now;
         s.bt_feature_contention_score = self.bt_feature.state.coex.contention_score;
 
+        let gpu_policy = self.gpu_optimizer.policy_for(&self.gpu_state.runtime);
         s.gpu_mode = format!("{:?}", self.gpu_state.mode);
         s.gpu_signal = self
             .gpu_state
@@ -1830,6 +1831,8 @@ impl Daemon {
             .map(|s| format!("{s:?}"))
             .unwrap_or_else(|| "None".to_string());
         s.gpu_submit_seen = self.gpu_state.runtime.vc4_submit_cl_seen;
+        s.gpu_snapshot_policy = gpu_policy.as_str().to_string();
+        s.gpu_flush_threshold = gpu_policy.threshold();
 
         s.ao_state = ao_state;
         s.ao_pid = ao_pid;
