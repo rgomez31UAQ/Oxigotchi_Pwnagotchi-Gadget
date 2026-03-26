@@ -174,6 +174,11 @@ pub struct DaemonState {
     // -- channel config --
     pub pending_channel_config: Option<ChannelConfig>,
 
+    // -- rage slider --
+    pub rage_enabled: bool,
+    pub rage_level: u8,
+    pub pending_rage_change: Option<Option<u8>>,  // Some(Some(n)) = set level n, Some(None) = disable
+
     // -- smart skip --
     pub pending_skip_captured: Option<bool>,
 
@@ -299,6 +304,9 @@ impl DaemonState {
             pending_whitelist_adds: Vec::new(),
             pending_whitelist_removes: Vec::new(),
             pending_channel_config: None,
+            rage_enabled: false,
+            rage_level: 0,
+            pending_rage_change: None,
             pending_skip_captured: None,
             pending_capture_all: None,
             wpasec_api_key: String::new(),
@@ -437,6 +445,7 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
             dwell_ms: s.wifi_dwell_ms,
             autohunt_enabled: s.autohunt_enabled,
             skip_captured: s.skip_captured,
+            rage_level: if s.rage_enabled { Some(s.rage_level) } else { None },
         },
         bluetooth: BluetoothInfo {
             connected: s.bt_connected,
@@ -633,6 +642,12 @@ pub struct RateChange {
     pub rate: u32,
 }
 
+/// Rage slider change request for POST /api/rage.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RageChange {
+    pub level: Option<u8>,
+}
+
 /// Radio status response for GET /api/radio.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RadioResponse {
@@ -685,6 +700,7 @@ pub struct WifiInfo {
     pub dwell_ms: u64,
     pub autohunt_enabled: bool,
     pub skip_captured: bool,
+    pub rage_level: Option<u8>,
 }
 
 /// WiFi update request for POST /api/wifi.
@@ -905,6 +921,7 @@ pub const API_DISPLAY: &str = "/api/display.png";
 pub const API_BATTERY: &str = "/api/battery";
 pub const API_WIFI: &str = "/api/wifi";
 pub const API_BLUETOOTH: &str = "/api/bluetooth";
+pub const API_GPU: &str = "/api/gpu";
 pub const API_RECOVERY: &str = "/api/recovery";
 pub const API_PERSONALITY: &str = "/api/personality";
 pub const API_SYSTEM: &str = "/api/system";
@@ -921,6 +938,7 @@ pub const API_APS: &str = "/api/aps";
 pub const API_WHITELIST_ADD: &str = "/api/whitelist/add";
 pub const API_WHITELIST_REMOVE: &str = "/api/whitelist/remove";
 pub const API_CHANNELS: &str = "/api/channels";
+pub const API_RAGE: &str = "/api/rage";
 pub const API_LOGS: &str = "/api/logs";
 pub const API_WPASEC: &str = "/api/wpasec";
 pub const API_DISCORD: &str = "/api/discord";
@@ -1151,6 +1169,7 @@ async fn wifi_handler(State(state): State<SharedState>) -> Json<WifiInfo> {
         dwell_ms: s.wifi_dwell_ms,
         autohunt_enabled: s.autohunt_enabled,
         skip_captured: s.skip_captured,
+        rage_level: if s.rage_enabled { Some(s.rage_level) } else { None },
     })
 }
 
@@ -1183,6 +1202,16 @@ async fn bluetooth_handler(State(state): State<SharedState>) -> Json<BluetoothIn
         feature_mode: s.bt_feature_mode.clone(),
         nearby_devices: s.bt_feature_devices_now,
         contention_score: s.bt_feature_contention_score,
+    })
+}
+
+/// GET /api/gpu -> JSON gpu/runtime info
+async fn gpu_handler(State(state): State<SharedState>) -> Json<GpuInfo> {
+    let s = state.lock().unwrap();
+    Json(GpuInfo {
+        mode: s.gpu_mode.clone(),
+        signal: s.gpu_signal.clone(),
+        submit_seen: s.gpu_submit_seen,
     })
 }
 
@@ -1344,10 +1373,36 @@ async fn rate_handler(
     let rate = body.rate.clamp(1, 3);
     let mut s = state.lock().unwrap();
     s.pending_rate_change = Some(rate);
+    s.pending_rage_change = Some(None); // manual rate change breaks out of RAGE
     Json(ActionResponse {
         ok: true,
         message: format!("Rate change to {} queued", rate),
     })
+}
+
+/// POST /api/rage -> set or clear rage slider level
+async fn rage_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<RageChange>,
+) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    match body.level {
+        Some(level) => {
+            let clamped = level.clamp(1, 7);
+            s.pending_rage_change = Some(Some(clamped));
+            Json(ActionResponse {
+                ok: true,
+                message: format!("RAGE level {} queued", clamped),
+            })
+        }
+        None => {
+            s.pending_rage_change = Some(None);
+            Json(ActionResponse {
+                ok: true,
+                message: "RAGE disabled, Custom mode".into(),
+            })
+        }
+    }
 }
 
 /// POST /api/restart -> restart AO
@@ -1436,6 +1491,7 @@ async fn channels_handler(
 ) -> Json<ActionResponse> {
     let mut s = state.lock().unwrap();
     s.pending_channel_config = Some(body);
+    s.pending_rage_change = Some(None); // manual channel change breaks out of RAGE
     Json(ActionResponse {
         ok: true,
         message: "Channel config update queued".into(),
@@ -1871,6 +1927,7 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_BATTERY, get(battery_handler))
         .route(API_WIFI, get(wifi_handler).post(wifi_update_handler))
         .route(API_BLUETOOTH, get(bluetooth_handler).post(bluetooth_toggle_handler))
+        .route(API_GPU, get(gpu_handler))
         .route(API_PERSONALITY, get(personality_handler))
         .route(API_SYSTEM, get(system_handler))
         .route(API_ATTACKS, get(attacks_get_handler).post(attacks_post_handler))
@@ -1888,6 +1945,7 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_WHITELIST_ADD, post(whitelist_add_handler))
         .route(API_WHITELIST_REMOVE, post(whitelist_remove_handler))
         .route(API_CHANNELS, post(channels_handler))
+        .route(API_RAGE, post(rage_handler))
         .route(API_LOGS, get(logs_handler))
         .route(API_WPASEC, get(wpasec_get_handler).post(wpasec_post_handler))
         .route(API_DISCORD, get(discord_get_handler).post(discord_post_handler))
@@ -2051,6 +2109,7 @@ mod tests {
             state: "Monitor".into(), channel: 6,
             aps_tracked: 15, channels: vec![1, 6, 11], dwell_ms: 250,
             autohunt_enabled: true, skip_captured: true,
+            rage_level: None,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"state\":\"Monitor\""));
@@ -2756,5 +2815,77 @@ mod tests {
         let s = state.lock().unwrap();
         assert_eq!(s.pending_plugin_updates.len(), 1);
         assert_eq!(s.pending_plugin_updates[0].name, "uptime");
+    }
+
+    #[tokio::test]
+    async fn test_post_rage_sets_level() {
+        let (router, state) = test_router();
+        let (status, body) = post_json(&router, "/api/rage",
+            r#"{"level": 4}"#).await;
+        assert_eq!(status, 200);
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
+        assert!(resp.message.contains("4"));
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_rage_change, Some(Some(4)));
+    }
+
+    #[tokio::test]
+    async fn test_post_rage_null_clears() {
+        let (router, state) = test_router();
+        let (status, body) = post_json(&router, "/api/rage",
+            r#"{"level": null}"#).await;
+        assert_eq!(status, 200);
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_rage_change, Some(None));
+    }
+
+    #[tokio::test]
+    async fn test_post_rage_clamps_to_7() {
+        let (router, state) = test_router();
+        let (status, _) = post_json(&router, "/api/rage",
+            r#"{"level": 10}"#).await;
+        assert_eq!(status, 200);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_rage_change, Some(Some(7)));
+    }
+
+    #[tokio::test]
+    async fn test_post_rage_clamps_to_1() {
+        let (router, state) = test_router();
+        let (status, _) = post_json(&router, "/api/rage",
+            r#"{"level": 0}"#).await;
+        assert_eq!(status, 200);
+        let s = state.lock().unwrap();
+        assert_eq!(s.pending_rage_change, Some(Some(1)));
+    }
+
+    #[tokio::test]
+    async fn test_wifi_info_includes_rage_level() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.rage_enabled = true;
+            s.rage_level = 5;
+        }
+        let (status, body) = get(&router, "/api/wifi").await;
+        assert_eq!(status, 200);
+        let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(info["rage_level"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_wifi_info_rage_null_when_custom() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.rage_enabled = false;
+        }
+        let (status, body) = get(&router, "/api/wifi").await;
+        assert_eq!(status, 200);
+        let info: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(info["rage_level"].is_null());
     }
 }
