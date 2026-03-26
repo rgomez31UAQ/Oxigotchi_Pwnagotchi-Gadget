@@ -107,6 +107,31 @@ pub struct DaemonState {
     pub bt_feature_devices_now: u32,
     pub bt_feature_contention_score: u32,
 
+    // -- bt attacks --
+    pub bt_attack_enabled: bool,
+    pub bt_rage_level: String,
+    pub bt_attack_smp_downgrade: bool,
+    pub bt_attack_smp_mitm: bool,
+    pub bt_attack_knob: bool,
+    pub bt_attack_ble_adv_injection: bool,
+    pub bt_attack_ble_conn_hijack: bool,
+    pub bt_attack_l2cap_fuzz: bool,
+    pub bt_attack_att_gatt_fuzz: bool,
+    pub bt_attack_vendor_cmd_unlock: bool,
+    pub bt_total_attacks: u64,
+    pub bt_total_captures: u64,
+    pub bt_active_attacks: u32,
+    pub bt_devices_seen: u32,
+    pub bt_patchram_state: String,
+    pub bt_capture_keys: u32,
+    pub bt_capture_crashes: u32,
+    pub bt_capture_vendor: u32,
+
+    // -- bt attack action requests --
+    pub pending_bt_attack_toggle: Option<BtAttackToggle>,
+    pub pending_bt_rage_level: Option<String>,
+    pub pending_bt_target: Option<String>,
+
     // -- gpu --
     pub gpu_mode: String,
     pub gpu_signal: String,
@@ -271,6 +296,27 @@ impl DaemonState {
             bt_feature_mode: "Off".into(),
             bt_feature_devices_now: 0,
             bt_feature_contention_score: 0,
+            bt_attack_enabled: true,
+            bt_rage_level: "Medium".into(),
+            bt_attack_smp_downgrade: true,
+            bt_attack_smp_mitm: false,
+            bt_attack_knob: true,
+            bt_attack_ble_adv_injection: false,
+            bt_attack_ble_conn_hijack: false,
+            bt_attack_l2cap_fuzz: false,
+            bt_attack_att_gatt_fuzz: false,
+            bt_attack_vendor_cmd_unlock: true,
+            bt_total_attacks: 0,
+            bt_total_captures: 0,
+            bt_active_attacks: 0,
+            bt_devices_seen: 0,
+            bt_patchram_state: String::new(),
+            bt_capture_keys: 0,
+            bt_capture_crashes: 0,
+            bt_capture_vendor: 0,
+            pending_bt_attack_toggle: None,
+            pending_bt_rage_level: None,
+            pending_bt_target: None,
             gpu_mode: "Off".into(),
             gpu_signal: "None".into(),
             gpu_submit_seen: false,
@@ -704,6 +750,77 @@ pub struct ActionResponse {
     pub message: String,
 }
 
+/// BT attack toggle request for POST /api/bt/attacks/toggle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BtAttackToggle {
+    pub attack: String,
+    pub enabled: bool,
+}
+
+/// BT rage level change request for POST /api/bt/attacks/rage.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BtRageLevelRequest {
+    pub level: String,
+}
+
+/// BT target request for POST /api/bt/attacks/target.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BtTargetRequest {
+    pub address: String,
+}
+
+/// BT attack state response for GET /api/bt/attacks.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtAttackResponse {
+    pub enabled: bool,
+    pub rage_level: String,
+    pub toggles: BtAttackToggles,
+    pub stats: BtAttackStats,
+}
+
+/// BT attack toggle states.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtAttackToggles {
+    pub smp_downgrade: bool,
+    pub smp_mitm: bool,
+    pub knob: bool,
+    pub ble_adv_injection: bool,
+    pub ble_conn_hijack: bool,
+    pub l2cap_fuzz: bool,
+    pub att_gatt_fuzz: bool,
+    pub vendor_cmd_unlock: bool,
+}
+
+/// BT attack statistics.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtAttackStats {
+    pub total_attacks: u64,
+    pub total_captures: u64,
+    pub active_attacks: u32,
+    pub devices_seen: u32,
+}
+
+/// BT devices response for GET /api/bt/devices.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtDevicesResponse {
+    pub count: u32,
+}
+
+/// BT captures response for GET /api/bt/captures.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtCapturesResponse {
+    pub keys: u32,
+    pub crashes: u32,
+    pub vendor: u32,
+    pub total: u64,
+}
+
+/// BT patchram response for GET /api/bt/patchram.
+#[derive(Debug, Clone, Serialize)]
+pub struct BtPatchramResponse {
+    pub state: String,
+}
+
 /// Config update request for /api/config.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfigUpdate {
@@ -993,6 +1110,13 @@ pub const API_BT_SCAN: &str = "/api/bluetooth/scan";
 pub const API_BT_PAIR: &str = "/api/bluetooth/pair";
 pub const API_RADIO: &str = "/api/radio";
 pub const API_CAPTURE_ALL: &str = "/api/capture-all";
+pub const API_BT_ATTACKS: &str = "/api/bt/attacks";
+pub const API_BT_ATTACKS_TOGGLE: &str = "/api/bt/attacks/toggle";
+pub const API_BT_ATTACKS_RAGE: &str = "/api/bt/attacks/rage";
+pub const API_BT_ATTACKS_TARGET: &str = "/api/bt/attacks/target";
+pub const API_BT_DEVICES: &str = "/api/bt/devices";
+pub const API_BT_CAPTURES: &str = "/api/bt/captures";
+pub const API_BT_PATCHRAM: &str = "/api/bt/patchram";
 
 // ---------------------------------------------------------------------------
 // StatusParams helper (used by main.rs to build StatusResponse)
@@ -2013,6 +2137,114 @@ async fn download_zip_handler(State(state): State<SharedState>) -> axum::respons
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// BT attack API handlers
+// ---------------------------------------------------------------------------
+
+/// GET /api/bt/attacks -> JSON BT attack state
+async fn bt_attacks_get_handler(State(state): State<SharedState>) -> Json<BtAttackResponse> {
+    let s = state.lock().unwrap();
+    Json(BtAttackResponse {
+        enabled: s.bt_attack_enabled,
+        rage_level: s.bt_rage_level.clone(),
+        toggles: BtAttackToggles {
+            smp_downgrade: s.bt_attack_smp_downgrade,
+            smp_mitm: s.bt_attack_smp_mitm,
+            knob: s.bt_attack_knob,
+            ble_adv_injection: s.bt_attack_ble_adv_injection,
+            ble_conn_hijack: s.bt_attack_ble_conn_hijack,
+            l2cap_fuzz: s.bt_attack_l2cap_fuzz,
+            att_gatt_fuzz: s.bt_attack_att_gatt_fuzz,
+            vendor_cmd_unlock: s.bt_attack_vendor_cmd_unlock,
+        },
+        stats: BtAttackStats {
+            total_attacks: s.bt_total_attacks,
+            total_captures: s.bt_total_captures,
+            active_attacks: s.bt_active_attacks,
+            devices_seen: s.bt_devices_seen,
+        },
+    })
+}
+
+/// POST /api/bt/attacks/toggle -> toggle a BT attack type
+async fn bt_attacks_toggle_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<BtAttackToggle>,
+) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    // Optimistic update: immediately set the matching field
+    match body.attack.as_str() {
+        "smp_downgrade" => s.bt_attack_smp_downgrade = body.enabled,
+        "smp_mitm" => s.bt_attack_smp_mitm = body.enabled,
+        "knob" => s.bt_attack_knob = body.enabled,
+        "ble_adv_injection" => s.bt_attack_ble_adv_injection = body.enabled,
+        "ble_conn_hijack" => s.bt_attack_ble_conn_hijack = body.enabled,
+        "l2cap_fuzz" => s.bt_attack_l2cap_fuzz = body.enabled,
+        "att_gatt_fuzz" => s.bt_attack_att_gatt_fuzz = body.enabled,
+        "vendor_cmd_unlock" => s.bt_attack_vendor_cmd_unlock = body.enabled,
+        _ => {}
+    }
+    s.pending_bt_attack_toggle = Some(body);
+    Json(ActionResponse {
+        ok: true,
+        message: "BT attack toggle updated".into(),
+    })
+}
+
+/// POST /api/bt/attacks/rage -> set BT rage level
+async fn bt_attacks_rage_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<BtRageLevelRequest>,
+) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    s.bt_rage_level = body.level.clone(); // optimistic
+    s.pending_bt_rage_level = Some(body.level.clone());
+    Json(ActionResponse {
+        ok: true,
+        message: format!("BT rage level set to {}", body.level),
+    })
+}
+
+/// POST /api/bt/attacks/target -> set BT attack target
+async fn bt_attacks_target_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<BtTargetRequest>,
+) -> Json<ActionResponse> {
+    let mut s = state.lock().unwrap();
+    s.pending_bt_target = Some(body.address.clone());
+    Json(ActionResponse {
+        ok: true,
+        message: format!("BT target set to {}", body.address),
+    })
+}
+
+/// GET /api/bt/devices -> JSON device count
+async fn bt_devices_handler(State(state): State<SharedState>) -> Json<BtDevicesResponse> {
+    let s = state.lock().unwrap();
+    Json(BtDevicesResponse {
+        count: s.bt_devices_seen,
+    })
+}
+
+/// GET /api/bt/captures -> JSON capture counts
+async fn bt_captures_handler(State(state): State<SharedState>) -> Json<BtCapturesResponse> {
+    let s = state.lock().unwrap();
+    Json(BtCapturesResponse {
+        keys: s.bt_capture_keys,
+        crashes: s.bt_capture_crashes,
+        vendor: s.bt_capture_vendor,
+        total: s.bt_total_captures,
+    })
+}
+
+/// GET /api/bt/patchram -> JSON patchram state
+async fn bt_patchram_handler(State(state): State<SharedState>) -> Json<BtPatchramResponse> {
+    let s = state.lock().unwrap();
+    Json(BtPatchramResponse {
+        state: s.bt_patchram_state.clone(),
+    })
+}
+
 // WebSocket handler
 // ---------------------------------------------------------------------------
 
@@ -2131,6 +2363,13 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_RADIO, get(radio_get_handler).post(radio_post_handler))
         .route(API_CAPTURE_ALL, post(capture_all_handler))
         .route(API_DELETE_CAPTURE, delete(delete_capture_handler))
+        .route(API_BT_ATTACKS, get(bt_attacks_get_handler))
+        .route(API_BT_ATTACKS_TOGGLE, post(bt_attacks_toggle_handler))
+        .route(API_BT_ATTACKS_RAGE, post(bt_attacks_rage_handler))
+        .route(API_BT_ATTACKS_TARGET, post(bt_attacks_target_handler))
+        .route(API_BT_DEVICES, get(bt_devices_handler))
+        .route(API_BT_CAPTURES, get(bt_captures_handler))
+        .route(API_BT_PATCHRAM, get(bt_patchram_handler))
         .with_state(app)
 }
 

@@ -1171,6 +1171,74 @@ impl Daemon {
             any_command = true; // triggers save_runtime_state
         }
 
+        // Process pending BT attack toggle
+        let bt_attack_toggle = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_bt_attack_toggle.take()
+        };
+        if let Some(toggle) = bt_attack_toggle {
+            any_command = true;
+            if let Some(attack_type) = match toggle.attack.as_str() {
+                "smp_downgrade" => {
+                    Some(crate::bluetooth::attacks::BtAttackType::SmpDowngrade)
+                }
+                "smp_mitm" => Some(crate::bluetooth::attacks::BtAttackType::SmpMitm),
+                "knob" => Some(crate::bluetooth::attacks::BtAttackType::Knob),
+                "ble_adv_injection" => {
+                    Some(crate::bluetooth::attacks::BtAttackType::BleAdvInjection)
+                }
+                "ble_conn_hijack" => {
+                    Some(crate::bluetooth::attacks::BtAttackType::BleConnHijack)
+                }
+                "l2cap_fuzz" => Some(crate::bluetooth::attacks::BtAttackType::L2capFuzz),
+                "att_gatt_fuzz" => {
+                    Some(crate::bluetooth::attacks::BtAttackType::AttGattFuzz)
+                }
+                "vendor_cmd_unlock" => {
+                    Some(crate::bluetooth::attacks::BtAttackType::VendorCmdUnlock)
+                }
+                _ => None,
+            } {
+                self.bt_attack_scheduler
+                    .config
+                    .set_toggle(attack_type, toggle.enabled);
+                // Keep main config in sync with scheduler config
+                self.config
+                    .bt_attacks
+                    .set_toggle(attack_type, toggle.enabled);
+                info!(
+                    "web: BT attack {} set to {}",
+                    toggle.attack, toggle.enabled
+                );
+            }
+        }
+
+        // Process pending BT rage level change
+        let bt_rage_level = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_bt_rage_level.take()
+        };
+        if let Some(level) = bt_rage_level {
+            any_command = true;
+            if let Some(rage) =
+                crate::bluetooth::attacks::BtRageLevel::from_str(&level)
+            {
+                self.bt_attack_scheduler.config.rage_level = rage;
+                self.config.bt_attacks.rage_level = rage;
+                info!("web: BT rage level set to {}", level);
+            }
+        }
+
+        // Process pending BT target (no-op for now, placeholder for future targeting)
+        let bt_target = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_bt_target.take()
+        };
+        if let Some(addr) = bt_target {
+            any_command = true;
+            info!("web: BT target set to {} (queued)", addr);
+        }
+
         // Process BT scan request — spawn in background thread to avoid blocking
         let bt_scan_needed = {
             let s = self.shared_state.lock().unwrap();
@@ -1987,6 +2055,26 @@ impl Daemon {
         s.bt_feature_mode = format!("{:?}", self.bt_feature.state.mode);
         s.bt_feature_devices_now = self.bt_feature.state.summary.devices_now;
         s.bt_feature_contention_score = self.bt_feature.state.coex.contention_score;
+
+        // -- bt attacks --
+        s.bt_attack_enabled = self.config.bt_attacks.enabled;
+        s.bt_rage_level = self.config.bt_attacks.rage_level.as_str().to_string();
+        s.bt_attack_smp_downgrade = self.config.bt_attacks.smp_downgrade;
+        s.bt_attack_smp_mitm = self.config.bt_attacks.smp_mitm;
+        s.bt_attack_knob = self.config.bt_attacks.knob;
+        s.bt_attack_ble_adv_injection = self.config.bt_attacks.ble_adv_injection;
+        s.bt_attack_ble_conn_hijack = self.config.bt_attacks.ble_conn_hijack;
+        s.bt_attack_l2cap_fuzz = self.config.bt_attacks.l2cap_fuzz;
+        s.bt_attack_att_gatt_fuzz = self.config.bt_attacks.att_gatt_fuzz;
+        s.bt_attack_vendor_cmd_unlock = self.config.bt_attacks.vendor_cmd_unlock;
+        s.bt_total_attacks = self.bt_attack_scheduler.total_attacks;
+        s.bt_total_captures = self.bt_attack_scheduler.total_captures;
+        s.bt_active_attacks = self.bt_attack_scheduler.active_count();
+        s.bt_devices_seen = self.bt_discovery.summary().devices_now;
+        s.bt_patchram_state = self.patchram.state.as_str().to_string();
+        s.bt_capture_keys = self.bt_capture_manager.total_keys;
+        s.bt_capture_crashes = self.bt_capture_manager.total_crashes;
+        s.bt_capture_vendor = self.bt_capture_manager.total_vendor;
 
         let gpu_policy = self.gpu_optimizer.policy_for(&self.gpu_state.runtime);
         s.gpu_mode = format!("{:?}", self.gpu_state.mode);
