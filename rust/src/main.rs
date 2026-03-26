@@ -52,10 +52,11 @@ const ATTACK_RATE: u32 = 1;
 /// Default capture directory.
 const CAPTURE_DIR: &str = "/home/pi/captures";
 
-/// Operating mode: RAGE (WiFi attacks) or SAFE (BT internet).
+/// Operating mode: RAGE (WiFi attacks), BT (Bluetooth offensive), or SAFE (BT internet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OperatingMode {
     Rage,
+    Bt,
     Safe,
 }
 
@@ -63,15 +64,23 @@ impl OperatingMode {
     fn as_str(&self) -> &str {
         match self {
             OperatingMode::Rage => "RAGE",
+            OperatingMode::Bt => "BT",
             OperatingMode::Safe => "SAFE",
         }
     }
 
-    fn toggle(&self) -> Self {
+    /// Three-way cycle: RAGE → BT → SAFE → RAGE.
+    fn next(&self) -> Self {
         match self {
-            OperatingMode::Rage => OperatingMode::Safe,
+            OperatingMode::Rage => OperatingMode::Bt,
+            OperatingMode::Bt => OperatingMode::Safe,
             OperatingMode::Safe => OperatingMode::Rage,
         }
+    }
+
+    /// Backward-compat alias for `next()`.
+    fn toggle(&self) -> Self {
+        self.next()
     }
 }
 
@@ -961,14 +970,16 @@ impl Daemon {
             info!("web: mode switch to {mode}");
             match mode.to_uppercase().as_str() {
                 "TOGGLE" => {
-                    let new_mode = self.mode.toggle();
+                    let new_mode = self.mode.next();
                     match new_mode {
                         OperatingMode::Safe => self.enter_safe_mode(),
+                        OperatingMode::Bt => self.enter_bt_mode(),
                         OperatingMode::Rage => self.enter_rage_mode(),
                     }
                 }
-                "SAFE" if self.mode == OperatingMode::Rage => self.enter_safe_mode(),
-                "RAGE" if self.mode == OperatingMode::Safe => self.enter_rage_mode(),
+                "SAFE" if self.mode != OperatingMode::Safe => self.enter_safe_mode(),
+                "BT" if self.mode != OperatingMode::Bt => self.enter_bt_mode(),
+                "RAGE" if self.mode != OperatingMode::Rage => self.enter_rage_mode(),
                 _ => {
                     let mut s = self.shared_state.lock().unwrap();
                     s.mode = mode;
@@ -2277,6 +2288,13 @@ impl Daemon {
         display::driver::request_reinit();
     }
 
+    /// Transition into BT attack mode (stub — radio handoff added in Task 4).
+    fn enter_bt_mode(&mut self) {
+        info!("mode: {} -> BT", self.mode.as_str());
+        self.mode = OperatingMode::Bt;
+        log::info!("Entering BT attack mode");
+    }
+
     /// Transition from SAFE to RAGE mode via radio lock manager.
     fn enter_rage_mode(&mut self) {
         info!("mode: SAFE -> RAGE");
@@ -2936,14 +2954,23 @@ mod tests {
     }
 
     #[test]
-    fn test_operating_mode_toggle() {
-        assert_eq!(OperatingMode::Rage.toggle(), OperatingMode::Safe);
-        assert_eq!(OperatingMode::Safe.toggle(), OperatingMode::Rage);
+    fn test_operating_mode_next() {
+        assert_eq!(OperatingMode::Rage.next(), OperatingMode::Bt);
+        assert_eq!(OperatingMode::Bt.next(), OperatingMode::Safe);
+        assert_eq!(OperatingMode::Safe.next(), OperatingMode::Rage);
+    }
+
+    #[test]
+    fn test_operating_mode_toggle_is_next() {
+        assert_eq!(OperatingMode::Rage.toggle(), OperatingMode::Rage.next());
+        assert_eq!(OperatingMode::Bt.toggle(), OperatingMode::Bt.next());
+        assert_eq!(OperatingMode::Safe.toggle(), OperatingMode::Safe.next());
     }
 
     #[test]
     fn test_operating_mode_as_str() {
         assert_eq!(OperatingMode::Rage.as_str(), "RAGE");
+        assert_eq!(OperatingMode::Bt.as_str(), "BT");
         assert_eq!(OperatingMode::Safe.as_str(), "SAFE");
     }
 
