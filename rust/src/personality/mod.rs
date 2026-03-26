@@ -363,7 +363,7 @@ pub struct Personality {
     /// Status text cycling: epochs the current status has been shown.
     status_display_epochs: u32,
     /// The currently displayed status text.
-    current_status: String,
+    pub(crate) current_status: String,
 }
 
 impl Personality {

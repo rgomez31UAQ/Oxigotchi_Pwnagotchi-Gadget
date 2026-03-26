@@ -95,6 +95,8 @@ struct Daemon {
     bluetooth: bluetooth::BtTether,
     bt_feature: bluetooth::supervisor::BtSupervisor,
     bt_discovery: bluetooth::discovery::BtDiscoveryWorker,
+    bt_attack_scheduler: bluetooth::attacks::BtAttackScheduler,
+    bt_capture_manager: bluetooth::capture::BtCaptureManager,
     bt_controller_worker: bluetooth::controller::BtControllerWorker,
     bt_coex_worker: bluetooth::coex::BtCoexWorker,
     battery: pisugar::PiSugar,
@@ -175,6 +177,8 @@ impl Daemon {
             config.bt_attacks.attack_hcd.clone(),
             config.bt_attacks.stock_hcd.clone(),
         );
+        let bt_attack_scheduler = bluetooth::attacks::BtAttackScheduler::new(config.bt_attacks.clone());
+        let bt_capture_manager = bluetooth::capture::BtCaptureManager::new(&config.bt_attacks.capture_dir);
 
         Self {
             config,
@@ -186,6 +190,8 @@ impl Daemon {
             bluetooth,
             bt_feature,
             bt_discovery: bluetooth::discovery::BtDiscoveryWorker::new(),
+            bt_attack_scheduler,
+            bt_capture_manager,
             bt_controller_worker: bluetooth::controller::BtControllerWorker::new(),
             bt_coex_worker: bluetooth::coex::BtCoexWorker::new(),
             battery,
@@ -405,6 +411,12 @@ impl Daemon {
         // ---- Web commands ----
         self.process_web_commands();
 
+        // ---- BT mode: run BT epoch instead of WiFi phases ----
+        if self.mode == OperatingMode::Bt {
+            self.run_bt_epoch();
+            // Skip WiFi scan/attack/capture — jump to display/personality/web sync below
+        } else {
+
         // ---- AO health (RAGE mode only) ----
         if self.mode == OperatingMode::Rage && self.ao.check_health() {
             self.epoch_loop
@@ -511,6 +523,8 @@ impl Daemon {
         // ---- Attack + Capture phases ----
         self.run_attack_phase(&mut result);
         self.run_capture_phase(&mut result);
+
+        } // end else (non-BT mode WiFi phases)
 
         // ---- Display phase ----
         self.epoch_loop.next_phase(); // -> Display
@@ -691,6 +705,58 @@ impl Daemon {
             let action = self.recovery.process_health(health);
             self.handle_recovery_action(action);
         }
+    }
+
+    /// Run one BT-mode epoch: scan, target, attack, update status.
+    fn run_bt_epoch(&mut self) {
+        // Phase 1: Scan — age out stale devices, enforce limit
+        self.bt_discovery.prune(self.config.bt_attacks.target_ttl_secs);
+        self.bt_discovery.enforce_limit(256);
+
+        // Phase 2: Target — select targets based on rage level + toggles
+        let active_attacks = self.bt_attack_scheduler.active_attack_types();
+        let devices = self.bt_discovery.devices_by_rssi();
+
+        if !active_attacks.is_empty() && self.bt_attack_scheduler.can_attack() {
+            let targets = bluetooth::attacks::target::TargetSelector::select(
+                &devices,
+                &active_attacks,
+                &self.config.bt_attacks,
+                self.config.bt_attacks.max_concurrent_attacks as usize,
+            );
+
+            // Phase 3: Attack — dispatch attacks against targets
+            for target in &targets {
+                self.bt_attack_scheduler.mark_active(&target.device_id, target.attack);
+
+                // Update device attack state
+                if let Some(dev) = self.bt_discovery.get_device_mut(&target.device_id) {
+                    dev.attack_state = bluetooth::model::observation::BtDeviceAttackState::Attacking;
+                }
+
+                log::info!(
+                    "BT attack: {:?} → {} ({})",
+                    target.attack,
+                    target.device_address,
+                    target.device_name.as_deref().unwrap_or("?")
+                );
+            }
+        }
+
+        // Phase 4: Update status
+        let summary = self.bt_discovery.summary();
+        let active_count = self.bt_attack_scheduler.active_count();
+        let total_captures = self.bt_capture_manager.total_captures();
+
+        let status = if active_count > 0 {
+            format!("Attacking {} targets ({} captures)", active_count, total_captures)
+        } else if summary.devices_now > 0 {
+            format!("Scanning {} BT devices...", summary.devices_now)
+        } else {
+            "Scanning for BT devices...".to_string()
+        };
+
+        self.epoch_loop.personality.current_status = status;
     }
 
     /// Attack phase: schedule attacks against tracked APs.
