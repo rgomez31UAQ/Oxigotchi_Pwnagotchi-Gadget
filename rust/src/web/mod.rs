@@ -8,13 +8,13 @@
 //! Hunting, Loot, Connectivity, Status, Management) with vanilla JS auto-refresh.
 
 use axum::{
+    Router,
     extract::{
+        FromRef, Path as AxumPath, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
-        FromRef, State, Path as AxumPath,
     },
     response::{Html, IntoResponse, Json},
     routing::{delete, get, post},
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -177,7 +177,7 @@ pub struct DaemonState {
     // -- rage slider --
     pub rage_enabled: bool,
     pub rage_level: u8,
-    pub pending_rage_change: Option<Option<u8>>,  // Some(Some(n)) = set level n, Some(None) = disable
+    pub pending_rage_change: Option<Option<u8>>, // Some(Some(n)) = set level n, Some(None) = disable
 
     // -- smart skip --
     pub pending_skip_captured: Option<bool>,
@@ -305,7 +305,7 @@ impl DaemonState {
             pending_whitelist_removes: Vec::new(),
             pending_channel_config: None,
             rage_enabled: false,
-            rage_level: 0,
+            rage_level: 1,
             pending_rage_change: None,
             pending_skip_captured: None,
             pending_capture_all: None,
@@ -445,7 +445,11 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
             dwell_ms: s.wifi_dwell_ms,
             autohunt_enabled: s.autohunt_enabled,
             skip_captured: s.skip_captured,
-            rage_level: if s.rage_enabled { Some(s.rage_level) } else { None },
+            rage_level: if s.rage_enabled {
+                Some(s.rage_level)
+            } else {
+                None
+            },
         },
         bluetooth: BluetoothInfo {
             connected: s.bt_connected,
@@ -1016,11 +1020,17 @@ pub fn read_mem_info() -> (u32, u32) {
             let mut available_kb: u64 = 0;
             for line in content.lines() {
                 if line.starts_with("MemTotal:") {
-                    total_kb = line.split_whitespace().nth(1)
-                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    total_kb = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                 } else if line.starts_with("MemAvailable:") {
-                    available_kb = line.split_whitespace().nth(1)
-                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    available_kb = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                 }
             }
             let total_mb = (total_kb / 1024) as u32;
@@ -1117,7 +1127,10 @@ async fn delete_capture_handler(
     State(state): State<SharedState>,
 ) -> Json<ActionResponse> {
     if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
-        return Json(ActionResponse { ok: false, message: "invalid filename".into() });
+        return Json(ActionResponse {
+            ok: false,
+            message: "invalid filename".into(),
+        });
     }
     let mut s = state.lock().unwrap();
     // Optimistic: remove from capture_list immediately so WS doesn't re-add it
@@ -1125,7 +1138,10 @@ async fn delete_capture_handler(
     s.capture_files = s.capture_list.len();
     s.handshake_files = s.capture_list.iter().filter(|f| f.has_handshake).count();
     s.pending_delete = Some(filename);
-    Json(ActionResponse { ok: true, message: "queued for deletion".into() })
+    Json(ActionResponse {
+        ok: true,
+        message: "queued for deletion".into(),
+    })
 }
 
 /// GET /api/health -> JSON system health
@@ -1169,7 +1185,11 @@ async fn wifi_handler(State(state): State<SharedState>) -> Json<WifiInfo> {
         dwell_ms: s.wifi_dwell_ms,
         autohunt_enabled: s.autohunt_enabled,
         skip_captured: s.skip_captured,
-        rage_level: if s.rage_enabled { Some(s.rage_level) } else { None },
+        rage_level: if s.rage_enabled {
+            Some(s.rage_level)
+        } else {
+            None
+        },
     })
 }
 
@@ -1224,7 +1244,10 @@ async fn bluetooth_toggle_handler(
     s.pending_bt_toggle = Some(body.visible);
     Json(ActionResponse {
         ok: true,
-        message: format!("Bluetooth visibility {} queued", if body.visible { "ON" } else { "OFF" }),
+        message: format!(
+            "Bluetooth visibility {} queued",
+            if body.visible { "ON" } else { "OFF" }
+        ),
     })
 }
 
@@ -1250,11 +1273,31 @@ async fn system_handler(State(state): State<SharedState>) -> Json<SystemInfoResp
     let (disk_used, disk_total) = read_disk_info();
     let s = state.lock().unwrap();
     Json(SystemInfoResponse {
-        cpu_temp_c: if cpu_temp > 0.0 { cpu_temp } else { s.cpu_temp_c },
-        mem_used_mb: if mem_total > 0 { mem_used } else { s.mem_used_mb },
-        mem_total_mb: if mem_total > 0 { mem_total } else { s.mem_total_mb },
-        disk_used_mb: if disk_total > 0 { disk_used } else { s.disk_used_mb },
-        disk_total_mb: if disk_total > 0 { disk_total } else { s.disk_total_mb },
+        cpu_temp_c: if cpu_temp > 0.0 {
+            cpu_temp
+        } else {
+            s.cpu_temp_c
+        },
+        mem_used_mb: if mem_total > 0 {
+            mem_used
+        } else {
+            s.mem_used_mb
+        },
+        mem_total_mb: if mem_total > 0 {
+            mem_total
+        } else {
+            s.mem_total_mb
+        },
+        disk_used_mb: if disk_total > 0 {
+            disk_used
+        } else {
+            s.disk_used_mb
+        },
+        disk_total_mb: if disk_total > 0 {
+            disk_total
+        } else {
+            s.disk_total_mb
+        },
         cpu_percent: s.cpu_percent,
         uptime_secs: s.boot_time.elapsed().as_secs(),
     })
@@ -1284,12 +1327,24 @@ async fn attacks_post_handler(
 ) -> Json<ActionResponse> {
     let mut s = state.lock().unwrap();
     // Apply toggles immediately to state; daemon will pick them up
-    if let Some(v) = body.deauth { s.attack_deauth = v; }
-    if let Some(v) = body.pmkid { s.attack_pmkid = v; }
-    if let Some(v) = body.csa { s.attack_csa = v; }
-    if let Some(v) = body.disassoc { s.attack_disassoc = v; }
-    if let Some(v) = body.anon_reassoc { s.attack_anon_reassoc = v; }
-    if let Some(v) = body.rogue_m2 { s.attack_rogue_m2 = v; }
+    if let Some(v) = body.deauth {
+        s.attack_deauth = v;
+    }
+    if let Some(v) = body.pmkid {
+        s.attack_pmkid = v;
+    }
+    if let Some(v) = body.csa {
+        s.attack_csa = v;
+    }
+    if let Some(v) = body.disassoc {
+        s.attack_disassoc = v;
+    }
+    if let Some(v) = body.anon_reassoc {
+        s.attack_anon_reassoc = v;
+    }
+    if let Some(v) = body.rogue_m2 {
+        s.attack_rogue_m2 = v;
+    }
     s.pending_attack_toggle = Some(body);
     Json(ActionResponse {
         ok: true,
@@ -1591,7 +1646,7 @@ async fn download_single_handler(
     AxumPath(filename): AxumPath<String>,
     State(state): State<SharedState>,
 ) -> axum::response::Response<axum::body::Body> {
-    use axum::http::{header, StatusCode};
+    use axum::http::{StatusCode, header};
 
     let capture_dir = {
         let s = state.lock().unwrap();
@@ -1615,23 +1670,19 @@ async fn download_single_handler(
     }
 
     match std::fs::read(&path) {
-        Ok(data) => {
-            axum::response::Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/octet-stream")
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{}\"", filename),
-                )
-                .body(axum::body::Body::from(data))
-                .unwrap()
-        }
-        Err(_) => {
-            axum::response::Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(axum::body::Body::from("failed to read file"))
-                .unwrap()
-        }
+        Ok(data) => axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}\"", filename),
+            )
+            .body(axum::body::Body::from(data))
+            .unwrap(),
+        Err(_) => axum::response::Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(axum::body::Body::from("failed to read file"))
+            .unwrap(),
     }
 }
 
@@ -1643,9 +1694,7 @@ async fn download_single_handler(
 async fn restart_pi_handler() -> Json<ActionResponse> {
     #[cfg(unix)]
     {
-        let _ = std::process::Command::new("sudo")
-            .arg("reboot")
-            .spawn();
+        let _ = std::process::Command::new("sudo").arg("reboot").spawn();
     }
     Json(ActionResponse {
         ok: true,
@@ -1735,7 +1784,7 @@ async fn restart_pwn_handler() -> Json<ActionResponse> {
 async fn display_handler(
     State(state): State<SharedState>,
 ) -> axum::response::Response<axum::body::Body> {
-    use axum::http::{header, StatusCode};
+    use axum::http::{StatusCode, header};
 
     let s = state.lock().unwrap();
     let w = s.screen_width;
@@ -1816,7 +1865,7 @@ async fn display_handler(
 // Router builder
 /// GET /api/download/all -> ZIP of all capture files
 async fn download_zip_handler(State(state): State<SharedState>) -> axum::response::Response {
-    use axum::http::{header, StatusCode};
+    use axum::http::{StatusCode, header};
     use std::io::Write;
 
     let capture_dir = {
@@ -1834,7 +1883,8 @@ async fn download_zip_handler(State(state): State<SharedState>) -> axum::respons
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
-                    let name = path.file_name()
+                    let name = path
+                        .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
                     if let Ok(data) = std::fs::read(&path) {
@@ -1850,7 +1900,10 @@ async fn download_zip_handler(State(state): State<SharedState>) -> axum::respons
     axum::response::Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/zip")
-        .header(header::CONTENT_DISPOSITION, "attachment; filename=\"captures.zip\"")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"captures.zip\"",
+        )
         .body(axum::body::Body::from(buf.into_inner()))
         .unwrap()
 }
@@ -1860,10 +1913,7 @@ async fn download_zip_handler(State(state): State<SharedState>) -> axum::respons
 // ---------------------------------------------------------------------------
 
 /// GET /ws -> WebSocket upgrade for live state push.
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(app): State<AppState>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(app): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, app.ws_tx.subscribe()))
 }
 
@@ -1926,11 +1976,17 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_HEALTH, get(health_handler))
         .route(API_BATTERY, get(battery_handler))
         .route(API_WIFI, get(wifi_handler).post(wifi_update_handler))
-        .route(API_BLUETOOTH, get(bluetooth_handler).post(bluetooth_toggle_handler))
+        .route(
+            API_BLUETOOTH,
+            get(bluetooth_handler).post(bluetooth_toggle_handler),
+        )
         .route(API_GPU, get(gpu_handler))
         .route(API_PERSONALITY, get(personality_handler))
         .route(API_SYSTEM, get(system_handler))
-        .route(API_ATTACKS, get(attacks_get_handler).post(attacks_post_handler))
+        .route(
+            API_ATTACKS,
+            get(attacks_get_handler).post(attacks_post_handler),
+        )
         .route(API_RECOVERY, get(recovery_handler))
         .route(API_CRACKED, get(cracked_handler))
         .route(API_MODE, post(mode_handler))
@@ -1939,7 +1995,10 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_SHUTDOWN, post(shutdown_handler))
         .route(API_DISPLAY, get(display_handler))
         .route("/api/download/all", get(download_zip_handler))
-        .route("/api/plugins", get(plugins_get_handler).post(plugins_post_handler))
+        .route(
+            "/api/plugins",
+            get(plugins_get_handler).post(plugins_post_handler),
+        )
         .route(API_APS, get(aps_handler))
         .route(API_WHITELIST, get(whitelist_get_handler))
         .route(API_WHITELIST_ADD, post(whitelist_add_handler))
@@ -1947,14 +2006,23 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_CHANNELS, post(channels_handler))
         .route(API_RAGE, post(rage_handler))
         .route(API_LOGS, get(logs_handler))
-        .route(API_WPASEC, get(wpasec_get_handler).post(wpasec_post_handler))
-        .route(API_DISCORD, get(discord_get_handler).post(discord_post_handler))
+        .route(
+            API_WPASEC,
+            get(wpasec_get_handler).post(wpasec_post_handler),
+        )
+        .route(
+            API_DISCORD,
+            get(discord_get_handler).post(discord_post_handler),
+        )
         .route(API_DOWNLOAD_SINGLE, get(download_single_handler))
         .route(API_RESTART_PI, post(restart_pi_handler))
         .route(API_RESTART_SSH, post(restart_ssh_handler))
         .route(API_RESTART_PWN, post(restart_pwn_handler))
         .route(API_SETTINGS, post(settings_handler))
-        .route(API_BT_SCAN, get(bt_scan_results_handler).post(bt_scan_handler))
+        .route(
+            API_BT_SCAN,
+            get(bt_scan_results_handler).post(bt_scan_handler),
+        )
         .route(API_BT_PAIR, post(bt_pair_handler))
         .route(API_RADIO, get(radio_get_handler).post(radio_post_handler))
         .route(API_CAPTURE_ALL, post(capture_all_handler))
@@ -2034,9 +2102,17 @@ mod tests {
     #[test]
     fn test_build_status() {
         let status = build_status(&StatusParams {
-            name: "oxi", uptime: "00:01:23", epoch: 42, channel: 6,
-            aps_seen: 10, handshakes: 3, blind_epochs: 2, mood: 0.75,
-            face: "(^_^)", status_message: "Having fun!", mode: "AO",
+            name: "oxi",
+            uptime: "00:01:23",
+            epoch: 42,
+            channel: 6,
+            aps_seen: 10,
+            handshakes: 3,
+            blind_epochs: 2,
+            mood: 0.75,
+            face: "(^_^)",
+            status_message: "Having fun!",
+            mode: "AO",
         });
         assert_eq!(status.name, "oxi");
         assert_eq!(status.epoch, 42);
@@ -2048,9 +2124,17 @@ mod tests {
     #[test]
     fn test_status_serializes() {
         let status = build_status(&StatusParams {
-            name: "oxi", uptime: "00:00:00", epoch: 0, channel: 1,
-            aps_seen: 0, handshakes: 0, blind_epochs: 0, mood: 0.5,
-            face: "(O_O)", status_message: "Booting", mode: "AO",
+            name: "oxi",
+            uptime: "00:00:00",
+            epoch: 0,
+            channel: 1,
+            aps_seen: 0,
+            handshakes: 0,
+            blind_epochs: 0,
+            mood: 0.5,
+            face: "(O_O)",
+            status_message: "Booting",
+            mode: "AO",
         });
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"name\":\"oxi\""));
@@ -2094,8 +2178,12 @@ mod tests {
     #[test]
     fn test_battery_info_serialize() {
         let info = BatteryInfo {
-            level: 75, charging: true, voltage_mv: 4100,
-            low: false, critical: false, available: true,
+            level: 75,
+            charging: true,
+            voltage_mv: 4100,
+            low: false,
+            critical: false,
+            available: true,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"level\":75"));
@@ -2106,9 +2194,13 @@ mod tests {
     #[test]
     fn test_wifi_info_serialize() {
         let info = WifiInfo {
-            state: "Monitor".into(), channel: 6,
-            aps_tracked: 15, channels: vec![1, 6, 11], dwell_ms: 250,
-            autohunt_enabled: true, skip_captured: true,
+            state: "Monitor".into(),
+            channel: 6,
+            aps_tracked: 15,
+            channels: vec![1, 6, 11],
+            dwell_ms: 250,
+            autohunt_enabled: true,
+            skip_captured: true,
             rage_level: None,
         };
         let json = serde_json::to_string(&info).unwrap();
@@ -2120,11 +2212,16 @@ mod tests {
     #[test]
     fn test_bluetooth_info_serialize() {
         let info = BluetoothInfo {
-            connected: true, state: "Connected".into(),
-            device_name: "Phone".into(), ip: "10.0.0.1".into(),
+            connected: true,
+            state: "Connected".into(),
+            device_name: "Phone".into(),
+            ip: "10.0.0.1".into(),
             phone_mac: "AA:BB:CC:DD:EE:FF".into(),
-            internet_available: true, retry_count: 0,
-            feature_mode: "tether".into(), nearby_devices: 0, contention_score: 0,
+            internet_available: true,
+            retry_count: 0,
+            feature_mode: "tether".into(),
+            nearby_devices: 0,
+            contention_score: 0,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"connected\":true"));
@@ -2134,8 +2231,13 @@ mod tests {
     #[test]
     fn test_personality_info_serialize() {
         let info = PersonalityInfo {
-            mood: 0.75, face: "(^_^)".into(), blind_epochs: 2,
-            total_handshakes: 10, total_aps_seen: 50, xp: 420, level: 3,
+            mood: 0.75,
+            face: "(^_^)".into(),
+            blind_epochs: 2,
+            total_handshakes: 10,
+            total_aps_seen: 50,
+            xp: 420,
+            level: 3,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"level\":3"));
@@ -2145,9 +2247,13 @@ mod tests {
     #[test]
     fn test_system_info_serialize() {
         let info = SystemInfoResponse {
-            cpu_temp_c: 45.2, mem_used_mb: 200, mem_total_mb: 512,
-            disk_used_mb: 3000, disk_total_mb: 16000,
-            cpu_percent: 35.0, uptime_secs: 7200,
+            cpu_temp_c: 45.2,
+            mem_used_mb: 200,
+            mem_total_mb: 512,
+            disk_used_mb: 3000,
+            disk_total_mb: 16000,
+            cpu_percent: 35.0,
+            uptime_secs: 7200,
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"cpu_temp_c\":45.2"));
@@ -2158,10 +2264,16 @@ mod tests {
     #[test]
     fn test_attack_stats_serialize() {
         let stats = AttackStats {
-            total_attacks: 100, total_handshakes: 5,
-            attack_rate: 1, deauths_this_epoch: 3,
-            deauth: true, pmkid: true, csa: false,
-            disassoc: true, anon_reassoc: true, rogue_m2: false,
+            total_attacks: 100,
+            total_handshakes: 5,
+            attack_rate: 1,
+            deauths_this_epoch: 3,
+            deauth: true,
+            pmkid: true,
+            csa: false,
+            disassoc: true,
+            anon_reassoc: true,
+            rogue_m2: false,
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("\"total_attacks\":100"));
@@ -2181,8 +2293,10 @@ mod tests {
     #[test]
     fn test_cracked_entry_serialize() {
         let entry = CrackedEntry {
-            ssid: "MyWifi".into(), bssid: "AA:BB:CC:DD:EE:FF".into(),
-            password: "hunter2".into(), date: "2026-01-01".into(),
+            ssid: "MyWifi".into(),
+            bssid: "AA:BB:CC:DD:EE:FF".into(),
+            password: "hunter2".into(),
+            date: "2026-01-01".into(),
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"ssid\":\"MyWifi\""));
@@ -2192,10 +2306,14 @@ mod tests {
     #[test]
     fn test_recovery_info_serialize() {
         let info = RecoveryInfo {
-            state: "Healthy".into(), total_recoveries: 2,
-            soft_retries: 1, hard_retries: 1,
-            last_recovery: "5m ago".into(), diagnostic_count: 3,
-            fw_crash_suppress: 0, fw_hardfault: 0,
+            state: "Healthy".into(),
+            total_recoveries: 2,
+            soft_retries: 1,
+            hard_retries: 1,
+            last_recovery: "5m ago".into(),
+            diagnostic_count: 3,
+            fw_crash_suppress: 0,
+            fw_hardfault: 0,
             fw_health: "Unknown".into(),
         };
         let json = serde_json::to_string(&info).unwrap();
@@ -2223,9 +2341,12 @@ mod tests {
     #[test]
     fn test_capture_info_serialize() {
         let info = CaptureInfo {
-            total_files: 10, handshake_files: 3,
-            pending_upload: 2, total_size_bytes: 1024000,
-            session_captures: 5, session_handshakes: 2,
+            total_files: 10,
+            handshake_files: 3,
+            pending_upload: 2,
+            total_size_bytes: 1024000,
+            session_captures: 5,
+            session_handshakes: 2,
             capture_all: false,
             files: vec![],
         };
@@ -2236,10 +2357,15 @@ mod tests {
     #[test]
     fn test_health_response_serialize() {
         let health = HealthResponse {
-            wifi_state: "Monitor".into(), battery_level: 80,
-            battery_charging: false, battery_available: true,
-            uptime_secs: 3600, ao_state: "RUNNING".into(),
-            ao_pid: 1234, ao_crash_count: 0, ao_uptime: "01:00:00".into(),
+            wifi_state: "Monitor".into(),
+            battery_level: 80,
+            battery_charging: false,
+            battery_available: true,
+            uptime_secs: 3600,
+            ao_state: "RUNNING".into(),
+            ao_pid: 1234,
+            ao_crash_count: 0,
+            ao_uptime: "01:00:00".into(),
             gpsd_available: true,
         };
         let json = serde_json::to_string(&health).unwrap();
@@ -2255,7 +2381,10 @@ mod tests {
 
     #[test]
     fn test_action_response_serialize() {
-        let resp = ActionResponse { ok: true, message: "done".into() };
+        let resp = ActionResponse {
+            ok: true,
+            message: "done".into(),
+        };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"ok\":true"));
     }
@@ -2299,57 +2428,159 @@ mod tests {
     fn test_dashboard_html_contains_all_cards() {
         assert!(DASHBOARD_HTML.contains("<title>oxigotchi</title>"));
         // face card removed — e-ink preview replaces it
-        assert!(DASHBOARD_HTML.contains("card-stats"), "missing core stats card");
+        assert!(
+            DASHBOARD_HTML.contains("card-stats"),
+            "missing core stats card"
+        );
         assert!(DASHBOARD_HTML.contains("card-eink"), "missing e-ink card");
-        assert!(DASHBOARD_HTML.contains("card-battery"), "missing battery card");
+        assert!(
+            DASHBOARD_HTML.contains("card-battery"),
+            "missing battery card"
+        );
         assert!(DASHBOARD_HTML.contains("card-bt"), "missing bluetooth card");
         assert!(DASHBOARD_HTML.contains("card-wifi"), "missing wifi card");
-        assert!(DASHBOARD_HTML.contains("card-attacks"), "missing attacks card");
-        assert!(DASHBOARD_HTML.contains("card-captures"), "missing captures card");
-        assert!(DASHBOARD_HTML.contains("card-recovery"), "missing recovery card");
-        assert!(DASHBOARD_HTML.contains("card-personality"), "missing personality card");
-        assert!(DASHBOARD_HTML.contains("card-system"), "missing system card");
-        assert!(DASHBOARD_HTML.contains("card-cracked"), "missing cracked card");
+        assert!(
+            DASHBOARD_HTML.contains("card-attacks"),
+            "missing attacks card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-captures"),
+            "missing captures card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-recovery"),
+            "missing recovery card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-personality"),
+            "missing personality card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-system"),
+            "missing system card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-cracked"),
+            "missing cracked card"
+        );
         // download card merged into captures card
         assert!(DASHBOARD_HTML.contains("card-mode"), "missing mode card");
-        assert!(DASHBOARD_HTML.contains("card-actions"), "missing actions card");
-        assert!(DASHBOARD_HTML.contains("card-plugins"), "missing plugins card");
+        assert!(
+            DASHBOARD_HTML.contains("card-actions"),
+            "missing actions card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-plugins"),
+            "missing plugins card"
+        );
         assert!(DASHBOARD_HTML.contains("card-aps"), "missing APs card");
-        assert!(DASHBOARD_HTML.contains("card-whitelist"), "missing whitelist card");
+        assert!(
+            DASHBOARD_HTML.contains("card-whitelist"),
+            "missing whitelist card"
+        );
         // card-channels merged into card-attacks (dwell + channel buttons + autohunt now live there)
         assert!(DASHBOARD_HTML.contains("card-logs"), "missing logs card");
-        assert!(DASHBOARD_HTML.contains("card-wpasec"), "missing wpasec card");
-        assert!(DASHBOARD_HTML.contains("card-discord"), "missing discord card");
-        assert!(DASHBOARD_HTML.contains("card-settings"), "missing settings card");
+        assert!(
+            DASHBOARD_HTML.contains("card-wpasec"),
+            "missing wpasec card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-discord"),
+            "missing discord card"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("card-settings"),
+            "missing settings card"
+        );
     }
 
     #[test]
     fn test_dashboard_html_has_all_api_calls() {
-        assert!(DASHBOARD_HTML.contains("/api/status"), "missing /api/status");
-        assert!(DASHBOARD_HTML.contains("/api/battery"), "missing /api/battery");
-        assert!(DASHBOARD_HTML.contains("/api/bluetooth"), "missing /api/bluetooth");
+        assert!(
+            DASHBOARD_HTML.contains("/api/status"),
+            "missing /api/status"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/battery"),
+            "missing /api/battery"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/bluetooth"),
+            "missing /api/bluetooth"
+        );
         assert!(DASHBOARD_HTML.contains("/api/wifi"), "missing /api/wifi");
-        assert!(DASHBOARD_HTML.contains("/api/attacks"), "missing /api/attacks");
-        assert!(DASHBOARD_HTML.contains("/api/captures"), "missing /api/captures");
-        assert!(DASHBOARD_HTML.contains("/api/recovery"), "missing /api/recovery");
-        assert!(DASHBOARD_HTML.contains("/api/personality"), "missing /api/personality");
-        assert!(DASHBOARD_HTML.contains("/api/system"), "missing /api/system");
-        assert!(DASHBOARD_HTML.contains("/api/cracked"), "missing /api/cracked");
-        assert!(DASHBOARD_HTML.contains("/api/health"), "missing /api/health");
+        assert!(
+            DASHBOARD_HTML.contains("/api/attacks"),
+            "missing /api/attacks"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/captures"),
+            "missing /api/captures"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/recovery"),
+            "missing /api/recovery"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/personality"),
+            "missing /api/personality"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/system"),
+            "missing /api/system"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/cracked"),
+            "missing /api/cracked"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/health"),
+            "missing /api/health"
+        );
         assert!(DASHBOARD_HTML.contains("/api/mode"), "missing /api/mode");
         assert!(DASHBOARD_HTML.contains("/api/rate"), "missing /api/rate");
-        assert!(DASHBOARD_HTML.contains("/api/restart"), "missing /api/restart");
-        assert!(DASHBOARD_HTML.contains("/api/shutdown"), "missing /api/shutdown");
-        assert!(DASHBOARD_HTML.contains("/api/plugins"), "missing /api/plugins");
+        assert!(
+            DASHBOARD_HTML.contains("/api/restart"),
+            "missing /api/restart"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/shutdown"),
+            "missing /api/shutdown"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/plugins"),
+            "missing /api/plugins"
+        );
         assert!(DASHBOARD_HTML.contains("/api/aps"), "missing /api/aps");
-        assert!(DASHBOARD_HTML.contains("/api/whitelist"), "missing /api/whitelist");
-        assert!(DASHBOARD_HTML.contains("/api/channels"), "missing /api/channels");
+        assert!(
+            DASHBOARD_HTML.contains("/api/whitelist"),
+            "missing /api/whitelist"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/channels"),
+            "missing /api/channels"
+        );
         assert!(DASHBOARD_HTML.contains("/api/logs"), "missing /api/logs");
-        assert!(DASHBOARD_HTML.contains("/api/wpasec"), "missing /api/wpasec");
-        assert!(DASHBOARD_HTML.contains("/api/discord"), "missing /api/discord");
-        assert!(DASHBOARD_HTML.contains("/api/restart-pi"), "missing /api/restart-pi");
-        assert!(DASHBOARD_HTML.contains("/api/restart-ssh"), "missing /api/restart-ssh");
-        assert!(DASHBOARD_HTML.contains("/api/download/"), "missing /api/download");
+        assert!(
+            DASHBOARD_HTML.contains("/api/wpasec"),
+            "missing /api/wpasec"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/discord"),
+            "missing /api/discord"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/restart-pi"),
+            "missing /api/restart-pi"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/restart-ssh"),
+            "missing /api/restart-ssh"
+        );
+        assert!(
+            DASHBOARD_HTML.contains("/api/download/"),
+            "missing /api/download"
+        );
     }
 
     #[test]
@@ -2373,9 +2604,15 @@ mod tests {
 
     #[test]
     fn test_dashboard_html_dark_theme() {
-        assert!(DASHBOARD_HTML.contains("#1a1a2e"), "missing background color");
+        assert!(
+            DASHBOARD_HTML.contains("#1a1a2e"),
+            "missing background color"
+        );
         assert!(DASHBOARD_HTML.contains("#00d4aa"), "missing accent color");
-        assert!(DASHBOARD_HTML.contains("#16213e"), "missing card background");
+        assert!(
+            DASHBOARD_HTML.contains("#16213e"),
+            "missing card background"
+        );
     }
 
     #[test]
@@ -2535,8 +2772,8 @@ mod tests {
     #[tokio::test]
     async fn test_post_attacks_toggle() {
         let (router, state) = test_router();
-        let (status, body) = post_json(&router, "/api/attacks",
-            r#"{"deauth": false, "csa": true}"#).await;
+        let (status, body) =
+            post_json(&router, "/api/attacks", r#"{"deauth": false, "csa": true}"#).await;
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
@@ -2553,9 +2790,14 @@ mod tests {
             let mut s = state.lock().unwrap();
             s.capture_files = 5;
             s.handshake_files = 2;
-            s.capture_list = vec![
-                CaptureEntry { filename: "test.pcapng".into(), size_bytes: 1024, ssid: String::new(), bssid_mac: String::new(), captured_date: String::new(), has_handshake: false },
-            ];
+            s.capture_list = vec![CaptureEntry {
+                filename: "test.pcapng".into(),
+                size_bytes: 1024,
+                ssid: String::new(),
+                bssid_mac: String::new(),
+                captured_date: String::new(),
+                has_handshake: false,
+            }];
         }
         let (status, body) = get(&router, "/api/captures").await;
         assert_eq!(status, 200);
@@ -2632,8 +2874,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_mode_toggle() {
         let (router, state) = test_router();
-        let (status, body) = post_json(&router, "/api/mode",
-            r#"{"mode": "toggle"}"#).await;
+        let (status, body) = post_json(&router, "/api/mode", r#"{"mode": "toggle"}"#).await;
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
@@ -2645,8 +2886,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_mode_explicit() {
         let (router, state) = test_router();
-        let (status, _) = post_json(&router, "/api/mode",
-            r#"{"mode": "pwn"}"#).await;
+        let (status, _) = post_json(&router, "/api/mode", r#"{"mode": "pwn"}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(s.pending_mode_switch.as_deref(), Some("PWN"));
@@ -2656,8 +2896,7 @@ mod tests {
     async fn test_post_rate_clamps() {
         let (router, state) = test_router();
         // Rate 5 should clamp to 3
-        let (status, body) = post_json(&router, "/api/rate",
-            r#"{"rate": 5}"#).await;
+        let (status, body) = post_json(&router, "/api/rate", r#"{"rate": 5}"#).await;
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
@@ -2669,8 +2908,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_rate_valid() {
         let (router, state) = test_router();
-        let (status, _) = post_json(&router, "/api/rate",
-            r#"{"rate": 2}"#).await;
+        let (status, _) = post_json(&router, "/api/rate", r#"{"rate": 2}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(s.pending_rate_change, Some(2));
@@ -2739,8 +2977,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_bluetooth_toggle() {
         let (router, state) = test_router();
-        let (status, body) = post_json(&router, "/api/bluetooth",
-            r#"{"visible": true}"#).await;
+        let (status, body) = post_json(&router, "/api/bluetooth", r#"{"visible": true}"#).await;
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
@@ -2759,11 +2996,22 @@ mod tests {
     async fn test_all_get_endpoints_200() {
         let (router, _) = test_router();
         let endpoints = [
-            "/", "/api/status", "/api/captures", "/api/health",
-            "/api/battery", "/api/wifi", "/api/bluetooth",
-            "/api/personality", "/api/system", "/api/attacks",
-            "/api/recovery", "/api/cracked", "/api/plugins",
-            "/api/aps", "/api/whitelist", "/api/logs",
+            "/",
+            "/api/status",
+            "/api/captures",
+            "/api/health",
+            "/api/battery",
+            "/api/wifi",
+            "/api/bluetooth",
+            "/api/personality",
+            "/api/system",
+            "/api/attacks",
+            "/api/recovery",
+            "/api/cracked",
+            "/api/plugins",
+            "/api/aps",
+            "/api/whitelist",
+            "/api/logs",
         ];
         for endpoint in endpoints {
             let (status, _) = get(&router, endpoint).await;
@@ -2810,7 +3058,12 @@ mod tests {
     #[tokio::test]
     async fn test_plugins_post_queues_update() {
         let (router, state) = test_router();
-        let (status, _body) = post_json(&router, "/api/plugins", r#"[{"name":"uptime","x":100,"y":50}]"#).await;
+        let (status, _body) = post_json(
+            &router,
+            "/api/plugins",
+            r#"[{"name":"uptime","x":100,"y":50}]"#,
+        )
+        .await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(s.pending_plugin_updates.len(), 1);
@@ -2820,8 +3073,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_rage_sets_level() {
         let (router, state) = test_router();
-        let (status, body) = post_json(&router, "/api/rage",
-            r#"{"level": 4}"#).await;
+        let (status, body) = post_json(&router, "/api/rage", r#"{"level": 4}"#).await;
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
@@ -2833,8 +3085,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_rage_null_clears() {
         let (router, state) = test_router();
-        let (status, body) = post_json(&router, "/api/rage",
-            r#"{"level": null}"#).await;
+        let (status, body) = post_json(&router, "/api/rage", r#"{"level": null}"#).await;
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
@@ -2845,8 +3096,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_rage_clamps_to_7() {
         let (router, state) = test_router();
-        let (status, _) = post_json(&router, "/api/rage",
-            r#"{"level": 10}"#).await;
+        let (status, _) = post_json(&router, "/api/rage", r#"{"level": 10}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(s.pending_rage_change, Some(Some(7)));
@@ -2855,8 +3105,7 @@ mod tests {
     #[tokio::test]
     async fn test_post_rage_clamps_to_1() {
         let (router, state) = test_router();
-        let (status, _) = post_json(&router, "/api/rage",
-            r#"{"level": 0}"#).await;
+        let (status, _) = post_json(&router, "/api/rage", r#"{"level": 0}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(s.pending_rage_change, Some(Some(1)));
@@ -2887,5 +3136,47 @@ mod tests {
         assert_eq!(status, 200);
         let info: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert!(info["rage_level"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_rate_change_breaks_out_of_rage() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.rage_enabled = true;
+            s.rage_level = 5;
+        }
+        let (status, _) = post_json(&router, "/api/rate", r#"{"rate":2}"#).await;
+        assert_eq!(status, 200);
+        let s = state.lock().unwrap();
+        assert_eq!(
+            s.pending_rage_change,
+            Some(None),
+            "rate change should break out of RAGE"
+        );
+        assert_eq!(s.pending_rate_change, Some(2));
+    }
+
+    #[tokio::test]
+    async fn test_channels_change_breaks_out_of_rage() {
+        let (router, state) = test_router();
+        {
+            let mut s = state.lock().unwrap();
+            s.rage_enabled = true;
+            s.rage_level = 5;
+        }
+        let (status, _) = post_json(
+            &router,
+            "/api/channels",
+            r#"{"channels":[1,6,11],"dwell_ms":2000,"autohunt":false}"#,
+        )
+        .await;
+        assert_eq!(status, 200);
+        let s = state.lock().unwrap();
+        assert_eq!(
+            s.pending_rage_change,
+            Some(None),
+            "channel change should break out of RAGE"
+        );
     }
 }
