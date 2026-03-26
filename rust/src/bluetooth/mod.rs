@@ -12,6 +12,7 @@ pub mod coex;
 pub mod controller;
 pub mod discovery;
 pub mod model;
+pub mod patchram;
 pub mod persistence;
 pub mod supervisor;
 pub mod ui;
