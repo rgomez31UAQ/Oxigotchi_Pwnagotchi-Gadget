@@ -7,7 +7,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
 
+pub mod att_fuzz;
+pub mod ble_adv;
+pub mod ble_hijack;
+pub mod hci;
+pub mod knob;
+pub mod l2cap_fuzz;
+pub mod smp;
 pub mod target;
+pub mod vendor;
 
 // ---------------------------------------------------------------------------
 // BtAttackType — the 8 attack variants
