@@ -295,7 +295,7 @@ impl Daemon {
         // Load Lua plugins — read persisted positions from plugins.toml, fall back to defaults
         let plugin_defaults = vec![
             lua::PluginConfig::default_for("ao_status", 0, 0),
-            lua::PluginConfig::default_for("aps", 106, 0),
+            lua::PluginConfig::default_for("aps", 112, 0),
             lua::PluginConfig::default_for("uptime", 178, 0),
             lua::PluginConfig::default_for("status_msg", 125, 20),
             lua::PluginConfig::default_for("sys_stats", 125, 85),

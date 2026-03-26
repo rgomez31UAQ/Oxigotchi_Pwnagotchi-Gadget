@@ -44,5 +44,6 @@ function on_epoch(state)
             .. " | " .. compact_uptime(state.ao_uptime_secs)
             .. " | CH:" .. state.ao_channels
     end
+    if #s > 18 then s = s:sub(1, 18) end
     set_indicator("ao_status", s)
 end
