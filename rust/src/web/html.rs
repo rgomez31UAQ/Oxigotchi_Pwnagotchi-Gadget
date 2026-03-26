@@ -615,10 +615,21 @@ function renderCapList() {
         var badge = f.has_handshake
             ? '<span style="color:#00d4aa;font-size:10px;margin-left:6px">\u2713 crackable</span>'
             : '<span style="color:#888;font-size:10px;margin-left:6px">~ partial</span>';
-        return '<div class="capture-item"><a href="/api/download/' + encodeURIComponent(f.filename) +
-            '" style="color:#00d4aa;text-decoration:none">' + capDisplayName(f) + '</a>' +
-            badge + ' <span style="color:#555;font-size:11px">(' + fmtBytes(f.size_bytes) + ')</span></div>';
+        var fn_ = encodeURIComponent(f.filename);
+        return '<div class="capture-item" style="display:flex;align-items:center;gap:6px">' +
+            '<a href="/api/download/' + fn_ + '" style="color:#00d4aa;text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + capDisplayName(f) + '</a>' +
+            badge + ' <span style="color:#555;font-size:11px">(' + fmtBytes(f.size_bytes) + ')</span>' +
+            '<button onclick="deleteCapture(\'' + fn_ + '\')" style="background:none;border:none;color:#c0392b;font-size:14px;cursor:pointer;padding:0 2px;flex-shrink:0" title="Delete">\u2715</button>' +
+            '</div>';
     }).join('');
+}
+
+function deleteCapture(encodedFilename) {
+    var filename = decodeURIComponent(encodedFilename);
+    if (!confirm('Delete ' + filename + '?\nThis removes the file from the SD card.')) return;
+    _capFiles = _capFiles.filter(function(f) { return f.filename !== filename; });
+    renderCapList();
+    api('DELETE', '/api/captures/' + encodedFilename, null);
 }
 
 function refreshCaptures() {

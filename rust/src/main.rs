@@ -1108,6 +1108,27 @@ impl Daemon {
             any_command = true;
         }
 
+        // Process pending capture deletion
+        let pending_delete = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_delete.take()
+        };
+        if let Some(filename) = pending_delete {
+            if let Some(pos) = self.captures.files.iter().position(|f| {
+                f.path.file_name().is_some_and(|n| n.to_string_lossy() == filename)
+            }) {
+                let file = self.captures.files.remove(pos);
+                let companion = file.path.with_extension("22000");
+                if let Err(e) = std::fs::remove_file(&file.path) {
+                    log::warn!("delete capture: failed to remove {}: {e}", file.path.display());
+                } else {
+                    info!("deleted capture: {filename}");
+                }
+                let _ = std::fs::remove_file(&companion); // ok if .22000 missing
+                any_command = true;
+            }
+        }
+
         // Process pending WPA-SEC key
         let wpasec_key = {
             let mut s = self.shared_state.lock().unwrap();

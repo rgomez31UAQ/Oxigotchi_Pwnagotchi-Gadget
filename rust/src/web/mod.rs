@@ -13,7 +13,7 @@ use axum::{
         FromRef, State, Path as AxumPath,
     },
     response::{Html, IntoResponse, Json},
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -69,6 +69,8 @@ pub struct DaemonState {
     pub session_handshakes: u32,
     /// Whether Collect All mode is active (AO writes directly to SD).
     pub capture_all: bool,
+    /// Filename queued for deletion by the daemon.
+    pub pending_delete: Option<String>,
 
     // -- battery --
     pub battery_level: u8,
@@ -219,6 +221,7 @@ impl DaemonState {
             session_captures: 0,
             session_handshakes: 0,
             capture_all: false,
+            pending_delete: None,
             battery_level: 100,
             battery_charging: false,
             battery_voltage_mv: 4200,
@@ -887,6 +890,7 @@ pub const API_LOGS: &str = "/api/logs";
 pub const API_WPASEC: &str = "/api/wpasec";
 pub const API_DISCORD: &str = "/api/discord";
 pub const API_DOWNLOAD_SINGLE: &str = "/api/download/:filename";
+pub const API_DELETE_CAPTURE: &str = "/api/captures/:filename";
 pub const API_RESTART_PI: &str = "/api/restart-pi";
 pub const API_RESTART_SSH: &str = "/api/restart-ssh";
 pub const API_RESTART_PWN: &str = "/api/restart-pwn";
@@ -1052,6 +1056,23 @@ async fn capture_all_handler(
 #[derive(Debug, Deserialize)]
 struct CaptureAllRequest {
     enabled: bool,
+}
+
+/// DELETE /api/captures/:filename -> queue a capture file for deletion
+async fn delete_capture_handler(
+    AxumPath(filename): AxumPath<String>,
+    State(state): State<SharedState>,
+) -> Json<ActionResponse> {
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+        return Json(ActionResponse { ok: false, message: "invalid filename".into() });
+    }
+    let mut s = state.lock().unwrap();
+    // Optimistic: remove from capture_list immediately so WS doesn't re-add it
+    s.capture_list.retain(|f| f.filename != filename);
+    s.capture_files = s.capture_list.len();
+    s.handshake_files = s.capture_list.iter().filter(|f| f.has_handshake).count();
+    s.pending_delete = Some(filename);
+    Json(ActionResponse { ok: true, message: "queued for deletion".into() })
 }
 
 /// GET /api/health -> JSON system health
@@ -1841,6 +1862,7 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_BT_PAIR, post(bt_pair_handler))
         .route(API_RADIO, get(radio_get_handler).post(radio_post_handler))
         .route(API_CAPTURE_ALL, post(capture_all_handler))
+        .route(API_DELETE_CAPTURE, delete(delete_capture_handler))
         .with_state(app)
 }
 
