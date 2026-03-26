@@ -295,15 +295,15 @@ impl Daemon {
         // Load Lua plugins — read persisted positions from plugins.toml, fall back to defaults
         let plugin_defaults = vec![
             lua::PluginConfig::default_for("ao_status", 0, 0),
-            lua::PluginConfig::default_for("aps", 164, 112),
-            lua::PluginConfig::default_for("uptime", 178, 0),
+            lua::PluginConfig::default_for("aps", 145, 0),
+            lua::PluginConfig::default_for("uptime", 200, 0),
             lua::PluginConfig::default_for("status_msg", 125, 20),
             lua::PluginConfig::default_for("sys_stats", 125, 85),
             lua::PluginConfig::default_for("ip_display", 0, 95),
             lua::PluginConfig::default_for("crash", 0, 112),
-            lua::PluginConfig::default_for("www", 44, 112),
-            lua::PluginConfig::default_for("bt_status", 76, 112),
-            lua::PluginConfig::default_for("battery", 114, 112),
+            lua::PluginConfig::default_for("www", 52, 112),
+            lua::PluginConfig::default_for("bt_status", 96, 112),
+            lua::PluginConfig::default_for("battery", 140, 112),
             lua::PluginConfig::default_for("mode", 214, 112),
         ];
         let plugin_configs = match lua::config::read_plugins_toml() {
@@ -961,8 +961,10 @@ impl Daemon {
             match rage {
                 Some(level) => {
                     if let Some(p) = crate::rage::preset(level) {
-                        info!("web: RAGE level {} ({}) — rate={} dwell={}ms ch={:?}",
-                              p.level, p.name, p.rate, p.dwell_ms, p.channels);
+                        info!(
+                            "web: RAGE level {} ({}) — rate={} dwell={}ms ch={:?}",
+                            p.level, p.name, p.rate, p.dwell_ms, p.channels
+                        );
                         self.ao.set_rate(p.rate);
                         self.wifi.channel_config.channels = p.channels.to_vec();
                         self.wifi.channel_config.dwell_ms = p.dwell_ms;
@@ -2852,7 +2854,10 @@ mod tests {
         // Level 4 = Hunt: rate 2, dwell 2000ms, all 13 channels
         assert_eq!(daemon.ao.config.rate, 2);
         assert_eq!(daemon.wifi.channel_config.dwell_ms, 2000);
-        assert_eq!(daemon.wifi.channel_config.channels, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(
+            daemon.wifi.channel_config.channels,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+        );
         assert!(!daemon.autohunt);
         let s = daemon.shared_state.lock().unwrap();
         assert!(s.rage_enabled);
@@ -2884,6 +2889,9 @@ mod tests {
         }
         daemon.process_web_commands();
         let s = daemon.shared_state.lock().unwrap();
-        assert!(!s.rage_enabled, "manual rate change should break out of RAGE");
+        assert!(
+            !s.rage_enabled,
+            "manual rate change should break out of RAGE"
+        );
     }
 }

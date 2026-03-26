@@ -356,6 +356,9 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <div class="label">IP</div><div class="value" id="bt-ip">-</div>
 <div class="label">Internet</div><div class="value" id="bt-internet">-</div>
 <div class="label">Retries</div><div class="value" id="bt-retries">-</div>
+<div class="label">Feature Mode</div><div class="value" id="bt-feature-mode">-</div>
+<div class="label">Nearby</div><div class="value" id="bt-nearby">-</div>
+<div class="label">Contention</div><div class="value" id="bt-contention">-</div>
 </div>
 <div class="toggle-row">
 <div class="toggle-info"><div class="toggle-label">Discoverable</div><div class="toggle-desc">Make device visible for BT pairing</div></div>
@@ -370,7 +373,18 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 </div>
 </div>
 
-<!-- 14. Discord Webhook -->
+<!-- 14. GPU Runtime -->
+<div class="card" id="card-gpu">
+<div class="card-title">GPU Runtime</div>
+<div class="sub">Observed VC4/V3D runtime state from the latest ingested trace summary.</div>
+<div class="status-grid">
+<div class="label">Mode</div><div class="value" id="gpu-mode">-</div>
+<div class="label">Signal</div><div class="value" id="gpu-signal">-</div>
+<div class="label">Submit</div><div class="value" id="gpu-submit">-</div>
+</div>
+</div>
+
+<!-- 15. Discord Webhook -->
 <div class="card" id="card-discord">
 <div class="card-title">Discord Notifications</div>
 <div class="sub">Send handshake capture notifications to a Discord channel.</div>
@@ -390,7 +404,7 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <!-- ═══════ STATUS & PERSONALITY ═══════ -->
 <div class="section-label">Status</div>
 
-<!-- 15. Recovery status -->
+<!-- 16. Recovery status -->
 <div class="card" id="card-recovery">
 <div class="card-title">Recovery Status</div>
 <div class="sub">WiFi and firmware crash recovery tracking.</div>
@@ -414,7 +428,7 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 </div>
 </div>
 
-<!-- 16. Personality -->
+<!-- 17. Personality -->
 <div class="card" id="card-personality">
 <div class="card-title">Personality</div>
 <div class="sub">Mood, experience, and level progression.</div>
@@ -431,7 +445,7 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <!-- ═══════ MANAGEMENT ═══════ -->
 <div class="section-label">Management</div>
 
-<!-- 17. Actions -->
+<!-- 18. Actions -->
 <div class="card" id="card-actions">
 <div class="card-title">Actions</div>
 <div class="sub">Restart applies config changes. Shutdown powers off the Pi.</div>
@@ -444,7 +458,7 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 </div>
 </div>
 
-<!-- 18. Plugins -->
+<!-- 19. Plugins -->
 <div class="card" id="card-plugins">
 <div class="card-title">Plugins</div>
 <div class="sub">Lua plugins control display indicators. Toggle on/off and set x,y positions.</div>
@@ -550,6 +564,23 @@ function refreshBluetooth() {
         document.getElementById('bt-internet').textContent = d.internet_available ? 'Yes' : 'No';
         document.getElementById('bt-internet').style.color = d.internet_available ? '#00d4aa' : '#888';
         document.getElementById('bt-retries').textContent = d.retry_count;
+        document.getElementById('bt-feature-mode').textContent = d.feature_mode || '-';
+        document.getElementById('bt-nearby').textContent = d.nearby_devices != null ? d.nearby_devices : '-';
+        document.getElementById('bt-contention').textContent = d.contention_score != null ? d.contention_score : '-';
+    });
+}
+
+function refreshGpu() {
+    api('GET', '/api/gpu').then(function(d) {
+        if (!d) return;
+        document.getElementById('gpu-mode').textContent = d.mode || '-';
+        document.getElementById('gpu-signal').textContent = d.signal || '-';
+        document.getElementById('gpu-signal').style.color =
+            d.signal === 'GpuSubmissionObserved' ? '#00d4aa' :
+            (d.signal === 'RenderSetupActive' ? '#f0c040' :
+            (d.signal === 'DisplayInspectOnly' ? '#888' : '#e0e0e0'));
+        document.getElementById('gpu-submit').textContent = d.submit_seen ? 'Seen' : 'No';
+        document.getElementById('gpu-submit').style.color = d.submit_seen ? '#00d4aa' : '#888';
     });
 }
 
@@ -998,7 +1029,7 @@ function toggleRage(on) {
     if (on) {
         var level = parseInt(document.getElementById('rage-slider').value) || 4;
         api('POST', '/api/rage', {level: level}).then(function(r) {
-            if (r && r.ok) { updateRageLabel(level, true); toast('RAGE ' + _rageNames[level]); refreshWifi(); }
+            if (r && r.ok) { updateRageLabel(level, true); toast('RAGE ' + _rageNames[level]); refreshWifi(); refreshAttacks(); }
         });
     } else {
         api('POST', '/api/rage', {level: null}).then(function(r) {
@@ -1010,7 +1041,7 @@ function toggleRage(on) {
 function slideRage(level) {
     if (!document.getElementById('rage-toggle').checked) return;
     api('POST', '/api/rage', {level: level}).then(function(r) {
-        if (r && r.ok) { updateRageLabel(level, true); toast('RAGE ' + _rageNames[level]); refreshWifi(); }
+        if (r && r.ok) { updateRageLabel(level, true); toast('RAGE ' + _rageNames[level]); refreshWifi(); refreshAttacks(); }
     });
 }
 
@@ -1193,6 +1224,20 @@ function updateBluetoothFromWs(d) {
     document.getElementById('bt-internet').textContent = d.internet_available ? 'Yes' : 'No';
     document.getElementById('bt-internet').style.color = d.internet_available ? '#00d4aa' : '#888';
     document.getElementById('bt-retries').textContent = d.retry_count;
+    document.getElementById('bt-feature-mode').textContent = d.feature_mode || '-';
+    document.getElementById('bt-nearby').textContent = d.nearby_devices != null ? d.nearby_devices : '-';
+    document.getElementById('bt-contention').textContent = d.contention_score != null ? d.contention_score : '-';
+}
+
+function updateGpuFromWs(d) {
+    document.getElementById('gpu-mode').textContent = d.mode || '-';
+    document.getElementById('gpu-signal').textContent = d.signal || '-';
+    document.getElementById('gpu-signal').style.color =
+        d.signal === 'GpuSubmissionObserved' ? '#00d4aa' :
+        (d.signal === 'RenderSetupActive' ? '#f0c040' :
+        (d.signal === 'DisplayInspectOnly' ? '#888' : '#e0e0e0'));
+    document.getElementById('gpu-submit').textContent = d.submit_seen ? 'Seen' : 'No';
+    document.getElementById('gpu-submit').style.color = d.submit_seen ? '#00d4aa' : '#888';
 }
 
 function updateWifiFromWs(d) {
@@ -1366,6 +1411,7 @@ function updateAllCards(state) {
     if (state.epoch !== undefined) updateStatusFromWs(state);
     if (state.battery) updateBatteryFromWs(state.battery);
     if (state.bluetooth) updateBluetoothFromWs(state.bluetooth);
+    if (state.gpu) updateGpuFromWs(state.gpu);
     if (state.wifi) updateWifiFromWs(state.wifi);
     if (state.attacks) updateAttacksFromWs(state.attacks);
     if (state.captures) updateCapturesFromWs(state.captures);
@@ -1383,6 +1429,7 @@ function startPolling() {
     _pollTimers.push(setInterval(refreshStatus, 5000));
     _pollTimers.push(setInterval(refreshBattery, 15000));
     _pollTimers.push(setInterval(refreshBluetooth, 15000));
+    _pollTimers.push(setInterval(refreshGpu, 15000));
     _pollTimers.push(setInterval(refreshWifi, 5000));
     _pollTimers.push(setInterval(refreshAttacks, 10000));
     _pollTimers.push(setInterval(refreshCaptures, 30000));
@@ -1439,18 +1486,19 @@ renderChannelButtons([1, 6, 11]); // default until refreshWifi populates
 refreshStatus();
 setTimeout(refreshBattery, 500);
 setTimeout(refreshBluetooth, 1000);
-setTimeout(refreshWifi, 1500);
-setTimeout(refreshAttacks, 2000);
-setTimeout(refreshCaptures, 2500);
-setTimeout(refreshRecovery, 3000);
-setTimeout(refreshPersonality, 3500);
-setTimeout(refreshSystem, 4000);
-setTimeout(refreshCracked, 4500);
-setTimeout(refreshPlugins, 5000);
-setTimeout(refreshAps, 5500);
-setTimeout(refreshWhitelist, 6000);
-setTimeout(refreshWpaSec, 6500);
-setTimeout(refreshDiscord, 7000);
+setTimeout(refreshGpu, 1500);
+setTimeout(refreshWifi, 2000);
+setTimeout(refreshAttacks, 2500);
+setTimeout(refreshCaptures, 3000);
+setTimeout(refreshRecovery, 3500);
+setTimeout(refreshPersonality, 4000);
+setTimeout(refreshSystem, 4500);
+setTimeout(refreshCracked, 5000);
+setTimeout(refreshPlugins, 5500);
+setTimeout(refreshAps, 6000);
+setTimeout(refreshWhitelist, 6500);
+setTimeout(refreshWpaSec, 7000);
+setTimeout(refreshDiscord, 7500);
 
 // Start polling as initial strategy; WS will take over once connected
 startPolling();
