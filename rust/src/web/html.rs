@@ -588,7 +588,7 @@ function syncCaptureModeUi(enabled) {
 function setCaptureAll(enabled) {
     syncCaptureModeUi(enabled);
     api('POST', '/api/capture-all', {enabled: enabled}).then(function(r) {
-        if (r && r.ok) toast(enabled ? 'Collect All enabled — AO restarting' : 'Verified Only enabled — AO restarting');
+        if (r && r.ok) toast(enabled ? 'Collect All enabled — AO will restart' : 'Verified Only enabled — AO will restart');
     });
 }
 

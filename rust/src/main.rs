@@ -686,10 +686,13 @@ impl Daemon {
             // Scan first so newly written files are visible before conversion.
             let _ = self.captures.scan_directory();
             // Run hcxpcapngtool so .22000 companions are created, but keep everything.
-            let (converted, _no_hs, failed) = capture::batch_convert(&mut self.captures);
+            let (converted, no_hs, failed) = capture::batch_convert(&mut self.captures);
             if converted > 0 {
                 info!("collect-all: converted {converted} capture(s) to .22000 on SD");
-                self.ao.session_handshakes.fetch_add(converted as u32, std::sync::atomic::Ordering::Relaxed);
+                let with_hs = converted.saturating_sub(no_hs);
+                if with_hs > 0 {
+                    self.ao.session_handshakes.fetch_add(with_hs as u32, std::sync::atomic::Ordering::Relaxed);
+                }
             }
             if failed > 0 {
                 log::warn!("collect-all: {failed} conversion(s) failed");
@@ -1220,7 +1223,7 @@ impl Daemon {
             epoch: m.epoch,
             mode: self.mode.as_str().to_string(),
             channel: { let ch = self.ao.channel(); if ch > 0 { ch as u8 } else { m.channel } },
-            aps_seen: self.ao.ap_count(),
+            aps_seen: (self.lifetime_aps_base + self.ao.ap_count() as u64) as u32,
             handshakes: m.handshakes,
             captures_total: self.captures.count(),
             blind_epochs: m.blind_epochs,
@@ -1905,7 +1908,7 @@ impl Daemon {
             uptime: &self.epoch_loop.uptime_str(),
             epoch: m.epoch,
             channel: m.channel,
-            aps_seen: self.ao.ap_count(),
+            aps_seen: (self.lifetime_aps_base + self.ao.ap_count() as u64) as u32,
             handshakes: m.handshakes,
             blind_epochs: m.blind_epochs,
             mood: self.epoch_loop.personality.mood.value(),
