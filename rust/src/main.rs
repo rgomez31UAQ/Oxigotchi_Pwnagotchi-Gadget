@@ -17,6 +17,7 @@ mod migration;
 mod network;
 mod personality;
 mod pisugar;
+mod qpu;
 mod radio;
 mod rage;
 mod recovery;
