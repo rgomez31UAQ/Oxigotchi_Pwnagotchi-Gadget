@@ -226,18 +226,30 @@ mod platform {
             }
         }
 
+        /// Wait for LE Meta subevent. Loops over 0x3E events, discarding
+        /// non-matching subevents until the correct one arrives or timeout.
         pub fn wait_le_event(&self, subevent: u8, timeout_ms: i32) -> Result<Vec<u8>, String> {
-            let params = self.wait_event(0x3E, timeout_ms)?;
-            if params.is_empty() {
-                return Err("LE Meta event: empty params".into());
+            let deadline = std::time::Instant::now()
+                + std::time::Duration::from_millis(timeout_ms as u64);
+            loop {
+                let remaining = deadline
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis() as i32;
+                if remaining <= 0 {
+                    return Err(format!(
+                        "HCI wait_le_event(0x{:02X}) timeout ({}ms)",
+                        subevent, timeout_ms
+                    ));
+                }
+                let params = self.wait_event(0x3E, remaining)?;
+                if params.is_empty() {
+                    continue;
+                }
+                if params[0] == subevent {
+                    return Ok(params[1..].to_vec());
+                }
+                // Wrong subevent — discard and keep waiting
             }
-            if params[0] != subevent {
-                return Err(format!(
-                    "LE Meta event: expected subevent 0x{:02X}, got 0x{:02X}",
-                    subevent, params[0]
-                ));
-            }
-            Ok(params[1..].to_vec())
         }
     }
 

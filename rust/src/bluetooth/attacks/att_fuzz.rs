@@ -191,6 +191,7 @@ mod tests {
         let result = run("AA:BB:CC:DD:EE:FF", 1);
         assert_eq!(result.attack_type, BtAttackType::AttGattFuzz);
         assert!(result.success);
-        assert!(result.capture.is_some());
+        // Stub recv always succeeds, so no crash is detected — capture is None.
+        assert!(result.capture.is_none());
     }
 }

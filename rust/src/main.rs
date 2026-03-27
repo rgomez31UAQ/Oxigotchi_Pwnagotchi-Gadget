@@ -747,7 +747,8 @@ impl Daemon {
                 if let Some(ref hci) = self.bt_hci_socket {
                     let result = match target.attack {
                         bluetooth::attacks::BtAttackType::SmpDowngrade => {
-                            bluetooth::attacks::smp::run_downgrade(hci, &target.device_address)
+                            let addr_type = self.bt_discovery.get_device_addr_type(&target.device_id);
+                            bluetooth::attacks::smp::run_downgrade(hci, &target.device_address, addr_type)
                         }
                         bluetooth::attacks::BtAttackType::SmpMitm => {
                             bluetooth::attacks::smp::run_mitm(hci, &target.device_address)
