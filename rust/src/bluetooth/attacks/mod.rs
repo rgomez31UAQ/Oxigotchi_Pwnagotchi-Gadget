@@ -194,6 +194,9 @@ pub struct BtAttackConfig {
     /// Path to the stock (factory) HCD.
     #[serde(default = "default_stock_hcd")]
     pub stock_hcd: String,
+    /// Maximum capture directory size in MB. 0 = no rotation.
+    #[serde(default = "default_max_capture_mb")]
+    pub max_capture_mb: u32,
 }
 
 // -- serde default helpers ---------------------------------------------------
@@ -219,6 +222,9 @@ fn default_attack_hcd() -> String {
 fn default_stock_hcd() -> String {
     "/lib/firmware/brcm/BCM43430B0.hcd".into()
 }
+fn default_max_capture_mb() -> u32 {
+    50
+}
 
 impl Default for BtAttackConfig {
     fn default() -> Self {
@@ -241,6 +247,7 @@ impl Default for BtAttackConfig {
             captures_count_as_xp: true,
             attack_hcd: default_attack_hcd(),
             stock_hcd: default_stock_hcd(),
+            max_capture_mb: default_max_capture_mb(),
         }
     }
 }

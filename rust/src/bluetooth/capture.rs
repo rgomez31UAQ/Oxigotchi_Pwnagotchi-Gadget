@@ -118,6 +118,73 @@ impl BtCaptureManager {
             }
         }
     }
+
+    /// Calculate total size of all files in the capture directory tree (bytes).
+    pub fn dir_size_bytes(&self) -> u64 {
+        let mut total: u64 = 0;
+        for sub in &["keys", "pairing", "fuzz", "vendor"] {
+            let dir = self.base_dir.join(sub);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Ok(meta) = entry.metadata() {
+                        total += meta.len();
+                    }
+                }
+            }
+        }
+        total
+    }
+
+    /// Check capture directory size and rotate oldest files if over limit.
+    /// `max_mb` of 0 disables rotation.
+    pub fn rotate_if_needed(&self, max_mb: u32) {
+        if max_mb == 0 {
+            return;
+        }
+
+        let max_bytes = (max_mb as u64) * 1024 * 1024;
+        let current = self.dir_size_bytes();
+        if current <= max_bytes {
+            return;
+        }
+
+        let target = max_bytes * 80 / 100;
+        let mut freed: u64 = 0;
+        let mut removed: u32 = 0;
+
+        let mut files: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = Vec::new();
+        for sub in &["keys", "pairing", "fuzz", "vendor"] {
+            let dir = self.base_dir.join(sub);
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Ok(meta) = entry.metadata() {
+                        let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                        files.push((entry.path(), meta.len(), mtime));
+                    }
+                }
+            }
+        }
+
+        files.sort_by_key(|(_, _, t)| *t);
+
+        for (path, size, _) in &files {
+            if current - freed <= target {
+                break;
+            }
+            if std::fs::remove_file(path).is_ok() {
+                freed += size;
+                removed += 1;
+            }
+        }
+
+        if removed > 0 {
+            log::info!(
+                "bt_capture: rotated {} files, freed {}MB",
+                removed,
+                freed / 1024 / 1024
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -223,5 +290,17 @@ mod tests {
         mgr.total_vendor = 5;
         mgr.total_transcripts = 1;
         assert_eq!(mgr.total_captures(), 11);
+    }
+
+    #[test]
+    fn test_rotate_if_needed_zero_disabled() {
+        let mgr = BtCaptureManager::new("/tmp/bt_test_rotate");
+        mgr.rotate_if_needed(0);
+    }
+
+    #[test]
+    fn test_dir_size_bytes_nonexistent() {
+        let mgr = BtCaptureManager::new("/tmp/bt_nonexistent_dir_12345");
+        assert_eq!(mgr.dir_size_bytes(), 0);
     }
 }
