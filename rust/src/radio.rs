@@ -357,6 +357,38 @@ impl RadioManager {
         info!("radio: step 2 — stopping AO");
         ao.stop();
 
+        // Step 2b: Verify AO actually dead (matches transition_to_bt pattern)
+        if ao.state != ao::AoState::Stopped {
+            warn!(
+                "radio: AO state is {:?} after stop, expected Stopped",
+                ao.state
+            );
+        }
+        if ao.pid != 0 {
+            if !verify_process_dead(ao.pid) {
+                warn!(
+                    "radio: AO PID {} still alive after stop, force-killing",
+                    ao.pid
+                );
+                #[cfg(unix)]
+                {
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", &ao.pid.to_string()])
+                        .output();
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+        }
+        // Fallback: pkill any lingering angryoxide processes
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("pkill")
+                .args(["-9", "-f", "angryoxide"])
+                .output();
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        info!("radio: step 2b — AO kill verified");
+
         // Step 3: Wait for UART settle
         info!("radio: step 3 — waiting 500ms for UART settle");
         std::thread::sleep(Duration::from_millis(500));

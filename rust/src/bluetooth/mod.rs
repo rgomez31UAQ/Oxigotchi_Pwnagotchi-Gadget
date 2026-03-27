@@ -369,7 +369,7 @@ pub fn reset_hci_uart() {
         Err(e) => warn!("modprobe hci_uart failed: {e}"),
     }
     // Wait for hci0 to re-register with the kernel
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    std::thread::sleep(std::time::Duration::from_secs(4));
 }
 
 /// Stub for non-unix platforms.

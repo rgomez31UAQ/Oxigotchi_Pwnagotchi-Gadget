@@ -114,9 +114,10 @@ input:checked+.slider:before{transform:translateX(22px)}
 <!-- 2. Mode switch -->
 <div class="card" id="card-mode">
 <div class="card-title">Mode</div>
-<div class="sub">RAGE = all attacks max aggression. SAFE = passive scanning only.</div>
+<div class="sub">RAGE = all attacks max aggression. BT = Bluetooth offensive. SAFE = passive scanning only.</div>
 <div class="mode-btns">
 <button class="mode-btn active" id="mode-rage" onclick="switchMode('RAGE')">RAGE</button>
+<button class="mode-btn" id="mode-bt" onclick="switchMode('BT')">BT</button>
 <button class="mode-btn" id="mode-safe" onclick="switchMode('SAFE')">SAFE</button>
 </div>
 </div>
@@ -548,6 +549,7 @@ function refreshStatus() {
         document.getElementById('s-uptime').textContent = d.uptime;
         // Mode buttons
         document.getElementById('mode-rage').classList.toggle('active', d.mode === 'RAGE' || d.mode === 'AO');
+        document.getElementById('mode-bt').classList.toggle('active', d.mode === 'BT');
         document.getElementById('mode-safe').classList.toggle('active', d.mode === 'SAFE' || d.mode === 'PWN');
         // Settings name field (only if not focused)
         var nameInput = document.getElementById('setting-name');
@@ -1230,6 +1232,7 @@ function updateStatusFromWs(d) {
     document.getElementById('s-epoch').textContent = d.epoch;
     document.getElementById('s-uptime').textContent = d.uptime;
     document.getElementById('mode-rage').classList.toggle('active', d.mode === 'RAGE' || d.mode === 'AO');
+    document.getElementById('mode-bt').classList.toggle('active', d.mode === 'BT');
     document.getElementById('mode-safe').classList.toggle('active', d.mode === 'SAFE' || d.mode === 'PWN');
     var nameInput = document.getElementById('setting-name');
     if (nameInput && !nameInput.matches(':focus')) nameInput.value = d.name || '';

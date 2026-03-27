@@ -9,8 +9,7 @@ use super::hci::{HciCommand, HciSocket};
 use super::{BtAttackResult, BtAttackType, BtCapture};
 
 // BCM43430B0 vendor HCI opcodes (all OGF 0x3F)
-const READ_LOCAL_VERSION: u16 = 0x01;
-const READ_VERBOSE_CONFIG: u16 = 0x79;
+const READ_VERBOSE_CONFIG: u16 = 0x58;
 const READ_RAM: u16 = 0x4D;
 
 /// Patchram base address in BCM43430B0 firmware.
@@ -18,16 +17,16 @@ const PATCHRAM_BASE: u32 = 0x0021_1700;
 
 /// Run vendor diagnostics against the BT controller.
 ///
-/// Sends READ_LOCAL_VERSION, READ_VERBOSE_CONFIG, and READ_RAM at the
-/// patchram base. Returns success if any command returned data.
+/// Sends HCI Read Local Version (standard), READ_VERBOSE_CONFIG, and
+/// READ_RAM at the patchram base. Returns success if any command returned data.
 pub fn run_diagnostics(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
     let start = Instant::now();
     let mut results: Vec<(u16, Vec<u8>)> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
 
-    // 1. READ_LOCAL_VERSION
+    // 1. READ_LOCAL_VERSION (standard HCI: OGF 0x04, OCF 0x01 → opcode 0x1001)
     log::info!("vendor_diag: sending READ_LOCAL_VERSION to hci device");
-    let cmd = HciCommand::vendor(READ_LOCAL_VERSION, vec![]);
+    let cmd = HciCommand::new(0x04, 0x01, vec![]);
     match hci.send_command(&cmd) {
         Ok(resp) => {
             log::info!(
@@ -36,7 +35,7 @@ pub fn run_diagnostics(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
                 resp.data.len()
             );
             if !resp.data.is_empty() {
-                results.push((READ_LOCAL_VERSION, resp.data));
+                results.push((0x1001, resp.data));
             }
         }
         Err(e) => {
@@ -103,7 +102,7 @@ pub fn run_diagnostics(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
             combined.extend_from_slice(data);
         }
         Some(BtCapture::VendorResult {
-            opcode: READ_LOCAL_VERSION, // primary opcode
+            opcode: 0x1001, // primary opcode (Read Local Version)
             response: combined,
         })
     } else {

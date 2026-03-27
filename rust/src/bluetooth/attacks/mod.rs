@@ -63,29 +63,24 @@ impl BtAttackType {
 
     /// Whether this attack requires a patchram (HCD) swap.
     pub fn requires_patchram(self) -> bool {
-        matches!(
-            self,
-            Self::SmpDowngrade
-                | Self::SmpMitm
-                | Self::Knob
-                | Self::VendorCmdUnlock
-        )
+        matches!(self, Self::Knob | Self::VendorCmdUnlock)
     }
 
     /// Whether this attack targets BLE (Low Energy) connections.
     pub fn is_ble(self) -> bool {
         matches!(
             self,
-            Self::BleAdvInjection | Self::BleConnHijack | Self::AttGattFuzz
+            Self::SmpDowngrade
+                | Self::SmpMitm
+                | Self::BleAdvInjection
+                | Self::BleConnHijack
+                | Self::AttGattFuzz
         )
     }
 
     /// Whether this attack targets BR/EDR (classic) connections.
     pub fn is_classic(self) -> bool {
-        matches!(
-            self,
-            Self::SmpDowngrade | Self::SmpMitm | Self::Knob | Self::L2capFuzz
-        )
+        matches!(self, Self::Knob | Self::L2capFuzz)
     }
 
     /// Minimum rage level required to activate this attack.
@@ -221,7 +216,7 @@ fn default_attack_hcd() -> String {
     "/etc/oxigotchi/bt_attack.hcd".into()
 }
 fn default_stock_hcd() -> String {
-    "/lib/firmware/brcm/SYN43430B0.hcd".into()
+    "/lib/firmware/brcm/BCM43430B0.hcd".into()
 }
 
 impl Default for BtAttackConfig {
@@ -493,16 +488,27 @@ mod tests {
 
     #[test]
     fn test_attack_type_properties() {
-        assert!(BtAttackType::SmpDowngrade.is_classic());
-        assert!(!BtAttackType::SmpDowngrade.is_ble());
-        assert!(BtAttackType::SmpDowngrade.requires_patchram());
+        // SMP uses LE HCI commands — it's BLE, not Classic, and no patchram
+        assert!(BtAttackType::SmpDowngrade.is_ble());
+        assert!(!BtAttackType::SmpDowngrade.is_classic());
+        assert!(!BtAttackType::SmpDowngrade.requires_patchram());
+
+        assert!(BtAttackType::SmpMitm.is_ble());
+        assert!(!BtAttackType::SmpMitm.is_classic());
+        assert!(!BtAttackType::SmpMitm.requires_patchram());
 
         assert!(BtAttackType::BleAdvInjection.is_ble());
         assert!(!BtAttackType::BleAdvInjection.is_classic());
         assert!(!BtAttackType::BleAdvInjection.requires_patchram());
 
+        // KNOB is BR/EDR classic and needs patchram
+        assert!(BtAttackType::Knob.is_classic());
+        assert!(!BtAttackType::Knob.is_ble());
+        assert!(BtAttackType::Knob.requires_patchram());
+
         assert!(BtAttackType::VendorCmdUnlock.requires_patchram());
         assert!(!BtAttackType::VendorCmdUnlock.is_ble());
+        assert!(!BtAttackType::VendorCmdUnlock.is_classic());
     }
 
     #[test]

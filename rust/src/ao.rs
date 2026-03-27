@@ -343,6 +343,17 @@ impl AoManager {
                         let _ = child.wait();
                     }
                 }
+            } else if self.pid != 0 {
+                // Process handle lost but we have a PID — kill by PID as fallback
+                warn!("AO process handle lost but PID {} recorded, killing by PID", self.pid);
+                let _ = signal_process(self.pid, 15);
+                std::thread::sleep(Duration::from_secs(2));
+                // Check if still alive, force-kill if needed
+                if unsafe { libc::kill(self.pid as i32, 0) } == 0 {
+                    warn!("AO PID {} still alive after SIGTERM, sending SIGKILL", self.pid);
+                    let _ = signal_process(self.pid, 9);
+                    std::thread::sleep(Duration::from_millis(500));
+                }
             }
         }
 
