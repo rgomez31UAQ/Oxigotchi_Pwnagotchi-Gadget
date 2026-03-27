@@ -762,10 +762,10 @@ impl Daemon {
                             bluetooth::attacks::ble_hijack::run(hci, &target.device_address)
                         }
                         bluetooth::attacks::BtAttackType::L2capFuzz => {
-                            bluetooth::attacks::l2cap_fuzz::run(hci, &target.device_address)
+                            bluetooth::attacks::l2cap_fuzz::run(&target.device_address, 0)
                         }
                         bluetooth::attacks::BtAttackType::AttGattFuzz => {
-                            bluetooth::attacks::att_fuzz::run(hci, &target.device_address)
+                            bluetooth::attacks::att_fuzz::run(&target.device_address, 0)
                         }
                         bluetooth::attacks::BtAttackType::VendorCmdUnlock => {
                             bluetooth::attacks::vendor::run_diagnostics(hci, &target.device_address)
