@@ -15,6 +15,7 @@ pub mod knob;
 pub mod l2cap_fuzz;
 pub mod smp;
 pub mod target;
+pub mod l2cap_socket;
 pub mod vendor;
 
 // ---------------------------------------------------------------------------
