@@ -685,7 +685,7 @@ impl Daemon {
         }
 
         // Reset QPU ring buffer between epochs
-        self.qpu_engine.as_mut().map(|e| e.reset_ring());
+        if let Some(e) = self.qpu_engine.as_mut() { e.reset_ring(); }
 
         self.epoch_loop.next_phase(); // -> Scan (increments epoch counter)
     }

@@ -148,9 +148,14 @@ impl QpuEngine {
         let results = match self.classifier.classify_batch(&mut self.ring, &self.v3d) {
             Ok(r) if !r.is_empty() => r,
             _ => {
-                // CPU fallback: read entries from ring and classify
-                // Note: with placeholder QPU binary, we always fall through here
-                Vec::new()
+                // CPU fallback: drain entries from ring and classify on ARM
+                let entries = self.ring.drain(self.ring.available());
+                if entries.is_empty() {
+                    Vec::new()
+                } else {
+                    let classes = Classifier::classify_cpu(&entries);
+                    classes.into_iter().zip(entries).map(|(c, e)| (c, e)).collect()
+                }
             }
         };
 

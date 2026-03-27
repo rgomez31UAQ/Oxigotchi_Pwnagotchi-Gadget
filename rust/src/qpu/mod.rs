@@ -18,7 +18,7 @@ pub struct QpuFeatureConfig {
     pub ring_alloc_size: u32,
 }
 
-fn default_enabled() -> bool { true }
+fn default_enabled() -> bool { false }
 fn default_ring_capacity() -> u32 { 256 }
 fn default_batch_capacity() -> u32 { 256 }
 fn default_ring_alloc_size() -> u32 { 16384 }
@@ -26,7 +26,7 @@ fn default_ring_alloc_size() -> u32 { 16384 }
 impl Default for QpuFeatureConfig {
     fn default() -> Self {
         QpuFeatureConfig {
-            enabled: default_enabled(),
+            enabled: false,
             ring_capacity: default_ring_capacity(),
             batch_capacity: default_batch_capacity(),
             ring_alloc_size: default_ring_alloc_size(),

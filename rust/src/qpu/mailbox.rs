@@ -36,10 +36,11 @@ const V3D_SRQUL: usize = 0x438;
 const V3D_SRQCS: usize = 0x43C;
 
 // ioctl for /dev/vcio
-// _IOWR(100, 0, char *) on aarch64: (3<<30) | (8<<16) | (100<<8) | 0
-// sizeof(char *) = 8 on aarch64, 4 on armv7 — this constant is aarch64-only.
-#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
-compile_error!("IOCTL_MBOX_PROPERTY is only verified for aarch64 — sizeof(char *) differs on 32-bit");
+// _IOWR(100, 0, char *) = (3<<30) | (sizeof(void*)<<16) | (100<<8) | 0
+// sizeof(char *) = 8 on any 64-bit platform, 4 on 32-bit.
+// 0xC008_6400 is correct for all 64-bit Linux (aarch64, x86_64).
+#[cfg(all(target_os = "linux", target_pointer_width = "32"))]
+compile_error!("IOCTL_MBOX_PROPERTY value requires 64-bit platform (sizeof(char *) = 8)");
 #[cfg(target_os = "linux")]
 const IOCTL_MBOX_PROPERTY: libc::c_ulong = 0xC008_6400;
 

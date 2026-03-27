@@ -13,7 +13,7 @@ use super::mailbox::GpuMem;
 
 const HEADER_SIZE: usize = 64; // RingHeader is 64 bytes (cache-line aligned)
 const ENTRY_SIZE: usize = 32; // FrameEntry is 32 bytes
-const DEFAULT_CAPACITY: u32 = 256;
+
 
 // ---------------------------------------------------------------------------
 // FrameEntry — compact frame descriptor for QPU classification
@@ -144,9 +144,13 @@ impl RingBuf {
             let slot_offset = HEADER_SIZE + (slot_idx as usize) * ENTRY_SIZE;
             let slot_ptr = base.add(slot_offset);
 
+            // Stamp the monotonic sequence number into the entry before copying
+            let mut stamped = *entry;
+            stamped.seq_num = self.seq_counter;
+
             // Copy the entry into GPU memory (volatile, byte-by-byte via write_volatile)
             let entry_bytes =
-                std::slice::from_raw_parts(entry as *const FrameEntry as *const u8, ENTRY_SIZE);
+                std::slice::from_raw_parts(&stamped as *const FrameEntry as *const u8, ENTRY_SIZE);
             for i in 0..ENTRY_SIZE {
                 std::ptr::write_volatile(slot_ptr.add(i), entry_bytes[i]);
             }
@@ -214,6 +218,52 @@ impl RingBuf {
         }
     }
 
+    /// Drain up to `max` entries from the ring buffer (ARM-side read).
+    /// Advances read_idx for each entry consumed.
+    pub fn drain(&mut self, max: u32) -> Vec<FrameEntry> {
+        let base = self.mem.as_ptr();
+        let count = self.available().min(max);
+        if count == 0 {
+            return Vec::new();
+        }
+
+        let mut entries = Vec::with_capacity(count as usize);
+
+        // SAFETY: base points to valid mapped GPU memory of sufficient size.
+        // We read entries at known offsets and advance read_idx.
+        unsafe {
+            let hdr = base as *mut u32;
+            let mut read_idx = std::ptr::read_volatile(hdr.add(1));
+
+            for _ in 0..count {
+                fence(Ordering::Acquire);
+
+                let slot_idx = read_idx & (self.capacity - 1);
+                let slot_offset = HEADER_SIZE + (slot_idx as usize) * ENTRY_SIZE;
+                let slot_ptr = base.add(slot_offset);
+
+                // Read entry from GPU memory byte-by-byte via volatile reads
+                let mut buf = [0u8; ENTRY_SIZE];
+                for i in 0..ENTRY_SIZE {
+                    buf[i] = std::ptr::read_volatile(slot_ptr.add(i));
+                }
+
+                // SAFETY: FrameEntry is repr(C, packed) with no padding invariants;
+                // any bit pattern of the correct size is valid.
+                let entry: FrameEntry = std::ptr::read_unaligned(buf.as_ptr() as *const FrameEntry);
+                entries.push(entry);
+
+                read_idx = read_idx.wrapping_add(1);
+            }
+
+            // Release fence: ensure all reads complete before updating read_idx
+            fence(Ordering::Release);
+            std::ptr::write_volatile(hdr.add(1), read_idx);
+        }
+
+        entries
+    }
+
     /// Get the capacity.
     pub fn capacity(&self) -> u32 {
         self.capacity
@@ -251,6 +301,10 @@ impl RingBuf {
 
     pub fn data_bus_addr(&self) -> u32 {
         0
+    }
+
+    pub fn drain(&mut self, _max: u32) -> Vec<FrameEntry> {
+        Vec::new()
     }
 
     pub fn reset(&mut self) {}
@@ -533,6 +587,5 @@ mod tests {
     fn test_constants() {
         assert_eq!(HEADER_SIZE, 64);
         assert_eq!(ENTRY_SIZE, 32);
-        assert_eq!(DEFAULT_CAPACITY, 256);
     }
 }
