@@ -112,6 +112,7 @@ struct Daemon {
     gpu_state: gpu::state::gpu_state::GpuFeatureState,
     gpu_runtime_ingestor: gpu::runtime::ingest::GpuRuntimeIngestor,
     gpu_optimizer: gpu::optimize::snapshot::SnapshotOptimizer,
+    qpu_engine: Option<qpu::engine::QpuEngine>,
     mode: OperatingMode,
     shared_state: web::SharedState,
     ws_tx: tokio::sync::broadcast::Sender<String>,
@@ -211,6 +212,7 @@ impl Daemon {
             },
             gpu_runtime_ingestor: gpu::runtime::ingest::GpuRuntimeIngestor::new(),
             gpu_optimizer: gpu::optimize::snapshot::SnapshotOptimizer::new(),
+            qpu_engine: None, // initialized in boot()
             mode: OperatingMode::Rage,
             shared_state,
             ws_tx,
@@ -394,6 +396,22 @@ impl Daemon {
                 self.epoch_loop
                     .personality
                     .set_override(personality::Face::AoCrashed);
+            }
+        }
+
+        // QPU initialization
+        if self.config.qpu.enabled {
+            match qpu::engine::QpuEngine::init(self.config.qpu.to_engine_config()) {
+                Ok(engine) => {
+                    info!(
+                        "QPU engine initialized: {} QPUs available",
+                        engine.num_qpus()
+                    );
+                    self.qpu_engine = Some(engine);
+                }
+                Err(e) => {
+                    log::warn!("QPU init failed (CPU fallback): {}", e);
+                }
             }
         }
 
@@ -665,6 +683,10 @@ impl Daemon {
         if remainder > 0 {
             std::thread::sleep(Duration::from_secs(remainder));
         }
+
+        // Reset QPU ring buffer between epochs
+        self.qpu_engine.as_mut().map(|e| e.reset_ring());
+
         self.epoch_loop.next_phase(); // -> Scan (increments epoch counter)
     }
 
@@ -2160,6 +2182,20 @@ impl Daemon {
         s.gpu_submit_seen = self.gpu_state.runtime.vc4_submit_cl_seen;
         s.gpu_snapshot_policy = gpu_policy.as_str().to_string();
         s.gpu_flush_threshold = gpu_policy.threshold();
+
+        // Update QPU stats
+        if let Some(ref engine) = self.qpu_engine {
+            let stats = engine.stats();
+            s.qpu_enabled = true;
+            s.qpu_available = stats.qpu_available;
+            s.qpu_num_cores = stats.num_qpus;
+            s.qpu_frames_submitted = stats.frames_submitted;
+            s.qpu_frames_classified = stats.frames_classified;
+            s.qpu_batches_processed = stats.batches_processed;
+            s.qpu_overflow_count = stats.overflow_count;
+            s.qpu_last_batch_size = stats.last_batch_size;
+            s.qpu_last_batch_duration_us = stats.last_batch_duration_us;
+        }
 
         s.ao_state = ao_state;
         s.ao_pid = ao_pid;
