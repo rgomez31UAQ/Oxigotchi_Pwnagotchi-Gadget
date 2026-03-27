@@ -762,10 +762,12 @@ impl Daemon {
                             bluetooth::attacks::ble_hijack::run(hci, &target.device_address)
                         }
                         bluetooth::attacks::BtAttackType::L2capFuzz => {
-                            bluetooth::attacks::l2cap_fuzz::run(&target.device_address, 0)
+                            let addr_type = self.bt_discovery.get_device_addr_type(&target.device_id);
+                            bluetooth::attacks::l2cap_fuzz::run(&target.device_address, addr_type)
                         }
                         bluetooth::attacks::BtAttackType::AttGattFuzz => {
-                            bluetooth::attacks::att_fuzz::run(&target.device_address, 0)
+                            let addr_type = self.bt_discovery.get_device_addr_type(&target.device_id);
+                            bluetooth::attacks::att_fuzz::run(&target.device_address, addr_type)
                         }
                         bluetooth::attacks::BtAttackType::VendorCmdUnlock => {
                             bluetooth::attacks::vendor::run_diagnostics(hci, &target.device_address)
@@ -795,6 +797,10 @@ impl Daemon {
                 }
             }
         }
+
+        // Phase 3b: Rotate captures if over size limit.
+        self.bt_capture_manager
+            .rotate_if_needed(self.config.bt_attacks.max_capture_mb);
 
         // Phase 4: Update status
         let summary = self.bt_discovery.summary();

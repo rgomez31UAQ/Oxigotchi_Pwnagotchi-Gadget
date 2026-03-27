@@ -91,6 +91,23 @@ impl BtDiscoveryWorker {
         self.devices.get_mut(id)
     }
 
+    /// Get the L2CAP address type byte for a device.
+    /// Returns: 0 = BR/EDR, 1 = LE public, 2 = LE random. Defaults to 1 (LE public).
+    pub fn get_device_addr_type(&self, device_id: &str) -> u8 {
+        if let Some(dev) = self.devices.get(device_id) {
+            match dev.address_type.as_deref() {
+                Some("public") => 1,
+                Some("random") => 2,
+                _ => match dev.transport {
+                    crate::bluetooth::model::observation::BtTransport::Classic => 0,
+                    _ => 1,
+                },
+            }
+        } else {
+            1
+        }
+    }
+
     /// Remove devices not seen since the cutoff (now - max_age_secs).
     pub fn prune(&mut self, max_age_secs: u64) {
         let cutoff = Utc::now() - chrono::Duration::seconds(max_age_secs as i64);
