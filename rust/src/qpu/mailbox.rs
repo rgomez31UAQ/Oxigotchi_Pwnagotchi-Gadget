@@ -37,11 +37,14 @@ const V3D_SRQCS: usize = 0x43C;
 
 // ioctl for /dev/vcio
 // _IOWR(100, 0, char *) on aarch64: (3<<30) | (8<<16) | (100<<8) | 0
+// sizeof(char *) = 8 on aarch64, 4 on armv7 — this constant is aarch64-only.
+#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
+compile_error!("IOCTL_MBOX_PROPERTY is only verified for aarch64 — sizeof(char *) differs on 32-bit");
 #[cfg(target_os = "linux")]
 const IOCTL_MBOX_PROPERTY: libc::c_ulong = 0xC008_6400;
 
 /// Bus address to physical address (BCM2837: strip top 2 alias bits).
-fn bus_to_phys(addr: u32) -> u32 {
+const fn bus_to_phys(addr: u32) -> u32 {
     addr & !0xC000_0000
 }
 
