@@ -317,6 +317,91 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 </div>
 
+<!-- BT Operations -->
+<div class="card" id="card-bt-ops" data-modes="bt">
+<div class="card-title">BT Operations</div>
+<div class="sub">Attack engine status and patchram state.</div>
+<div class="status-grid">
+<div class="label">Engine</div><div class="value" id="bt-ops-engine">-</div>
+<div class="label">Rage Level</div><div class="value" id="bt-ops-rage">-</div>
+<div class="label">Devices Seen</div><div class="value" id="bt-ops-devices">-</div>
+<div class="label">Active Attacks</div><div class="value" id="bt-ops-active">-</div>
+<div class="label">Total Attacks</div><div class="value" id="bt-ops-total">-</div>
+<div class="label">Patchram</div><div class="value" id="bt-ops-patchram">-</div>
+</div>
+</div>
+
+<!-- BT Nearby Devices -->
+<div class="card" id="card-bt-devices" data-modes="bt">
+<div class="card-title">Nearby Devices</div>
+<div class="sub">Bluetooth devices detected during scanning.</div>
+<div class="ap-scroll">
+<table class="bt-device-table" id="bt-device-table">
+<thead><tr>
+<th>Name</th>
+<th>RSSI</th>
+<th>Type</th>
+<th>State</th>
+<th>Seen</th>
+<th></th>
+</tr></thead>
+<tbody id="bt-device-tbody"><tr><td colspan="6" style="color:#555">No devices yet</td></tr></tbody>
+</table>
+</div>
+</div>
+
+<!-- BT Rage Level -->
+<div class="card" id="card-bt-rage" data-modes="bt">
+<div class="card-title">BT Rage Level</div>
+<div class="sub">Controls which attack categories are permitted.</div>
+<div style="display:flex;gap:8px;margin:12px 0">
+<button class="bt-rage-btn" id="bt-rage-low" onclick="setBtRage('Low')">Low<br><span style="font-size:10px;font-weight:normal;color:#888">Diagnostics</span></button>
+<button class="bt-rage-btn active" id="bt-rage-medium" onclick="setBtRage('Medium')">Medium<br><span style="font-size:10px;font-weight:normal">Active</span></button>
+<button class="bt-rage-btn" id="bt-rage-high" onclick="setBtRage('High')">High<br><span style="font-size:10px;font-weight:normal">Aggressive</span></button>
+</div>
+<div id="bt-rage-desc" style="font-size:11px;color:#888;padding:8px;background:#0f346033;border-radius:6px">Medium: Active attacks targeting external devices</div>
+</div>
+
+<!-- BT Attack Types -->
+<div class="card" id="card-bt-attacks" data-modes="bt">
+<div class="card-title">BT Attack Types</div>
+<div class="bt-group-header">BLE</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">SMP Downgrade</div><div class="toggle-desc">Downgrade pairing security to capture keys</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-smp_downgrade" checked onchange="toggleBtAttack('smp_downgrade',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">SMP MITM<span class="bt-badge bt-badge-high">HIGH</span></div><div class="toggle-desc">Man-in-the-middle BLE pairing</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-smp_mitm" onchange="toggleBtAttack('smp_mitm',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">BLE Adv Injection</div><div class="toggle-desc">Inject malicious BLE advertisements</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-ble_adv_injection" onchange="toggleBtAttack('ble_adv_injection',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">BLE Conn Hijack<span class="bt-badge bt-badge-high">HIGH</span></div><div class="toggle-desc">Hijack active BLE connections</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-ble_conn_hijack" onchange="toggleBtAttack('ble_conn_hijack',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">ATT/GATT Fuzz</div><div class="toggle-desc">Fuzz BLE attribute protocol</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-att_gatt_fuzz" onchange="toggleBtAttack('att_gatt_fuzz',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="bt-group-header">Classic</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">KNOB<span class="bt-badge bt-badge-pr">PR</span></div><div class="toggle-desc">Key negotiation downgrade (requires patchram)</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-knob" checked onchange="toggleBtAttack('knob',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">L2CAP Fuzz</div><div class="toggle-desc">Fuzz classic BT L2CAP layer</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-l2cap_fuzz" onchange="toggleBtAttack('l2cap_fuzz',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="bt-group-header">Vendor</div>
+<div class="toggle-row">
+<div class="toggle-info"><div class="toggle-label">Vendor Cmd Unlock<span class="bt-badge bt-badge-pr">PR</span></div><div class="toggle-desc">Unlock vendor HCI commands (requires patchram)</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-vendor_cmd_unlock" checked onchange="toggleBtAttack('vendor_cmd_unlock',this.checked)"><span class="slider"></span></label>
+</div>
+</div>
+
 <!-- ═══════ LOOT ═══════ -->
 <div class="section-label" data-modes="rage bt">Loot</div>
 
@@ -383,6 +468,19 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <div class="card-title">Milk</div>
 <div class="sub">Passwords milked from pwned cows.</div>
 <div id="cracked-list"><div style="color:#555;font-size:12px">No cracked passwords yet</div></div>
+</div>
+
+<!-- BT Captures -->
+<div class="card" id="card-bt-captures" data-modes="bt">
+<div class="card-title">BT Captures</div>
+<div class="sub">Artifacts captured during BT attacks.</div>
+<div class="status-grid">
+<div class="label">Keys</div><div class="value" id="bt-cap-keys">-</div>
+<div class="label">Transcripts</div><div class="value" id="bt-cap-transcripts">-</div>
+<div class="label">Crashes</div><div class="value" id="bt-cap-crashes">-</div>
+<div class="label">Vendor</div><div class="value" id="bt-cap-vendor">-</div>
+<div class="label">Total</div><div class="value" id="bt-cap-total" style="color:#00d4aa">-</div>
+</div>
 </div>
 
 <!-- ═══════ CONNECTIVITY ═══════ -->
@@ -1563,6 +1661,126 @@ function updatePluginsFromWs(plugins) {
     document.getElementById('plugins-list').innerHTML = html || '<div style="color:#555;font-size:12px">No plugins loaded</div>';
 }
 
+function updateBtOpsFromWs(btAttacks, btPatchram) {
+    if (!btAttacks) return;
+    document.getElementById('bt-ops-engine').textContent = btAttacks.enabled ? 'Active' : 'Disabled';
+    document.getElementById('bt-ops-engine').style.color = btAttacks.enabled ? '#00d4aa' : '#888';
+    document.getElementById('bt-ops-rage').textContent = btAttacks.rage_level || '-';
+    var st = btAttacks.stats || {};
+    document.getElementById('bt-ops-devices').textContent = st.devices_seen != null ? st.devices_seen : '-';
+    document.getElementById('bt-ops-active').textContent = st.active_attacks != null ? st.active_attacks : '-';
+    document.getElementById('bt-ops-total').textContent = st.total_attacks != null ? st.total_attacks : '-';
+    document.getElementById('bt-ops-patchram').textContent = btPatchram ? btPatchram.state : '-';
+}
+
+function updateBtDevicesFromWs(btDevices) {
+    if (!btDevices || !btDevices.devices) return;
+    var tbody = document.getElementById('bt-device-tbody');
+    if (btDevices.devices.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="color:#555">No devices yet</td></tr>';
+        return;
+    }
+    var html = '';
+    btDevices.devices.forEach(function(d) {
+        var name = d.name ? esc(d.name) : '<span style="color:#555">' + esc(d.address) + '</span>';
+        var rssi = d.rssi != null ? d.rssi + ' dBm' : '-';
+        var rssiColor = d.rssi == null ? '#555' : (d.rssi > -50 ? '#00d4aa' : (d.rssi > -70 ? '#f0c040' : '#e94560'));
+        var type = esc(d.transport) + (d.category ? ' <span style="color:#555;font-size:10px">' + esc(d.category) + '</span>' : '');
+        var stateClass = 'bt-state-' + (d.attack_state || 'untouched').toLowerCase();
+        html += '<tr>' +
+            '<td>' + name + '</td>' +
+            '<td style="color:' + rssiColor + '">' + rssi + '</td>' +
+            '<td>' + type + '</td>' +
+            '<td class="' + stateClass + '">' + esc(d.attack_state || 'Untouched') + '</td>' +
+            '<td>' + d.seen_count + '</td>' +
+            '<td><button class="bt-target-btn" onclick="setBtTarget(\'' + esc(d.address) + '\')">Target</button></td>' +
+            '</tr>';
+    });
+    tbody.innerHTML = html;
+}
+
+function setBtTarget(address) {
+    toast('Target queued: ' + address);
+    api('POST', '/api/bt/attacks/target', {address: address});
+}
+
+var _btRageDescs = {
+    'Low': 'Passive diagnostics only — targets own controller (VendorCmdUnlock)',
+    'Medium': 'Active attacks targeting external devices',
+    'High': 'Aggressive — includes MITM and connection hijack'
+};
+
+function setBtRage(level) {
+    document.getElementById('bt-rage-low').classList.toggle('active', level === 'Low');
+    document.getElementById('bt-rage-medium').classList.toggle('active', level === 'Medium');
+    document.getElementById('bt-rage-high').classList.toggle('active', level === 'High');
+    document.getElementById('bt-rage-desc').textContent = (level + ': ' + (_btRageDescs[level] || ''));
+    api('POST', '/api/bt/attacks/rage', {level: level});
+}
+
+function updateBtRageFromWs(btAttacks) {
+    if (!btAttacks) return;
+    var level = btAttacks.rage_level || 'Medium';
+    document.getElementById('bt-rage-low').classList.toggle('active', level === 'Low');
+    document.getElementById('bt-rage-medium').classList.toggle('active', level === 'Medium');
+    document.getElementById('bt-rage-high').classList.toggle('active', level === 'High');
+    document.getElementById('bt-rage-desc').textContent = (level + ': ' + (_btRageDescs[level] || ''));
+}
+
+function toggleBtAttack(name, enabled) {
+    api('POST', '/api/bt/attacks/toggle', {attack: name, enabled: enabled});
+}
+
+function updateBtAttacksFromWs(btAttacks) {
+    if (!btAttacks || !btAttacks.toggles) return;
+    var t = btAttacks.toggles;
+    var map = {
+        smp_downgrade: t.smp_downgrade,
+        smp_mitm: t.smp_mitm,
+        knob: t.knob,
+        ble_adv_injection: t.ble_adv_injection,
+        ble_conn_hijack: t.ble_conn_hijack,
+        l2cap_fuzz: t.l2cap_fuzz,
+        att_gatt_fuzz: t.att_gatt_fuzz,
+        vendor_cmd_unlock: t.vendor_cmd_unlock
+    };
+    Object.keys(map).forEach(function(key) {
+        var el = document.getElementById('bt-atk-' + key);
+        if (el && !el.matches(':focus')) el.checked = map[key];
+    });
+}
+
+function updateBtCapturesFromWs(btCaptures) {
+    if (!btCaptures) return;
+    document.getElementById('bt-cap-keys').textContent = btCaptures.keys != null ? btCaptures.keys : '-';
+    document.getElementById('bt-cap-crashes').textContent = btCaptures.crashes != null ? btCaptures.crashes : '-';
+    document.getElementById('bt-cap-vendor').textContent = btCaptures.vendor != null ? btCaptures.vendor : '-';
+    document.getElementById('bt-cap-total').textContent = btCaptures.total != null ? btCaptures.total : '-';
+    document.getElementById('bt-cap-transcripts').textContent = '-';
+}
+
+function refreshBtAttacks() {
+    if (_currentMode !== 'bt') return;
+    api('GET', '/api/bt/attacks').then(function(d) {
+        if (!d) return;
+        updateBtOpsFromWs(d, null);
+        updateBtRageFromWs(d);
+        updateBtAttacksFromWs(d);
+    });
+    api('GET', '/api/bt/devices').then(function(d) {
+        if (!d) return;
+        updateBtDevicesFromWs(d);
+    });
+    api('GET', '/api/bt/captures').then(function(d) {
+        if (!d) return;
+        updateBtCapturesFromWs(d);
+    });
+    api('GET', '/api/bt/patchram').then(function(d) {
+        if (!d) return;
+        document.getElementById('bt-ops-patchram').textContent = d.state || '-';
+    });
+}
+
 function updateAllCards(state) {
     if (state.epoch !== undefined) updateStatusFromWs(state);
     if (state.battery) updateBatteryFromWs(state.battery);
@@ -1578,6 +1796,11 @@ function updateAllCards(state) {
     if (state.aps) updateApsFromWs(state.aps);
     if (state.whitelist) updateWhitelistFromWs(state.whitelist);
     if (state.plugins) updatePluginsFromWs(state.plugins);
+    if (state.bt_attacks) updateBtOpsFromWs(state.bt_attacks, state.bt_patchram);
+    if (state.bt_devices) updateBtDevicesFromWs(state.bt_devices);
+    if (state.bt_attacks) updateBtRageFromWs(state.bt_attacks);
+    if (state.bt_attacks) updateBtAttacksFromWs(state.bt_attacks);
+    if (state.bt_captures) updateBtCapturesFromWs(state.bt_captures);
 }
 
 function startPolling() {
@@ -1599,6 +1822,7 @@ function startPolling() {
     _pollTimers.push(setInterval(refreshLogs, 10000));
     _pollTimers.push(setInterval(refreshWpaSec, 30000));
     _pollTimers.push(setInterval(refreshDiscord, 30000));
+    _pollTimers.push(setInterval(refreshBtAttacks, 10000));
 }
 
 function stopPolling() {
