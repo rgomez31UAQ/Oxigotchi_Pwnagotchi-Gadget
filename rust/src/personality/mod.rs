@@ -612,8 +612,9 @@ impl Personality {
 
         let mut rng = rand::thread_rng();
 
-        // 30% chance for a new joke
-        if rng.r#gen::<f32>() < 0.30 {
+        // Higher joke rate when mood is low — bored bull cracks more jokes
+        let joke_chance = if self.mood.value() < 0.3 { 0.45 } else { 0.30 };
+        if rng.r#gen::<f32>() < joke_chance {
             let joke_list = jokes::jokes_for_face(&face_name);
             if !joke_list.is_empty() {
                 let idx = rng.gen_range(0..joke_list.len());
@@ -624,6 +625,7 @@ impl Personality {
                 self.joke_face = face_name;
                 self.current_status = question;
                 self.status_display_epochs = 1;
+                self.mood.adjust(mood_deltas::JOKE);
                 return;
             }
         }
@@ -2170,5 +2172,68 @@ mod tests {
             "message '{}' should be from sad face pool or jokes",
             p.current_status
         );
+    }
+
+    #[test]
+    fn test_joke_rate_higher_at_low_mood() {
+        // Statistical test: run 1000 iterations at low mood, count jokes
+        let mut low_mood_jokes = 0;
+        let mut high_mood_jokes = 0;
+
+        for _ in 0..1000 {
+            let mut p = Personality::new();
+            p.mood = Mood { value: 0.15 }; // below 0.3
+            p.joke_face = "sad".to_string();
+            p.status_display_epochs = 3; // force new pick
+            p.generate_status();
+            if p.joke_index.is_some() {
+                low_mood_jokes += 1;
+            }
+        }
+        for _ in 0..1000 {
+            let mut p = Personality::new();
+            p.mood = Mood { value: 0.6 }; // above 0.3
+            p.joke_face = "awake".to_string();
+            p.status_display_epochs = 3;
+            p.generate_status();
+            if p.joke_index.is_some() {
+                high_mood_jokes += 1;
+            }
+        }
+        // Low mood should have significantly more jokes (45% vs 30%)
+        assert!(
+            low_mood_jokes > high_mood_jokes + 50,
+            "low mood should produce more jokes: low={}, high={}",
+            low_mood_jokes,
+            high_mood_jokes
+        );
+    }
+
+    #[test]
+    fn test_joke_selection_boosts_mood() {
+        // Run until a joke is selected (may take a few tries due to randomness)
+        for _ in 0..100 {
+            let mut p = Personality::new();
+            p.mood = Mood { value: 0.15 };
+            p.joke_face = "sad".to_string();
+            p.status_display_epochs = 3;
+            let before = p.mood.value();
+            p.generate_status();
+            if p.joke_index.is_some() {
+                // Joke was selected — mood should have increased
+                assert!(
+                    p.mood.value() > before,
+                    "joke should boost mood: before={}, after={}",
+                    before,
+                    p.mood.value()
+                );
+                assert!(
+                    (p.mood.value() - (before + mood_deltas::JOKE)).abs() < 0.001,
+                    "joke boost should be exactly JOKE constant"
+                );
+                return;
+            }
+        }
+        panic!("no joke selected in 100 tries — probability too low");
     }
 }
