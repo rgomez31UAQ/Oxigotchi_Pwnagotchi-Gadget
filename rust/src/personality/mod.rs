@@ -550,15 +550,17 @@ impl Personality {
         let face = self.current_face();
         let face_name = face.face_key().to_string();
 
-        // If face changed, reset joke state and immediately pick a message
-        // from the new face's pool (don't clear — avoids fallback to static mood msg)
+        // If face changed, reset joke state and seed current_status defensively.
+        // The joke/message selection below will overwrite this in the same call,
+        // but this guards against status_msg() reads between face change and the
+        // next generate_status() — without it, current_status would be empty or
+        // stale from the previous face, triggering the static mood fallback.
         if self.joke_face != face_name {
             self.joke_phase = 0;
             self.joke_epochs_left = 0;
             self.joke_index = None;
             self.joke_face = face_name.clone();
             self.status_display_epochs = 3; // force new message pick below
-            // Pick an immediate message from the new face so status is never empty
             let msgs = messages::messages_for_face(&face_name);
             if !msgs.is_empty() {
                 let mut rng = rand::thread_rng();
