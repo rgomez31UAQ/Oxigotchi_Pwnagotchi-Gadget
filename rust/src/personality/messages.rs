@@ -248,26 +248,6 @@ pub static BULL_MESSAGES: LazyLock<HashMap<&'static str, Vec<&'static str>>> =
                 "This is NOT a drill!",
             ],
         );
-        m.insert(
-            "look_r",
-            vec![
-                "Something over there...",
-                "The bull glances right",
-                "Ears perked, eyes right",
-                "What's rustling in that bush?",
-                "Spotted something interesting",
-            ],
-        );
-        m.insert(
-            "look_l",
-            vec![
-                "Movement to the left!",
-                "The bull peers leftward",
-                "Could be a new network...",
-                "Turning the horns that way",
-                "Left field action!",
-            ],
-        );
         m
     });
 
@@ -315,16 +295,10 @@ mod tests {
     fn test_total_message_count() {
         let total: usize = BULL_MESSAGES.values().map(|v| v.len()).sum();
         assert!(
-            total >= 150,
-            "should have at least 150 messages, got {}",
+            total >= 145,
+            "should have at least 145 messages, got {}",
             total
         );
-    }
-
-    #[test]
-    fn test_look_faces_have_messages() {
-        assert!(!messages_for_face("look_r").is_empty());
-        assert!(!messages_for_face("look_l").is_empty());
     }
 
     #[test]
