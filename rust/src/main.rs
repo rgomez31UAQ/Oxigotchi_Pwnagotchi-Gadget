@@ -601,10 +601,18 @@ impl Daemon {
 
         // ---- Display phase ----
         self.epoch_loop.next_phase(); // -> Display
-        self.epoch_loop.record_result(&result);
 
-        // ---- Face & personality ----
-        self.update_face_and_personality(&result);
+        if self.mode == OperatingMode::Bt {
+            // BT mode: personality was already updated in run_bt_epoch().
+            // Don't record a WiFi result (would poison mood with blind epochs)
+            // and don't overwrite the BT status text.
+            self.epoch_loop.personality.variety.tick_idle();
+        } else {
+            self.epoch_loop.record_result(&result);
+
+            // ---- Face & personality ----
+            self.update_face_and_personality(&result);
+        }
 
         // ---- Lua plugins + display ----
         let epoch_state = self.build_epoch_state();
