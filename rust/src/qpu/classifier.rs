@@ -1,19 +1,104 @@
 // QPU packet classifier — classifies 802.11 frame entries by type/subtype.
 //
-// Contains a placeholder QPU binary (thrend-only) and a CPU-side fallback
-// classifier. The real QPU shader kernel will be hand-assembled later.
+// Contains a real VideoCore IV QPU classifier kernel that classifies frames
+// using conditional execution (setf + cond) and VPM DMA store, plus a
+// CPU-side fallback classifier.
 
 use std::sync::Arc;
 use super::ringbuf::FrameEntry;
 #[cfg(target_os = "linux")]
 use super::mailbox::GpuMem;
 
-/// Placeholder QPU binary — thread-end only.
-/// The real classifier kernel will be hand-assembled later.
-static QPU_CLASSIFIER_CODE: [u32; 6] = [
-    0x009E7000, 0x300009E7, // thrend (signal thread end)
-    0x009E7000, 0x100009E7, // nop (mandatory delay slot 1)
-    0x009E7000, 0x100009E7, // nop (mandatory delay slot 2)
+/// QPU classifier kernel — classifies a single 802.11 frame by type/subtype.
+///
+/// Uniforms (set by ARM before launch):
+///   u0: frame_type  (0=mgmt, 1=control, 2=data)
+///   u1: frame_subtype (0-15)
+///   u2: output bus address (where to DMA-store the 1-byte result)
+///
+/// Classification result (written to output bus address):
+///   0=Unknown, 1=Beacon, 2=ProbeReq, 3=ProbeResp, 4=Auth, 5=Deauth,
+///   6=AssocReq, 7=AssocResp, 8=Data, 9=Control
+///
+/// QPU ISA notes:
+///   - No branches for classification — uses ALU setf + conditional ldi
+///   - VPM DMA store writes the result byte to shared memory
+///   - Encoding follows the proven pattern from qpu_hello.h
+///   - Each instruction is 64 bits = 2 x u32 [lower, upper]
+static QPU_CLASSIFIER_CODE: [u32; 64] = [
+    // -- Read uniforms --
+    // 0: or ra0, unif, unif    (ra0 = frame_type)
+    0x15800D80, 0x10020027,
+    // 1: or ra1, unif, unif    (ra1 = frame_subtype)
+    0x15800D80, 0x10020067,
+    // 2: or ra2, unif, unif    (ra2 = output bus address)
+    0x15800D80, 0x100200A7,
+    // 3: ldi ra3, 0            (ra3 = result = Unknown)
+    0x00000000, 0xE00200E7,
+
+    // -- Management subtype checks (checked first; type overrides below fix non-mgmt) --
+    // 4: sub.setf nop, ra1, 0  (Z if subtype==0)
+    0x0D040DC0, 0xD01209E7,
+    // 5: ldi.ifz ra3, 6        (AssocReq)
+    0x00000006, 0xE00400E7,
+    // 6: sub.setf nop, ra1, 1
+    0x0D041DC0, 0xD01209E7,
+    // 7: ldi.ifz ra3, 7        (AssocResp)
+    0x00000007, 0xE00400E7,
+    // 8: sub.setf nop, ra1, 4
+    0x0D044DC0, 0xD01209E7,
+    // 9: ldi.ifz ra3, 2        (ProbeReq)
+    0x00000002, 0xE00400E7,
+    // 10: sub.setf nop, ra1, 5
+    0x0D045DC0, 0xD01209E7,
+    // 11: ldi.ifz ra3, 3       (ProbeResp)
+    0x00000003, 0xE00400E7,
+    // 12: sub.setf nop, ra1, 8
+    0x0D048DC0, 0xD01209E7,
+    // 13: ldi.ifz ra3, 1       (Beacon)
+    0x00000001, 0xE00400E7,
+    // 14: sub.setf nop, ra1, 11
+    0x0D04BDC0, 0xD01209E7,
+    // 15: ldi.ifz ra3, 4       (Auth)
+    0x00000004, 0xE00400E7,
+    // 16: sub.setf nop, ra1, 12
+    0x0D04CDC0, 0xD01209E7,
+    // 17: ldi.ifz ra3, 5       (Deauth)
+    0x00000005, 0xE00400E7,
+
+    // -- Type overrides (overwrite subtype result for non-management frames) --
+    // 18: sub.setf nop, ra0, 1 (Z if type==1)
+    0x0D001DC0, 0xD01209E7,
+    // 19: ldi.ifz ra3, 9       (Control)
+    0x00000009, 0xE00400E7,
+    // 20: sub.setf nop, ra0, 2 (Z if type==2)
+    0x0D002DC0, 0xD01209E7,
+    // 21: ldi.ifz ra3, 8       (Data)
+    0x00000008, 0xE00400E7,
+    // 22: sub.setf nop, ra0, 3 (Z if type==3, reserved)
+    0x0D003DC0, 0xD01209E7,
+    // 23: ldi.ifz ra3, 0       (Unknown)
+    0x00000000, 0xE00400E7,
+
+    // -- VPM DMA store: write result byte to output address --
+    // 24: ldi vpmvcd_wr_setup(B), VPW_SETUP_H32 (0x1A00)
+    0x00001A00, 0xE0021C67,
+    // 25: or vpm, ra3, ra3     (write result to VPM)
+    0x150C0D80, 0x10020C27,
+    // 26: ldi vpmvcd_wr_setup(B), VDW_SETUP_H32 (0x80904000)
+    0x80904000, 0xE0021C67,
+    // 27: or vpm_st_addr(B), ra2, ra2  (trigger DMA store)
+    0x15080D80, 0x10021CA7,
+    // 28: or nop, vpm_st_wait(B), vpm_st_wait(B)  (wait)
+    0x15032FC0, 0x100209E7,
+
+    // -- Thread end + 2 mandatory delay-slot nops --
+    // 29: thrend
+    0x009E7000, 0x300009E7,
+    // 30: nop
+    0x009E7000, 0x100009E7,
+    // 31: nop
+    0x009E7000, 0x100009E7,
 ];
 
 // ---------------------------------------------------------------------------
@@ -67,8 +152,9 @@ impl FrameClass {
 /// executes it against a ring buffer, and reads back results.
 #[cfg(target_os = "linux")]
 pub struct Classifier {
-    code_mem: GpuMem,    // GPU memory holding the QPU binary
-    output_mem: GpuMem,  // GPU memory for classification results
+    code_mem: GpuMem,     // GPU memory holding the QPU binary
+    output_mem: GpuMem,   // GPU memory for classification results
+    uniform_mem: GpuMem,  // GPU memory for QPU uniforms (3 x u32)
     output_capacity: u32, // Max frames per batch
 }
 
@@ -93,20 +179,24 @@ impl Classifier {
 
         // Allocate GPU memory for output (1 byte per frame, page-aligned)
         let output_size = ((output_capacity + 4095) / 4096) * 4096;
-        let output_mem = GpuMem::alloc(mbox, output_size.max(4096))?;
+        let output_mem = GpuMem::alloc(mbox.clone(), output_size.max(4096))?;
+
+        // Allocate GPU memory for uniforms (3 x u32 = 12 bytes, page-aligned)
+        let uniform_mem = GpuMem::alloc(mbox, 4096)?;
 
         Ok(Classifier {
             code_mem,
             output_mem,
+            uniform_mem,
             output_capacity,
         })
     }
 
     /// Classify frames in the ring buffer using the QPU.
     ///
-    /// Currently uses the CPU-side fallback because the QPU binary is a
-    /// placeholder. When the real QPU kernel is ready, this will launch the
-    /// QPU and read results from output_mem.
+    /// Launches the QPU once per frame, passing type/subtype via uniforms.
+    /// The QPU kernel classifies the frame and writes the result byte to
+    /// output_mem via VPM DMA. Falls back to CPU classification on QPU error.
     ///
     /// Returns a Vec of (FrameClass, FrameEntry) pairs for each classified frame.
     pub fn classify_batch(
@@ -119,15 +209,60 @@ impl Classifier {
             return Ok(Vec::new());
         }
 
-        // TODO: When real QPU kernel is ready, execute via v3d.execute_qpu()
-        // For now, use CPU-side classification as fallback
-        let _ = v3d; // suppress unused warning
+        let entries = ring.drain(count);
+        let mut results = Vec::with_capacity(entries.len());
 
-        // Placeholder: return empty — the caller should use FrameClass::classify()
-        // or Classifier::classify_cpu() directly until the real QPU kernel lands.
-        // The real QPU path will read ring buffer entries and write classifications
-        // to output_mem, then we read output_mem back.
-        Ok(Vec::new())
+        for entry in &entries {
+            let ft = unsafe { std::ptr::addr_of!(entry.frame_type).read_unaligned() };
+            let fst = unsafe { std::ptr::addr_of!(entry.frame_subtype).read_unaligned() };
+
+            // Set up uniforms: [frame_type, frame_subtype, output_bus_addr]
+            unsafe {
+                let u_ptr = self.uniform_mem.as_ptr() as *mut u32;
+                std::ptr::write_volatile(u_ptr.add(0), ft as u32);
+                std::ptr::write_volatile(u_ptr.add(1), fst as u32);
+                std::ptr::write_volatile(u_ptr.add(2), self.output_mem.bus_addr());
+
+                // Clear output byte
+                std::ptr::write_volatile(self.output_mem.as_ptr(), 0xFF);
+            }
+            std::sync::atomic::fence(std::sync::atomic::Ordering::Release);
+
+            // Execute QPU
+            match v3d.execute_qpu(
+                self.code_mem.bus_addr(),
+                self.uniform_mem.bus_addr(),
+                3, // 3 uniforms
+                500, // 500ms timeout
+            ) {
+                Ok(()) => {
+                    std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+                    let class_byte = unsafe {
+                        std::ptr::read_volatile(self.output_mem.as_ptr())
+                    };
+                    let class = match class_byte {
+                        0 => FrameClass::Unknown,
+                        1 => FrameClass::Beacon,
+                        2 => FrameClass::ProbeReq,
+                        3 => FrameClass::ProbeResp,
+                        4 => FrameClass::Auth,
+                        5 => FrameClass::Deauth,
+                        6 => FrameClass::AssocReq,
+                        7 => FrameClass::AssocResp,
+                        8 => FrameClass::Data,
+                        9 => FrameClass::Control,
+                        _ => FrameClass::Unknown,
+                    };
+                    results.push((class, *entry));
+                }
+                Err(_) => {
+                    // QPU failed — fall back to CPU for this frame
+                    results.push((FrameClass::classify(ft, fst), *entry));
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     /// CPU-side batch classification (fallback when QPU is not available).
@@ -325,13 +460,25 @@ mod tests {
     }
 
     #[test]
-    fn test_qpu_placeholder_binary() {
-        // Verify the placeholder binary matches the proven thrend+nops pattern
-        assert_eq!(QPU_CLASSIFIER_CODE.len(), 6);
-        // thrend signal
-        assert_eq!(QPU_CLASSIFIER_CODE[1], 0x300009E7);
-        // nop signals
-        assert_eq!(QPU_CLASSIFIER_CODE[3], 0x100009E7);
-        assert_eq!(QPU_CLASSIFIER_CODE[5], 0x100009E7);
+    fn test_qpu_classifier_code_structure() {
+        // Real kernel: 32 instructions = 64 u32 words
+        assert_eq!(QPU_CLASSIFIER_CODE.len(), 64);
+        // Last 3 instructions: thrend (idx 29) + 2 nop delay slots (idx 30, 31)
+        // Each instruction is [lower, upper] so upper word indices are 59, 61, 63
+        // thrend: upper word sig=0x3 at index 59
+        assert_eq!(QPU_CLASSIFIER_CODE[59] >> 28, 0x3, "instruction 29 must be thrend (sig=3)");
+        // nop delay slots: upper word sig=0x1 at indices 61, 63
+        assert_eq!(QPU_CLASSIFIER_CODE[61] >> 28, 0x1, "delay slot 1 must be nop (sig=1)");
+        assert_eq!(QPU_CLASSIFIER_CODE[63] >> 28, 0x1, "delay slot 2 must be nop (sig=1)");
+    }
+
+    #[test]
+    fn test_qpu_kernel_vpm_dma_pattern() {
+        // Instruction 24: VPM write setup (matches qpu_hello.h)
+        assert_eq!(QPU_CLASSIFIER_CODE[48], 0x00001A00); // VPW_SETUP_H32
+        assert_eq!(QPU_CLASSIFIER_CODE[49], 0xE0021C67); // ldi to vpmvcd_wr_setup(B)
+        // Instruction 26: DMA store setup
+        assert_eq!(QPU_CLASSIFIER_CODE[52], 0x80904000); // VDW_SETUP_H32
+        assert_eq!(QPU_CLASSIFIER_CODE[53], 0xE0021C67);
     }
 }
