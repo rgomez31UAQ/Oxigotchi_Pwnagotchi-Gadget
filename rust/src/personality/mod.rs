@@ -2341,4 +2341,68 @@ mod tests {
         p.tick_transition_override();
         assert_eq!(p.override_face, Some(Face::BatteryCritical));
     }
+
+    #[test]
+    fn test_rf_override_cycle_all_faces() {
+        let rf_faces = [Face::Raging, Face::Excited, Face::Lonely];
+        for face in &rf_faces {
+            let mut p = Personality::new();
+            p.override_face = Some(*face);
+            let quiet_rf = crate::qpu::rf::RfEnvironment::default();
+            p.apply_rf_environment(&quiet_rf);
+            assert_eq!(
+                p.override_face, None,
+                "RF face {:?} should be cleared when conditions don't hold",
+                face
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_rf_overrides_survive_rf_clearing() {
+        let non_rf_faces = [
+            Face::BatteryCritical,
+            Face::BatteryLow,
+            Face::AoCrashed,
+            Face::WifiDown,
+            Face::FwCrash,
+            Face::Broken,
+            Face::Shutdown,
+        ];
+        for face in &non_rf_faces {
+            let mut p = Personality::new();
+            p.override_face = Some(*face);
+            let quiet_rf = crate::qpu::rf::RfEnvironment::default();
+            p.apply_rf_environment(&quiet_rf);
+            assert_eq!(
+                p.override_face,
+                Some(*face),
+                "Non-RF face {:?} should survive apply_rf_environment",
+                face
+            );
+        }
+    }
+
+    #[test]
+    fn test_transition_override_lifecycle() {
+        let mut p = Personality::new();
+
+        // Set transition override
+        p.set_transition_override(Face::Intense, 2);
+        assert_eq!(p.override_face, Some(Face::Intense));
+
+        // RF should NOT clear transition faces (Intense is not Raging/Excited/Lonely)
+        let quiet_rf = crate::qpu::rf::RfEnvironment::default();
+        p.apply_rf_environment(&quiet_rf);
+        assert_eq!(
+            p.override_face,
+            Some(Face::Intense),
+            "transition override should survive RF clearing"
+        );
+
+        // Tick countdown to expiry
+        p.tick_transition_override();
+        p.tick_transition_override();
+        assert_eq!(p.override_face, None, "transition override should expire after countdown");
+    }
 }
