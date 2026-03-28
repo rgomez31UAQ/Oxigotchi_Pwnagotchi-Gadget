@@ -22,6 +22,8 @@ use super::classifier::Classifier;
 use super::mailbox::{GpuMem, Mailbox, V3dRegs};
 #[cfg(target_os = "linux")]
 use super::ringbuf::{extract_frame_entry, RingBuf};
+#[cfg(target_os = "linux")]
+use super::capture::CaptureThread;
 
 // ---------------------------------------------------------------------------
 // QpuStats — throughput and overflow statistics
@@ -75,6 +77,8 @@ pub struct QpuEngine {
     classifier: Classifier,
     stats: QpuStats,
     epoch_start: Instant,
+    capture_thread: Option<CaptureThread>,
+    capture_rx: Option<std::sync::mpsc::Receiver<super::ringbuf::FrameEntry>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -111,6 +115,8 @@ impl QpuEngine {
             classifier,
             stats,
             epoch_start: Instant::now(),
+            capture_thread: None,
+            capture_rx: None,
         })
     }
 
@@ -138,6 +144,17 @@ impl QpuEngine {
     /// Uses QPU if available, falls back to CPU classification.
     /// Returns the classified frames.
     pub fn process_batch(&mut self) -> Vec<(FrameClass, FrameEntry)> {
+        // Drain captured frames from the pcap thread into the ring buffer.
+        if let Some(ref rx) = self.capture_rx {
+            while let Ok(entry) = rx.try_recv() {
+                if self.ring.push(&entry) {
+                    self.stats.frames_submitted += 1;
+                } else {
+                    self.stats.overflow_count += 1;
+                }
+            }
+        }
+
         if self.ring.available() == 0 {
             return Vec::new();
         }
@@ -197,13 +214,35 @@ impl QpuEngine {
     pub fn num_qpus(&self) -> u32 {
         self.stats.num_qpus
     }
+
+    /// Start the pcap capture thread on the given interface (e.g. "wlan0mon").
+    /// Frames are sent over an mpsc channel because the ring buffer (GPU memory)
+    /// is not Send. The channel is drained into the ring in process_batch().
+    pub fn start_capture(&mut self, iface: &str) -> Result<(), String> {
+        if self.capture_thread.is_some() {
+            return Err("capture thread already running".into());
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel::<super::ringbuf::FrameEntry>();
+
+        let ct = CaptureThread::start(iface, move |entry| {
+            let _ = tx.send(*entry);
+        })?;
+
+        self.capture_thread = Some(ct);
+        self.capture_rx = Some(rx);
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
 impl Drop for QpuEngine {
     fn drop(&mut self) {
+        // Stop capture thread first
+        if let Some(ref mut ct) = self.capture_thread {
+            ct.stop();
+        }
         // Disable QPUs on cleanup.
-        // Ring buffer, classifier, and V3D are cleaned up by their own Drop impls.
         let _ = self.mbox.qpu_enable(false);
     }
 }
@@ -259,6 +298,10 @@ impl QpuEngine {
 
     pub fn num_qpus(&self) -> u32 {
         0
+    }
+
+    pub fn start_capture(&mut self, _iface: &str) -> Result<(), String> {
+        Err("Capture requires Linux".into())
     }
 }
 
