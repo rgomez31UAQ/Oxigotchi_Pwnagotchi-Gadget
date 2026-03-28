@@ -1654,5 +1654,31 @@ mod tests {
         let action2 = rm.process_health(HealthCheck::Unresponsive);
         assert_eq!(action2, RecoveryAction::None, "expected None during cooldown, got {action2:?}");
         assert_eq!(rm.soft_retry_count, 1, "retry count must not advance during cooldown");
+
+        // HealthCheck::Ok must still pass through during cooldown
+        let ok_action = rm.process_health(HealthCheck::Ok);
+        assert_eq!(ok_action, RecoveryAction::None);
+        assert_eq!(rm.state, RecoveryState::Healthy, "Ok should transition back to Healthy even during cooldown");
+    }
+
+    #[test]
+    fn test_process_health_missing_blocked_during_cooldown() {
+        let mut rm = RecoveryManager::new(RecoveryConfig {
+            max_hard_retries: 2,
+            recovery_cooldown_secs: 60,
+            ..Default::default()
+        });
+
+        // Missing interface -> direct to HardRecovery
+        let action = rm.process_health(HealthCheck::Missing);
+        assert_eq!(action, RecoveryAction::HardRecover);
+        assert_eq!(rm.hard_retry_count, 1);
+
+        rm.record_recovery();
+
+        // During cooldown, Missing should NOT advance hard_retry_count
+        let action2 = rm.process_health(HealthCheck::Missing);
+        assert_eq!(action2, RecoveryAction::None);
+        assert_eq!(rm.hard_retry_count, 1, "hard retry count must not advance during cooldown");
     }
 }
