@@ -2858,6 +2858,8 @@ impl Daemon {
                 match self.wifi.start_monitor() {
                     Ok(()) => {
                         info!("soft recovery: monitor mode restored");
+                        // Clear the WifiDown face — recovery succeeded
+                        self.epoch_loop.personality.clear_override();
                         // Reset AO crash counter so we don't immediately re-trigger
                         self.ao.reset();
                         // Restart AO
@@ -2889,6 +2891,8 @@ impl Daemon {
                     match self.wifi.start_monitor() {
                         Ok(()) => {
                             info!("hard recovery: monitor mode restored");
+                            // Clear the FwCrash face — recovery succeeded
+                            self.epoch_loop.personality.clear_override();
                             // Reset AO crash counter so we don't immediately re-trigger
                             self.ao.reset();
                             // Restart AO
@@ -3158,9 +3162,11 @@ mod tests {
     fn test_daemon_recovery_soft() {
         let mut daemon = make_daemon();
         daemon.handle_recovery_action(recovery::RecoveryAction::SoftRecover);
+        // On non-unix (tests), start_monitor() succeeds → override cleared after recovery
         assert_eq!(
             daemon.epoch_loop.personality.override_face,
-            Some(personality::Face::WifiDown)
+            None,
+            "WifiDown override should be cleared after successful soft recovery"
         );
     }
 
@@ -3168,9 +3174,11 @@ mod tests {
     fn test_daemon_recovery_hard() {
         let mut daemon = make_daemon();
         daemon.handle_recovery_action(recovery::RecoveryAction::HardRecover);
+        // On non-unix (tests), GPIO + start_monitor succeed → override cleared
         assert_eq!(
             daemon.epoch_loop.personality.override_face,
-            Some(personality::Face::FwCrash)
+            None,
+            "FwCrash override should be cleared after successful hard recovery"
         );
     }
 
