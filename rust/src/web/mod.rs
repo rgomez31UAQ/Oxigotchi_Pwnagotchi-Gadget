@@ -465,6 +465,11 @@ struct WsSnapshot {
     wifi: WifiInfo,
     // -- bluetooth --
     bluetooth: BluetoothInfo,
+    // -- bt attacks --
+    bt_attacks: BtAttackResponse,
+    bt_devices: BtDevicesResponse,
+    bt_captures: BtCapturesResponse,
+    bt_patchram: BtPatchramResponse,
     // -- gpu --
     gpu: GpuInfo,
     // -- qpu / rf classification --
@@ -567,6 +572,39 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
             feature_mode: s.bt_feature_mode.clone(),
             nearby_devices: s.bt_feature_devices_now,
             contention_score: s.bt_feature_contention_score,
+        },
+        bt_attacks: BtAttackResponse {
+            enabled: s.bt_attack_enabled,
+            rage_level: s.bt_rage_level.clone(),
+            toggles: BtAttackToggles {
+                smp_downgrade: s.bt_attack_smp_downgrade,
+                smp_mitm: s.bt_attack_smp_mitm,
+                knob: s.bt_attack_knob,
+                ble_adv_injection: s.bt_attack_ble_adv_injection,
+                ble_conn_hijack: s.bt_attack_ble_conn_hijack,
+                l2cap_fuzz: s.bt_attack_l2cap_fuzz,
+                att_gatt_fuzz: s.bt_attack_att_gatt_fuzz,
+                vendor_cmd_unlock: s.bt_attack_vendor_cmd_unlock,
+            },
+            stats: BtAttackStats {
+                total_attacks: s.bt_total_attacks,
+                total_captures: s.bt_total_captures,
+                active_attacks: s.bt_active_attacks,
+                devices_seen: s.bt_devices_seen,
+            },
+        },
+        bt_devices: BtDevicesResponse {
+            count: s.bt_devices_seen,
+            devices: s.bt_device_list.clone(),
+        },
+        bt_captures: BtCapturesResponse {
+            keys: s.bt_capture_keys,
+            crashes: s.bt_capture_crashes,
+            vendor: s.bt_capture_vendor,
+            total: s.bt_total_captures,
+        },
+        bt_patchram: BtPatchramResponse {
+            state: s.bt_patchram_state.clone(),
         },
         gpu: GpuInfo {
             mode: s.gpu_mode.clone(),
