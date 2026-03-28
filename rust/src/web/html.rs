@@ -96,6 +96,23 @@ input:checked+.slider:before{transform:translateX(22px)}
 .collapse-btn{background:none;border:1px solid #0f3460;color:#888;border-radius:6px;padding:6px 12px;font-size:12px;font-family:inherit;cursor:pointer;transition:.2s}
 .collapse-btn:hover{border-color:#00d4aa;color:#00d4aa}
 @media(max-width:400px){.grid-2{grid-template-columns:1fr}.stat-row{gap:4px}.stat .value{font-size:15px}}
+[data-modes]{display:none}
+.bt-group-header{font-size:11px;color:#00d4aa;font-weight:bold;margin:10px 0 4px;text-transform:uppercase;letter-spacing:1px}
+.bt-badge{font-size:9px;padding:1px 5px;border-radius:4px;margin-left:6px;font-weight:normal}
+.bt-badge-pr{background:#5a300033;color:#e67e22}
+.bt-badge-high{background:#e9456033;color:#e94560}
+.bt-device-table{width:100%;border-collapse:collapse;font-size:12px}
+.bt-device-table th{color:#888;font-size:11px;text-align:left;padding:4px 6px;border-bottom:1px solid #0f3460}
+.bt-device-table td{padding:6px;border-bottom:1px solid #0f346033}
+.bt-state-untouched{color:#555}
+.bt-state-targeted{color:#3498db}
+.bt-state-attacking{color:#f0c040}
+.bt-state-captured{color:#00d4aa}
+.bt-state-failed{color:#e94560}
+.bt-target-btn{background:#0f3460;color:#00d4aa;border:1px solid #00d4aa33;border-radius:6px;padding:3px 8px;font-size:10px;cursor:pointer;font-family:inherit}
+.bt-target-btn:hover{background:#00d4aa33}
+.bt-rage-btn{padding:8px 16px;border-radius:8px;border:2px solid #0f3460;background:#16213e;color:#888;font-size:13px;font-weight:bold;cursor:pointer;font-family:inherit;transition:.2s}
+.bt-rage-btn.active{border-color:#00d4aa;color:#00d4aa;background:#0f3460}
 </style>
 </head>
 <body>
@@ -126,12 +143,12 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="card" id="card-stats">
 <div class="card-title">Overview</div>
 <div class="stat-row">
-<div class="stat" style="cursor:help" title="Current WiFi channel being monitored"><div class="label">CH</div><div class="value" id="s-ch">-</div></div>
-<div class="stat" style="cursor:help" title="Total unique access points spotted across all sessions — lifetime herd count"><div class="label">COWS</div><div class="value" id="s-aps">-</div></div>
-<div class="stat" style="cursor:help" title="Total handshakes and PMKIDs captured across all sessions — persists across restarts"><div class="label">PWND</div><div class="value" id="s-pwnd">-</div></div>
-<div class="stat" style="cursor:help" title="Charge counter — each charge is one full attack cycle (channel hop + attack pass)"><div class="label">CHARGES</div><div class="value" id="s-epoch">-</div></div>
-<div class="stat" style="cursor:help" title="Time since rusty-oxigotchi service started"><div class="label">UPTIME</div><div class="value" id="s-uptime">-</div></div>
-<div class="stat" style="cursor:help" title="AngryOxide attack rate (1-3). All rates stable with v6 firmware patch"><div class="label">RATE</div><div class="value" id="s-rate">-</div></div>
+<div class="stat"><div class="label" id="s-label-1">CH</div><div class="value" id="s-val-1">-</div></div>
+<div class="stat"><div class="label" id="s-label-2">COWS</div><div class="value" id="s-val-2">-</div></div>
+<div class="stat"><div class="label" id="s-label-3">PWND</div><div class="value" id="s-val-3">-</div></div>
+<div class="stat"><div class="label" id="s-label-4">CHARGES</div><div class="value" id="s-val-4">-</div></div>
+<div class="stat"><div class="label" id="s-label-5">UPTIME</div><div class="value" id="s-val-5">-</div></div>
+<div class="stat"><div class="label" id="s-label-6">RATE</div><div class="value" id="s-val-6">-</div></div>
 </div>
 </div>
 
@@ -167,10 +184,10 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <!-- ═══════ HUNTING ═══════ -->
-<div class="section-label">Hunting</div>
+<div class="section-label" data-modes="rage bt">Hunting</div>
 
 <!-- 6. WiFi -->
-<div class="card" id="card-wifi">
+<div class="card" id="card-wifi" data-modes="rage">
 <div class="card-title">WiFi</div>
 <div class="sub">Monitor mode status and channel info.</div>
 <div class="status-grid">
@@ -183,7 +200,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <!-- 7. Nearby Networks -->
-<div class="card" id="card-aps">
+<div class="card" id="card-aps" data-modes="rage">
 <div class="card-title">Nearby Networks</div>
 <div class="sub">Access points detected by monitor mode, sorted by signal strength.</div>
 <div class="ap-scroll">
@@ -202,7 +219,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <!-- RAGE Slider -->
-<div class="card rage-card">
+<div class="card rage-card" id="card-rage" data-modes="rage">
 <div class="card-title">RAGE Slider</div>
 <div class="sub">Aggression preset &mdash; controls rate, dwell, and channels in one slider.</div>
 <div class="toggle-row" style="margin-top:8px">
@@ -251,7 +268,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <!-- 8. Attack controls -->
-<div class="card" id="card-attacks">
+<div class="card" id="card-attacks" data-modes="rage">
 <div class="card-title">Attack Types</div>
 <div style="color:#00d4aa;font-size:11px;margin-bottom:10px;padding:8px;background:#0f346033;border-radius:6px">All 6 ON is the sweet spot &mdash; they complement each other.</div>
 <div class="toggle-row">
@@ -281,7 +298,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <!-- RF Classification -->
-<div class="card" id="card-rf">
+<div class="card" id="card-rf" data-modes="rage">
 <div class="card-title">RF Environment</div>
 <div class="sub">Real-time 802.11 frame classification — CPU classifier, 41&times; faster than GPU.</div>
 <div class="stat-row" style="margin-bottom:10px">
@@ -301,10 +318,10 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <!-- ═══════ LOOT ═══════ -->
-<div class="section-label">Loot</div>
+<div class="section-label" data-modes="rage bt">Loot</div>
 
 <!-- Whitelist -->
-<div class="card" id="card-whitelist">
+<div class="card" id="card-whitelist" data-modes="rage">
 <div class="card-title">Whitelist</div>
 <div class="sub">Networks and MACs excluded from attacks. Changes apply next epoch.</div>
 <div id="wl-list"><div style="color:#555;font-size:12px">Loading...</div></div>
@@ -316,7 +333,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 
 <!-- 10. Captures (merged: stats + list + download) -->
-<div class="card" id="card-captures">
+<div class="card" id="card-captures" data-modes="rage">
 <div class="card-title">Trophies</div>
 <div class="status-grid" style="margin-bottom:8px">
 <div class="label">Total Files</div><div class="value" id="cap-total">-</div>
@@ -348,7 +365,7 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 </div>
 
 <!-- 11. WPA-SEC Upload -->
-<div class="card" id="card-wpasec">
+<div class="card" id="card-wpasec" data-modes="rage">
 <div class="card-title">WPA-SEC Upload</div>
 <div class="sub">Upload captured handshakes to wpa-sec.stanev.org for cloud cracking.</div>
 <div class="status-grid" style="margin-bottom:8px">
@@ -362,7 +379,7 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 </div>
 
 <!-- 12. Cracked passwords -->
-<div class="card" id="card-cracked">
+<div class="card" id="card-cracked" data-modes="rage">
 <div class="card-title">Milk</div>
 <div class="sub">Passwords milked from pwned cows.</div>
 <div id="cracked-list"><div style="color:#555;font-size:12px">No cracked passwords yet</div></div>
@@ -415,10 +432,10 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 </div>
 
 <!-- ═══════ STATUS & PERSONALITY ═══════ -->
-<div class="section-label">Status</div>
+<div class="section-label" data-modes="rage">Status</div>
 
 <!-- 16. Recovery status -->
-<div class="card" id="card-recovery">
+<div class="card" id="card-recovery" data-modes="rage">
 <div class="card-title">Recovery Status</div>
 <div class="sub">WiFi and firmware crash recovery tracking.</div>
 <div class="health-row" style="margin-bottom:8px">
@@ -557,24 +574,72 @@ function fmtBytes(b) {
 }
 function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML.replace(/'/g, '&#39;'); }
 
+var _currentMode = 'rage';
+function normalizeMode(raw) {
+    var m = (raw || '').toUpperCase();
+    if (m === 'AO' || m === 'RAGE') return 'rage';
+    if (m === 'BT') return 'bt';
+    if (m === 'PWN' || m === 'SAFE') return 'safe';
+    return 'rage';
+}
+
+function applyModeVisibility(rawMode) {
+    var mode = normalizeMode(rawMode);
+    _currentMode = mode;
+    document.querySelectorAll('[data-modes]').forEach(function(el) {
+        var modes = el.getAttribute('data-modes').split(' ');
+        el.style.display = modes.indexOf(mode) >= 0 ? '' : 'none';
+    });
+}
+
+function setSlot(n, label, value) {
+    var l = document.getElementById('s-label-' + n);
+    var v = document.getElementById('s-val-' + n);
+    if (l) l.textContent = label;
+    if (v) v.textContent = value != null ? value : '-';
+}
+
+function updateOverview(state) {
+    var mode = normalizeMode(state.mode);
+    if (mode === 'rage') {
+        setSlot(1, 'CH', state.channel);
+        setSlot(2, 'COWS', state.aps_seen);
+        setSlot(3, 'PWND', state.handshakes);
+        setSlot(4, 'CHARGES', state.epoch);
+        setSlot(5, 'UPTIME', state.uptime);
+        setSlot(6, 'RATE', state.attacks ? state.attacks.attack_rate : '-');
+    } else if (mode === 'bt') {
+        var bta = state.bt_attacks ? state.bt_attacks.stats : {};
+        setSlot(1, 'DEVICES', bta.devices_seen != null ? bta.devices_seen : '-');
+        setSlot(2, 'ACTIVE', bta.active_attacks != null ? bta.active_attacks : '-');
+        setSlot(3, 'CAPTURES', bta.total_captures != null ? bta.total_captures : '-');
+        setSlot(4, 'ATTACKS', bta.total_attacks != null ? bta.total_attacks : '-');
+        setSlot(5, 'UPTIME', state.uptime);
+        setSlot(6, 'RAGE', state.bt_attacks ? state.bt_attacks.rage_level : '-');
+    } else {
+        var bt = state.bluetooth || {};
+        setSlot(1, 'BT', bt.state || '-');
+        setSlot(2, 'DEVICE', bt.device_name || '-');
+        setSlot(3, 'NET', bt.internet_available ? 'Yes' : 'No');
+        setSlot(4, 'NEARBY', bt.nearby_devices != null ? bt.nearby_devices : '-');
+        setSlot(5, 'UPTIME', state.uptime);
+        setSlot(6, 'MODE', 'SAFE');
+    }
+}
+
 // --- Refresh functions ---
 
 function refreshStatus() {
     api('GET', '/api/status').then(function(d) {
         if (!d) return;
-        document.getElementById('s-ch').textContent = d.channel;
-        document.getElementById('s-aps').textContent = d.aps_seen;
-        document.getElementById('s-pwnd').textContent = d.handshakes;
-        document.getElementById('s-epoch').textContent = d.epoch;
-        document.getElementById('s-uptime').textContent = d.uptime;
-        // Mode buttons
+        updateOverview(d);
         document.getElementById('mode-rage').classList.toggle('active', d.mode === 'RAGE' || d.mode === 'AO');
         document.getElementById('mode-bt').classList.toggle('active', d.mode === 'BT');
         document.getElementById('mode-safe').classList.toggle('active', d.mode === 'SAFE' || d.mode === 'PWN');
-        // Settings name field (only if not focused)
         var nameInput = document.getElementById('setting-name');
         if (nameInput && !nameInput.matches(':focus')) nameInput.value = d.name || '';
         syncSettingsFromData(d);
+        applyModeVisibility(d.mode);
     });
 }
 
@@ -647,7 +712,7 @@ function refreshWifi() {
 function refreshAttacks() {
     api('GET', '/api/attacks').then(function(d) {
         if (!d) return;
-        document.getElementById('s-rate').textContent = d.attack_rate;
+        document.getElementById('s-val-6').textContent = d.attack_rate;
         ['deauth','pmkid','csa','disassoc','anon_reassoc','rogue_m2'].forEach(function(k) {
             var cb = document.getElementById('atk-'+k);
             if (cb) cb.checked = d[k];
@@ -1275,18 +1340,13 @@ var _pollTimers = [];
 var _wsConnected = false;
 
 function updateStatusFromWs(d) {
-    document.getElementById('s-ch').textContent = d.channel;
-    document.getElementById('s-aps').textContent = d.aps_seen;
-    document.getElementById('s-pwnd').textContent = d.handshakes;
-    document.getElementById('s-epoch').textContent = d.epoch;
-    document.getElementById('s-uptime').textContent = d.uptime;
+    updateOverview(d);
     document.getElementById('mode-rage').classList.toggle('active', d.mode === 'RAGE' || d.mode === 'AO');
     document.getElementById('mode-bt').classList.toggle('active', d.mode === 'BT');
     document.getElementById('mode-safe').classList.toggle('active', d.mode === 'SAFE' || d.mode === 'PWN');
     var nameInput = document.getElementById('setting-name');
     if (nameInput && !nameInput.matches(':focus')) nameInput.value = d.name || '';
-    // Settings controls only sync on initial page load (refreshStatus),
-    // not on WS updates — prevents dropdown/slider snapping back before Save.
+    applyModeVisibility(d.mode);
 }
 
 function syncSettingsFromData(d) {
@@ -1363,7 +1423,7 @@ function updateWifiFromWs(d) {
 }
 
 function updateAttacksFromWs(d) {
-    document.getElementById('s-rate').textContent = d.attack_rate;
+    document.getElementById('s-val-6').textContent = d.attack_rate;
     ['deauth','pmkid','csa','disassoc','anon_reassoc','rogue_m2'].forEach(function(k) {
         var cb = document.getElementById('atk-'+k);
         if (cb) cb.checked = d[k];
@@ -1600,6 +1660,7 @@ setTimeout(refreshDiscord, 7500);
 startPolling();
 // Connect WebSocket for live updates
 connectWebSocket();
+refreshStatus();
 // Display image stays on its own interval (binary, not suitable for WS)
 setInterval(function(){ document.getElementById('eink-img').src='/api/display.png?t='+Date.now(); }, 5000);
 </script>
