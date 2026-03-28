@@ -408,6 +408,19 @@ pub struct Personality {
 impl Personality {
     /// Create a new personality with default mood (0.5) and no overrides.
     pub fn new() -> Self {
+        // Seed current_status from the default face's pool so the fallback
+        // chain never shows a mood-based static message that disagrees
+        // with the displayed face (e.g., Excited face + "Where is everyone?").
+        let boot_face = Mood::default().face();
+        let boot_key = boot_face.face_key();
+        let boot_msgs = messages::messages_for_face(boot_key);
+        let boot_status = if !boot_msgs.is_empty() {
+            use rand::Rng;
+            let idx = rand::thread_rng().gen_range(0..boot_msgs.len());
+            boot_msgs[idx].to_string()
+        } else {
+            String::new()
+        };
         Self {
             mood: Mood::default(),
             override_face: None,
@@ -422,9 +435,9 @@ impl Personality {
             joke_phase: 0,
             joke_epochs_left: 0,
             joke_index: None,
-            joke_face: String::new(),
-            status_display_epochs: 0,
-            current_status: String::new(),
+            joke_face: boot_key.to_string(),
+            status_display_epochs: 1,
+            current_status: boot_status,
         }
     }
 
@@ -1907,9 +1920,20 @@ mod tests {
     #[test]
     fn test_personality_status_msg_with_context() {
         let mut p = Personality::new();
+        // current_status is seeded at boot — clear it to test fallback chain
+        p.current_status.clear();
         p.context.last_handshake_ssid = Some("CapturedNet".into());
         let msg = p.status_msg();
         assert_eq!(msg, "Captured CapturedNet!");
+    }
+
+    #[test]
+    fn test_personality_boot_status_not_empty() {
+        let p = Personality::new();
+        assert!(
+            !p.current_status.is_empty(),
+            "current_status should be seeded at boot to prevent mood fallback"
+        );
     }
 
     // ====================================================================
@@ -1942,7 +1966,8 @@ mod tests {
     fn test_personality_full_session_simulation() {
         let mut p = Personality::new();
 
-        // Boot: start scanning
+        // Boot: start scanning — clear current_status to test fallback chain
+        p.current_status.clear();
         p.context.scan_channels = vec![1, 6, 11];
         assert!(p.status_msg().contains("Scanning"));
 
@@ -1953,6 +1978,7 @@ mod tests {
         assert!(p.mood.value() > 0.5);
 
         // Epoch 2: handshake!
+        p.current_status.clear();
         p.context.last_handshake_ssid = Some("CoffeeShop".into());
         let leveled = p.on_handshake();
         assert!(leveled); // 100 XP = level up (multiple times with new formula)
@@ -1973,7 +1999,8 @@ mod tests {
         p.on_crash();
         let mood_after_crash = p.mood.value();
 
-        // Recovery
+        // Recovery — clear current_status to test fallback
+        p.current_status.clear();
         p.context.wifi_recovered = true;
         assert_eq!(p.status_msg(), "WiFi recovered!");
 
