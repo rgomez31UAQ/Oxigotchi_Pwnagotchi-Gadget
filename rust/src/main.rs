@@ -402,11 +402,16 @@ impl Daemon {
         // QPU initialization
         if self.config.qpu.enabled {
             match qpu::engine::QpuEngine::init(self.config.qpu.to_engine_config()) {
-                Ok(engine) => {
+                Ok(mut engine) => {
                     info!(
                         "QPU engine initialized: {} QPUs available",
                         engine.num_qpus()
                     );
+                    // Start pcap capture thread on wlan0mon
+                    match engine.start_capture("wlan0mon") {
+                        Ok(()) => info!("QPU capture thread started on wlan0mon"),
+                        Err(e) => log::warn!("QPU capture start failed: {e} (frames from AO only)"),
+                    }
                     self.qpu_engine = Some(engine);
                 }
                 Err(e) => {
@@ -546,6 +551,53 @@ impl Daemon {
         self.run_capture_phase(&mut result);
 
         } // end else (non-BT mode WiFi phases)
+
+        // ---- QPU classification + RF environment ----
+        if let Some(ref mut engine) = self.qpu_engine {
+            let classified = engine.process_batch();
+            if !classified.is_empty() {
+                // Collect AO BSSID set for cross-reference
+                let ao_bssids: std::collections::HashSet<[u8; 6]> = self
+                    .ao
+                    .ap_snapshot()
+                    .iter()
+                    .filter_map(|ap| {
+                        let hex = &ap.bssid;
+                        if hex.len() == 12 {
+                            let mut b = [0u8; 6];
+                            for i in 0..6 {
+                                b[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+                                    .unwrap_or(0);
+                            }
+                            Some(b)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                let rf = qpu::rf::RfEnvironment::compute(
+                    &classified,
+                    EPOCH_DURATION_SECS as f32,
+                    &ao_bssids,
+                );
+
+                // Feed RF environment into personality
+                self.epoch_loop.personality.apply_rf_environment(&rf);
+
+                // Store RF stats for web API
+                {
+                    let mut s = self.shared_state.lock().unwrap();
+                    s.qpu_beacon_rate = rf.beacon_rate;
+                    s.qpu_probe_rate = rf.probe_rate;
+                    s.qpu_deauth_rate = rf.deauth_rate;
+                    s.qpu_data_rate = rf.data_rate;
+                    s.qpu_unique_bssids = rf.unique_bssids;
+                    s.qpu_total_frames = rf.total_frames;
+                    s.qpu_dominant_class = format!("{:?}", rf.dominant_class);
+                }
+            }
+        }
 
         // ---- Display phase ----
         self.epoch_loop.next_phase(); // -> Display
