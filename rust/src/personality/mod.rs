@@ -666,6 +666,15 @@ impl Personality {
     pub fn apply_rf_environment(&mut self, rf: &crate::qpu::rf::RfEnvironment) {
         use crate::qpu::rf;
 
+        // Clear RF-based face override each epoch — only re-set if conditions still hold.
+        // Without this, a transient condition (e.g., 20+ BSSIDs once) sticks forever.
+        match self.override_face {
+            Some(Face::Raging | Face::Excited | Face::Lonely) => {
+                self.override_face = None;
+            }
+            _ => {} // preserve non-RF overrides (battery, crash, etc.)
+        }
+
         if rf.total_frames > rf::BUSY_THRESHOLD {
             self.mood.adjust(mood_deltas::RF_BUSY);
         } else if rf.total_frames == 0 {
@@ -2139,6 +2148,45 @@ mod tests {
         };
         p.apply_rf_environment(&rf);
         assert_eq!(p.override_face, Some(Face::Excited));
+    }
+
+    #[test]
+    fn test_rf_override_clears_when_condition_gone() {
+        let mut p = Personality::new();
+        // First epoch: many BSSIDs → Excited override
+        let rich_rf = crate::qpu::rf::RfEnvironment {
+            unique_bssids: 25,
+            total_frames: 200,
+            ..Default::default()
+        };
+        p.apply_rf_environment(&rich_rf);
+        assert_eq!(p.override_face, Some(Face::Excited));
+
+        // Next epoch: quiet RF → override should clear
+        let quiet_rf = crate::qpu::rf::RfEnvironment {
+            unique_bssids: 5,
+            total_frames: 10,
+            ..Default::default()
+        };
+        p.apply_rf_environment(&quiet_rf);
+        assert_eq!(
+            p.override_face, None,
+            "RF override should clear when condition no longer holds"
+        );
+    }
+
+    #[test]
+    fn test_rf_override_preserves_non_rf_overrides() {
+        let mut p = Personality::new();
+        // Set a non-RF override (e.g., AoCrashed)
+        p.set_override(Face::AoCrashed);
+        let quiet_rf = crate::qpu::rf::RfEnvironment::default();
+        p.apply_rf_environment(&quiet_rf);
+        assert_eq!(
+            p.override_face,
+            Some(Face::AoCrashed),
+            "non-RF overrides should survive apply_rf_environment"
+        );
     }
 
     #[test]
