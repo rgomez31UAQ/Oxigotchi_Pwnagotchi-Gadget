@@ -532,6 +532,8 @@ impl Personality {
     /// Clear any face override.
     pub fn clear_override(&mut self) {
         self.override_face = None;
+        self.transition_face = None;
+        self.transition_epochs_left = 0;
     }
 
     /// Set a temporary override for mode transitions (expires after N epochs).

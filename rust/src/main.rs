@@ -3664,7 +3664,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_status_runs_after_battery_check() {
+    fn test_generate_status_runs_after_battery_and_ao_checks() {
         let source = include_str!("main.rs");
         let gen_pos = source.find("personality.generate_status()").expect("generate_status not found");
         let battery_pos = source
@@ -3673,6 +3673,13 @@ mod tests {
         assert!(
             gen_pos > battery_pos,
             "generate_status() must run AFTER check_battery_overrides()"
+        );
+        let ao_clear_pos = source
+            .find("// Clear AO crash face if AO recovered")
+            .expect("AO clear comment not found");
+        assert!(
+            gen_pos > ao_clear_pos,
+            "generate_status() must run AFTER AoCrashed clearing"
         );
     }
 }
