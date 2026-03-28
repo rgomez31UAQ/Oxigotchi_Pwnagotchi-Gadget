@@ -150,6 +150,13 @@ pub struct DaemonState {
     pub qpu_overflow_count: u64,
     pub qpu_last_batch_size: u32,
     pub qpu_last_batch_duration_us: u64,
+    pub qpu_beacon_rate: f32,
+    pub qpu_probe_rate: f32,
+    pub qpu_deauth_rate: f32,
+    pub qpu_data_rate: f32,
+    pub qpu_unique_bssids: u32,
+    pub qpu_total_frames: u32,
+    pub qpu_dominant_class: String,
 
     // -- ao --
     pub ao_state: String,
@@ -344,6 +351,13 @@ impl DaemonState {
             qpu_overflow_count: 0,
             qpu_last_batch_size: 0,
             qpu_last_batch_duration_us: 0,
+            qpu_beacon_rate: 0.0,
+            qpu_probe_rate: 0.0,
+            qpu_deauth_rate: 0.0,
+            qpu_data_rate: 0.0,
+            qpu_unique_bssids: 0,
+            qpu_total_frames: 0,
+            qpu_dominant_class: String::new(),
             ao_state: "STOPPED".into(),
             ao_pid: 0,
             ao_crash_count: 0,
@@ -933,6 +947,13 @@ pub struct QpuInfo {
     pub overflow_count: u64,
     pub last_batch_size: u32,
     pub last_batch_duration_us: u64,
+    pub beacon_rate: f32,
+    pub probe_rate: f32,
+    pub deauth_rate: f32,
+    pub data_rate: f32,
+    pub unique_bssids: u32,
+    pub total_frames: u32,
+    pub dominant_class: String,
 }
 
 /// Bluetooth visibility toggle request.
@@ -1474,6 +1495,13 @@ async fn qpu_handler(State(state): State<SharedState>) -> Json<QpuInfo> {
         overflow_count: s.qpu_overflow_count,
         last_batch_size: s.qpu_last_batch_size,
         last_batch_duration_us: s.qpu_last_batch_duration_us,
+        beacon_rate: s.qpu_beacon_rate,
+        probe_rate: s.qpu_probe_rate,
+        deauth_rate: s.qpu_deauth_rate,
+        data_rate: s.qpu_data_rate,
+        unique_bssids: s.qpu_unique_bssids,
+        total_frames: s.qpu_total_frames,
+        dominant_class: s.qpu_dominant_class.clone(),
     })
 }
 
