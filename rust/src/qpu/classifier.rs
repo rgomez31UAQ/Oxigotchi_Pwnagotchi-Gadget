@@ -198,6 +198,9 @@ impl Classifier {
     /// The QPU kernel classifies the frame and writes the result byte to
     /// output_mem via VPM DMA. Falls back to CPU classification on QPU error.
     ///
+    /// NOTE: Phase 1 — O(n) QPU launches (one per frame). CPU fallback is faster
+    /// at batch sizes > 1. Batch optimization via QPU branch loop is Phase 2.
+    ///
     /// Returns a Vec of (FrameClass, FrameEntry) pairs for each classified frame.
     pub fn classify_batch(
         &self,
@@ -240,6 +243,11 @@ impl Classifier {
                     let class_byte = unsafe {
                         std::ptr::read_volatile(self.output_mem.as_ptr())
                     };
+                    // Sentinel check: 0xFF means DMA store never fired
+                    if class_byte == 0xFF {
+                        results.push((FrameClass::classify(ft, fst), *entry));
+                        continue;
+                    }
                     let class = match class_byte {
                         0 => FrameClass::Unknown,
                         1 => FrameClass::Beacon,
