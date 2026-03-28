@@ -201,6 +201,206 @@ pub static BULL_JOKES: LazyLock<HashMap<&'static str, Vec<Joke>>> = LazyLock::ne
             ("What do you call a tiny bull?", "...A bulldot!"),
         ],
     );
+    m.insert(
+        "intense",
+        vec![
+            (
+                "Why did the bull stare at the router?",
+                "...Trying to crack its password with sheer willpower!",
+            ),
+            (
+                "What happens when a bull locks on?",
+                "...Even the firewall backs down!",
+            ),
+            (
+                "Why did the bull memorize every SSID?",
+                "...Knowledge is power... and handshakes!",
+            ),
+            (
+                "What do you call a bull with a packet sniffer?",
+                "...A beef-cap hacker!",
+            ),
+            (
+                "Why did the bull never blink?",
+                "...Might miss a deauth window!",
+            ),
+        ],
+    );
+    m.insert(
+        "awake",
+        vec![
+            (
+                "Why did the bull stretch at sunrise?",
+                "...Gotta limber up the horns for scanning!",
+            ),
+            (
+                "What's a bull's morning routine?",
+                "...Coffee, hooves, channel sweep!",
+            ),
+            (
+                "Why was the bull first to the pasture?",
+                "...Early bull catches the handshake!",
+            ),
+            (
+                "What did the bull say at dawn?",
+                "...New day, new networks to conquer!",
+            ),
+            (
+                "Why did the bull set five alarms?",
+                "...Can't miss the morning beacon flood!",
+            ),
+        ],
+    );
+    m.insert(
+        "demotivated",
+        vec![
+            (
+                "Why did the bull sit in the mud?",
+                "...Matched his mood perfectly!",
+            ),
+            (
+                "What do you call a bull with no signal?",
+                "...A slab of raw defeat!",
+            ),
+            (
+                "Why did the bull stop trying?",
+                "...Even the WPA3 networks laughed at him!",
+            ),
+            (
+                "What's worse than no handshakes?",
+                "...Knowing you tried 50 deauths for nothing!",
+            ),
+            (
+                "Why did the bull write sad poetry?",
+                "...Roses are red, no packets came through!",
+            ),
+        ],
+    );
+    m.insert(
+        "grateful",
+        vec![
+            (
+                "Why did the bull send a thank you card?",
+                "...To the AP with the weak password!",
+            ),
+            (
+                "What makes a bull tear up?",
+                "...A WPA2 handshake on the first try!",
+            ),
+            (
+                "Why did the bull hug the antenna?",
+                "...It gave him everything he ever wanted!",
+            ),
+            (
+                "What do grateful bulls dream about?",
+                "...Fields of open networks!",
+            ),
+            (
+                "Why did the bull tip his horns?",
+                "...Respect to the operator who deployed him!",
+            ),
+        ],
+    );
+    m.insert(
+        "friend",
+        vec![
+            (
+                "What did one bull say to the other?",
+                "...Nice horns! Wanna share captures?",
+            ),
+            (
+                "Why do bulls travel in pairs?",
+                "...Double the deauths, double the fun!",
+            ),
+            (
+                "What's better than one pwnagotchi?",
+                "...A whole herd of them!",
+            ),
+            (
+                "Why did the bull high-five his friend?",
+                "...They both got the same PMKID!",
+            ),
+            (
+                "What do bulls call a group chat?",
+                "...The moo-tual aid network!",
+            ),
+        ],
+    );
+    m.insert(
+        "upload",
+        vec![
+            (
+                "Why did the bull call the cloud?",
+                "...Had some fresh beef to deliver!",
+            ),
+            (
+                "What do you call a bull uploading captures?",
+                "...A data cow-rier!",
+            ),
+            (
+                "Why did the bull smile at the progress bar?",
+                "...Every byte closer to cracked!",
+            ),
+            (
+                "What's a bull's favorite upload speed?",
+                "...Fast enough to share with the herd!",
+            ),
+            (
+                "Why did the bull tip the WPA-SEC server?",
+                "...Best cracking service in the barn!",
+            ),
+        ],
+    );
+    m.insert(
+        "raging",
+        vec![
+            (
+                "Why did the bull see red?",
+                "...Someone enabled MAC filtering!",
+            ),
+            (
+                "What do you call a bull in full attack mode?",
+                "...A de-auth-struction machine!",
+            ),
+            (
+                "Why did the bull charge the access point?",
+                "...It had the audacity to use WPS!",
+            ),
+            (
+                "What's a raging bull's favorite protocol?",
+                "...Brute force!",
+            ),
+            (
+                "Why was the bull banned from the network?",
+                "...Too many disassociation frames!",
+            ),
+        ],
+    );
+    m.insert(
+        "grazing",
+        vec![
+            (
+                "Why did the bull switch to safe mode?",
+                "...Even hackers need a lunch break!",
+            ),
+            (
+                "What does a grazing bull browse?",
+                "...The internet, via Bluetooth tethering!",
+            ),
+            (
+                "Why was the bull so relaxed?",
+                "...Phone tethered, captures uploading, life is good!",
+            ),
+            (
+                "What's a bull's favorite BT device?",
+                "...Anything that shares its data plan!",
+            ),
+            (
+                "Why did the bull stop attacking?",
+                "...Needed to check Discord real quick!",
+            ),
+        ],
+    );
     m
 });
 
@@ -230,6 +430,14 @@ mod tests {
             "motivated",
             "smart",
             "debug",
+            "intense",
+            "awake",
+            "demotivated",
+            "grateful",
+            "friend",
+            "upload",
+            "raging",
+            "grazing",
         ];
         for face in &faces {
             let jokes = jokes_for_face(face);
@@ -255,7 +463,7 @@ mod tests {
     #[test]
     fn test_total_joke_count() {
         let total: usize = BULL_JOKES.values().map(|v| v.len()).sum();
-        assert_eq!(total, 48, "expected exactly 48 jokes, got {}", total);
+        assert_eq!(total, 88, "expected exactly 88 jokes, got {}", total);
     }
 
     #[test]

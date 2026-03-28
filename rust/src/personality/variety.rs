@@ -8,8 +8,8 @@
 //! 5. Friend detection (when peer is found)
 //! 6. Upload face (when uploading captures)
 //! 3. Time-of-day (2-5am=sleep, 6-8am=motivated once, 22-1am=cool)
-//! 8. Random rare face (5% per epoch — breaks up idle loops)
-//! 4. Idle rotation (modulo 50 cycle: bored→lonely→demotivated→angry→sad)
+//! 8. Random rare face (12% per epoch — breaks up idle loops)
+//! 4. Idle rotation (modulo 25 cycle: bored→lonely→demotivated→angry→sad)
 //! Default: awake
 
 use rand::Rng;
@@ -142,18 +142,19 @@ impl FaceVariety {
     }
 
     /// Get the idle face based on epochs since last capture.
-    /// Uses modulo 50 cycle matching Python: 0-10=bored, 11-20=lonely,
-    /// 21-30=demotivated, 31-40=angry, 41-50=sad.
+    /// Uses modulo 25 cycle: 1-5=bored, 6-10=lonely,
+    /// 11-15=demotivated, 16-20=angry, 21-25=sad.
+    /// Faster cycling keeps the face feeling alive.
     pub fn idle_face(&self) -> Option<&'static str> {
         if self.idle_epochs == 0 {
             return None;
         }
-        let cycle = self.idle_epochs % 50;
+        let cycle = self.idle_epochs % 25;
         match cycle {
-            0..=10 => Some("bored"),
-            11..=20 => Some("lonely"),
-            21..=30 => Some("demotivated"),
-            31..=40 => Some("angry"),
+            0..=5 => Some("bored"),
+            6..=10 => Some("lonely"),
+            11..=15 => Some("demotivated"),
+            16..=20 => Some("angry"),
             _ => Some("sad"),
         }
     }
@@ -168,10 +169,10 @@ impl FaceVariety {
         "awake"
     }
 
-    /// Roll for a random rare face this epoch (5% chance).
+    /// Roll for a random rare face this epoch (12% chance).
     fn rare_face_roll(&self) -> Option<&'static str> {
         let mut rng = rand::thread_rng();
-        if rng.r#gen::<f32>() < 0.05 {
+        if rng.r#gen::<f32>() < 0.12 {
             let idx = rng.gen_range(0..RARE_FACES.len());
             Some(RARE_FACES[idx])
         } else {
@@ -366,38 +367,38 @@ mod tests {
     }
 
     #[test]
-    fn test_idle_rotation_modulo_50() {
+    fn test_idle_rotation_modulo_25() {
         let mut fv = FaceVariety::new();
 
         // No idle face at 0
         assert_eq!(fv.idle_face(), None);
 
-        // 1-10 = bored
-        fv.idle_epochs = 5;
+        // 1-5 = bored
+        fv.idle_epochs = 3;
         assert_eq!(fv.idle_face(), Some("bored"));
 
-        // 11-20 = lonely
-        fv.idle_epochs = 15;
+        // 6-10 = lonely
+        fv.idle_epochs = 8;
         assert_eq!(fv.idle_face(), Some("lonely"));
 
-        // 21-30 = demotivated
-        fv.idle_epochs = 25;
+        // 11-15 = demotivated
+        fv.idle_epochs = 13;
         assert_eq!(fv.idle_face(), Some("demotivated"));
 
-        // 31-40 = angry
-        fv.idle_epochs = 35;
+        // 16-20 = angry
+        fv.idle_epochs = 18;
         assert_eq!(fv.idle_face(), Some("angry"));
 
-        // 41-49 = sad
-        fv.idle_epochs = 45;
+        // 21-24 = sad
+        fv.idle_epochs = 23;
         assert_eq!(fv.idle_face(), Some("sad"));
 
-        // 50 = wraps to 0 = bored (modulo cycle)
-        fv.idle_epochs = 50;
+        // 25 = wraps to 0 = bored (modulo cycle)
+        fv.idle_epochs = 25;
         assert_eq!(fv.idle_face(), Some("bored"));
 
-        // 65 = 65%50=15 = lonely
-        fv.idle_epochs = 65;
+        // 33 = 33%25=8 = lonely
+        fv.idle_epochs = 33;
         assert_eq!(fv.idle_face(), Some("lonely"));
     }
 

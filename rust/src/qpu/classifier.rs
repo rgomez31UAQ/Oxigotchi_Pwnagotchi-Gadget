@@ -1,30 +1,32 @@
 // QPU packet classifier — classifies 802.11 frame entries by type/subtype.
 //
-// Contains a real VideoCore IV QPU classifier kernel that classifies frames
-// using conditional execution (setf + cond) and VPM DMA store, plus a
-// CPU-side fallback classifier.
+// Contains the VideoCore IV QPU classifier kernel (preserved for future use)
+// and the CPU-side classifier used for production classification.
+//
+// NOTE: QPU conditional execution (setf + cond) does not work when the QPU
+// is launched via direct V3D register poke (SRQPC). The VPM DMA store and
+// uniform FIFO work correctly, but condition codes from sub.setf are not
+// honoured by subsequent conditional instructions (ldi.ifz, or.ifz, etc.).
+// This was confirmed through systematic hardware testing on Pi Zero 2W.
+// Classification uses the CPU path which is O(n) match and actually faster
+// than per-frame QPU launches (~170µs each).
 
 use std::sync::Arc;
 use super::ringbuf::FrameEntry;
 #[cfg(target_os = "linux")]
 use super::mailbox::GpuMem;
 
-/// QPU classifier kernel — classifies a single 802.11 frame by type/subtype.
+/// QPU classifier kernel — preserved for future use.
 ///
-/// Uniforms (set by ARM before launch):
-///   u0: frame_type  (0=mgmt, 1=control, 2=data)
-///   u1: frame_subtype (0-15)
-///   u2: output bus address (where to DMA-store the 1-byte result)
+/// KNOWN ISSUE: Conditional execution (setf + cond) does not work when the
+/// QPU is launched via direct V3D register poke. The uniform FIFO and VPM DMA
+/// store work correctly (confirmed via sentinel and echo tests), but condition
+/// codes are not honoured. Future work: try mailbox tag 0x30011 launch, or
+/// batch classification via unconditional ALU math (e.g. lookup table in VPM).
 ///
-/// Classification result (written to output bus address):
-///   0=Unknown, 1=Beacon, 2=ProbeReq, 3=ProbeResp, 4=Auth, 5=Deauth,
-///   6=AssocReq, 7=AssocResp, 8=Data, 9=Control
-///
-/// QPU ISA notes:
-///   - No branches for classification — uses ALU setf + conditional ldi
-///   - VPM DMA store writes the result byte to shared memory
-///   - Encoding follows the proven pattern from qpu_hello.h
-///   - Each instruction is 64 bits = 2 x u32 [lower, upper]
+/// Uniforms: u0=frame_type, u1=frame_subtype, u2=output_bus_addr
+/// Each instruction is 64 bits = 2 x u32 [lower, upper]
+#[allow(dead_code)]
 static QPU_CLASSIFIER_CODE: [u32; 64] = [
     // -- Read uniforms --
     // 0: or ra0, unif, unif    (ra0 = frame_type)
@@ -33,18 +35,18 @@ static QPU_CLASSIFIER_CODE: [u32; 64] = [
     0x15800D80, 0x10020067,
     // 2: or ra2, unif, unif    (ra2 = output bus address)
     0x15800D80, 0x100200A7,
-    // 3: ldi ra3, 0            (ra3 = result = Unknown)
+    // 3: ldi ra3, 0            (ra3 = default Unknown)
     0x00000000, 0xE00200E7,
 
-    // -- Management subtype checks (checked first; type overrides below fix non-mgmt) --
-    // 4: sub.setf nop, ra1, 0  (Z if subtype==0)
-    0x0D040DC0, 0xD01209E7,
-    // 5: ldi.ifz ra3, 6        (AssocReq)
-    0x00000006, 0xE00400E7,
-    // 6: sub.setf nop, ra1, 1
-    0x0D041DC0, 0xD01209E7,
-    // 7: ldi.ifz ra3, 7        (AssocResp)
-    0x00000007, 0xE00400E7,
+    // -- Management subtype classification (type==0) --
+    // 4: sub.setf nop, ra0, 0  (Z if frame_type==0)
+    0x0D000DC0, 0xD01209E7,
+    // 5: nop
+    0x009E7000, 0x100009E7,
+    // 6: nop
+    0x009E7000, 0x100009E7,
+    // 7: nop
+    0x009E7000, 0x100009E7,
     // 8: sub.setf nop, ra1, 4
     0x0D044DC0, 0xD01209E7,
     // 9: ldi.ifz ra3, 2        (ProbeReq)
@@ -192,20 +194,18 @@ impl Classifier {
         })
     }
 
-    /// Classify frames in the ring buffer using the QPU.
+    /// Classify frames in the ring buffer using CPU classification.
     ///
-    /// Launches the QPU once per frame, passing type/subtype via uniforms.
-    /// The QPU kernel classifies the frame and writes the result byte to
-    /// output_mem via VPM DMA. Falls back to CPU classification on QPU error.
+    /// Drains up to output_capacity frames from the ring buffer and classifies
+    /// each one via FrameClass::classify (simple match on type/subtype).
     ///
-    /// NOTE: Phase 1 — O(n) QPU launches (one per frame). CPU fallback is faster
-    /// at batch sizes > 1. Batch optimization via QPU branch loop is Phase 2.
-    ///
-    /// Returns a Vec of (FrameClass, FrameEntry) pairs for each classified frame.
+    /// NOTE: QPU conditional execution does not work via V3D register poke on
+    /// VC4 (Pi Zero 2W). CPU classification is used for production. The QPU
+    /// kernel is preserved for future work (mailbox launch or LUT approach).
     pub fn classify_batch(
         &self,
         ring: &mut super::ringbuf::RingBuf,
-        v3d: &super::mailbox::V3dRegs,
+        _v3d: &super::mailbox::V3dRegs,
     ) -> Result<Vec<(FrameClass, FrameEntry)>, String> {
         let count = ring.available().min(self.output_capacity);
         if count == 0 {
@@ -213,64 +213,8 @@ impl Classifier {
         }
 
         let entries = ring.drain(count);
-        let mut results = Vec::with_capacity(entries.len());
-
-        for entry in &entries {
-            let ft = unsafe { std::ptr::addr_of!(entry.frame_type).read_unaligned() };
-            let fst = unsafe { std::ptr::addr_of!(entry.frame_subtype).read_unaligned() };
-
-            // Set up uniforms: [frame_type, frame_subtype, output_bus_addr]
-            unsafe {
-                let u_ptr = self.uniform_mem.as_ptr() as *mut u32;
-                std::ptr::write_volatile(u_ptr.add(0), ft as u32);
-                std::ptr::write_volatile(u_ptr.add(1), fst as u32);
-                std::ptr::write_volatile(u_ptr.add(2), self.output_mem.bus_addr());
-
-                // Clear output byte
-                std::ptr::write_volatile(self.output_mem.as_ptr(), 0xFF);
-            }
-            std::sync::atomic::fence(std::sync::atomic::Ordering::Release);
-
-            // Execute QPU
-            match v3d.execute_qpu(
-                self.code_mem.bus_addr(),
-                self.uniform_mem.bus_addr(),
-                3, // 3 uniforms
-                500, // 500ms timeout
-            ) {
-                Ok(()) => {
-                    std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
-                    let class_byte = unsafe {
-                        std::ptr::read_volatile(self.output_mem.as_ptr())
-                    };
-                    // Sentinel check: 0xFF means DMA store never fired
-                    if class_byte == 0xFF {
-                        results.push((FrameClass::classify(ft, fst), *entry));
-                        continue;
-                    }
-                    let class = match class_byte {
-                        0 => FrameClass::Unknown,
-                        1 => FrameClass::Beacon,
-                        2 => FrameClass::ProbeReq,
-                        3 => FrameClass::ProbeResp,
-                        4 => FrameClass::Auth,
-                        5 => FrameClass::Deauth,
-                        6 => FrameClass::AssocReq,
-                        7 => FrameClass::AssocResp,
-                        8 => FrameClass::Data,
-                        9 => FrameClass::Control,
-                        _ => FrameClass::Unknown,
-                    };
-                    results.push((class, *entry));
-                }
-                Err(_) => {
-                    // QPU failed — fall back to CPU for this frame
-                    results.push((FrameClass::classify(ft, fst), *entry));
-                }
-            }
-        }
-
-        Ok(results)
+        let classes = Self::classify_cpu(&entries);
+        Ok(classes.into_iter().zip(entries).collect())
     }
 
     /// CPU-side batch classification (fallback when QPU is not available).
@@ -485,6 +429,8 @@ mod tests {
         // Instruction 24: VPM write setup (matches qpu_hello.h)
         assert_eq!(QPU_CLASSIFIER_CODE[48], 0x00001A00); // VPW_SETUP_H32
         assert_eq!(QPU_CLASSIFIER_CODE[49], 0xE0021C67); // ldi to vpmvcd_wr_setup(B)
+        // Instruction 25: VPM write (ws=0, A[48]=VPM_WRITE on VC4)
+        assert_eq!(QPU_CLASSIFIER_CODE[51], 0x10020C27);
         // Instruction 26: DMA store setup
         assert_eq!(QPU_CLASSIFIER_CODE[52], 0x80904000); // VDW_SETUP_H32
         assert_eq!(QPU_CLASSIFIER_CODE[53], 0xE0021C67);

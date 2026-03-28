@@ -467,6 +467,8 @@ struct WsSnapshot {
     bluetooth: BluetoothInfo,
     // -- gpu --
     gpu: GpuInfo,
+    // -- qpu / rf classification --
+    qpu: QpuInfo,
     // -- personality --
     personality: PersonalityInfo,
     // -- system --
@@ -572,6 +574,24 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
             submit_seen: s.gpu_submit_seen,
             snapshot_policy: s.gpu_snapshot_policy.clone(),
             flush_threshold: s.gpu_flush_threshold,
+        },
+        qpu: QpuInfo {
+            enabled: s.qpu_enabled,
+            available: s.qpu_available,
+            num_cores: s.qpu_num_cores,
+            frames_submitted: s.qpu_frames_submitted,
+            frames_classified: s.qpu_frames_classified,
+            batches_processed: s.qpu_batches_processed,
+            overflow_count: s.qpu_overflow_count,
+            last_batch_size: s.qpu_last_batch_size,
+            last_batch_duration_us: s.qpu_last_batch_duration_us,
+            beacon_rate: s.qpu_beacon_rate,
+            probe_rate: s.qpu_probe_rate,
+            deauth_rate: s.qpu_deauth_rate,
+            data_rate: s.qpu_data_rate,
+            unique_bssids: s.qpu_unique_bssids,
+            total_frames: s.qpu_total_frames,
+            dominant_class: s.qpu_dominant_class.clone(),
         },
         personality: PersonalityInfo {
             mood: s.mood,

@@ -211,7 +211,7 @@ impl Mood {
             v if v >= 0.5 => "Scanning...",
             v if v >= 0.3 => "Not much going on...",
             v if v >= 0.1 => "Where is everyone?",
-            _ => "...",
+            _ => "The bull contemplates the void...",
         }
     }
 }
@@ -579,7 +579,8 @@ impl Personality {
         // Question phase just ended — switch to punchline
         if self.joke_phase == 0 && self.joke_index.is_some() && self.joke_epochs_left == 0 {
             self.joke_phase = 1;
-            self.joke_epochs_left = 0; // punchline for 1 epoch (~5-10s with sub-epoch refresh)
+            self.joke_epochs_left = 2; // punchline displays for 2 more epochs
+            self.status_display_epochs = 0; // reset so slow-cycling doesn't interfere
             if let Some(idx) = self.joke_index {
                 let joke_list = jokes::jokes_for_face(&self.joke_face);
                 if idx < joke_list.len() {
@@ -589,10 +590,11 @@ impl Personality {
             }
         }
 
-        // Punchline done — clear joke state
+        // Punchline done — clear joke state and force new message pick
         if self.joke_phase == 1 && self.joke_epochs_left == 0 {
             self.joke_index = None;
             self.joke_phase = 0;
+            self.status_display_epochs = 3; // prevent slow cycling from holding stale punchline
         }
 
         // Slow cycling: keep current status for 3 epochs
@@ -611,7 +613,7 @@ impl Personality {
                 let question = joke_list[idx].0.to_string();
                 self.joke_index = Some(idx);
                 self.joke_phase = 0;
-                self.joke_epochs_left = 0; // question for 1 epoch (~10s with sub-epoch refresh)
+                self.joke_epochs_left = 2; // question held by countdown for 2 more epochs (3 total)
                 self.joke_face = face_name;
                 self.current_status = question;
                 self.status_display_epochs = 1;
@@ -1144,7 +1146,7 @@ mod tests {
         let mood = Mood::new(0.0);
         assert_eq!(mood.value(), 0.0);
         assert_eq!(mood.face(), Face::Demotivated);
-        assert_eq!(mood.status_message(), "...");
+        assert_eq!(mood.status_message(), "The bull contemplates the void...");
     }
 
     #[test]

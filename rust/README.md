@@ -57,6 +57,14 @@ src/
   pisugar/mod.rs    PiSugar 3 battery I2C, button debouncer, action mapping
   bluetooth/mod.rs  Bluetooth PAN tethering manager
   recovery/mod.rs   WiFi SDIO recovery, GPIO power cycle, watchdog
+  qpu/
+    mod.rs          QPU feature config (TOML serde)
+    capture.rs      Pcap capture thread (libpcap FFI, radiotap parsing)
+    classifier.rs   Frame classifier (CPU path + preserved QPU kernel)
+    engine.rs       QPU engine orchestrator (mailbox, V3D, ring buffer)
+    mailbox.rs      VideoCore IV mailbox interface (/dev/vcio, GPU memory)
+    rf.rs           Per-epoch RF environment statistics
+    ringbuf.rs      SPSC ring buffer in GPU memory, FrameEntry extraction
   web/mod.rs        REST API types, embedded HTML dashboard (15 cards)
   migration/mod.rs  Import legacy pwnagotchi config and captures
 ```
@@ -69,20 +77,22 @@ src/
                   |  (main.rs)        |
                   +--------+----------+
                            |
-          +-------+--------+--------+--------+
-          |       |        |        |        |
-     EpochLoop  Screen  WifiMgr  Attacks  Captures
-     (epoch.rs) (display/) (wifi/) (attacks/) (capture/)
-          |
-     Personality
-     (personality/)
-          |
-     Mood + Face (24 variants)
+     +-------+--------+--------+--------+--------+
+     |       |        |        |        |        |
+EpochLoop  Screen  WifiMgr  Attacks  Captures  QpuEngine
+(epoch.rs) (display/) (wifi/) (attacks/) (capture/) (qpu/)
+     |                                            |
+Personality  <── RF mood deltas ──  RfEnvironment
+(personality/)                      (qpu/rf.rs)
+     |
+Mood + Face (26 variants)
 
   Hardware layer (aarch64 only):
-    SPI e-ink driver (display/driver.rs)
-    PiSugar I2C     (pisugar/)
-    GPIO WL_REG_ON  (recovery/)
+    SPI e-ink driver    (display/driver.rs)
+    PiSugar I2C        (pisugar/)
+    GPIO WL_REG_ON     (recovery/)
+    VideoCore IV GPU   (qpu/mailbox.rs, qpu/engine.rs)
+    libpcap/wlan0mon   (qpu/capture.rs)
 ```
 
 The `Daemon` struct owns all subsystem state. Each epoch cycles through

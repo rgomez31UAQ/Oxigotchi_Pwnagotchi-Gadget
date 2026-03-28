@@ -658,26 +658,32 @@ function refreshAttacks() {
     });
 }
 
+function updateRfFromWs(d) {
+    var speed = (d.last_batch_size > 0 && d.last_batch_duration_us > 0)
+        ? (d.last_batch_size / (d.last_batch_duration_us / 1000)).toFixed(0)
+        : '-';
+    document.getElementById('rf-speed').textContent = speed;
+    document.getElementById('rf-total').textContent = d.frames_classified || 0;
+    document.getElementById('rf-bssids').textContent = d.unique_bssids || 0;
+    document.getElementById('rf-dominant').textContent = d.dominant_class || '-';
+    document.getElementById('rf-beacon').textContent = (d.beacon_rate || 0).toFixed(1);
+    document.getElementById('rf-probe').textContent = (d.probe_rate || 0).toFixed(1);
+    var deRate = d.deauth_rate || 0;
+    var deEl = document.getElementById('rf-deauth');
+    deEl.textContent = deRate.toFixed(1);
+    deEl.style.color = deRate > 5 ? '#e94560' : '#e0e0e0';
+    document.getElementById('rf-data').textContent = (d.data_rate || 0).toFixed(1);
+    document.getElementById('rf-batches').textContent = d.batches_processed || 0;
+    var ovCount = d.overflow_count || 0;
+    var ovEl = document.getElementById('rf-overflow');
+    ovEl.textContent = ovCount;
+    ovEl.style.color = ovCount > 0 ? '#f0c040' : '#e0e0e0';
+}
+
 function refreshRf() {
     api('GET', '/api/qpu').then(function(d) {
         if (!d) return;
-        var speed = (d.last_batch_size && d.last_batch_duration_us > 0)
-            ? (d.last_batch_size / (d.last_batch_duration_us / 1000)).toFixed(0)
-            : '-';
-        document.getElementById('rf-speed').textContent = speed;
-        document.getElementById('rf-total').textContent = d.frames_classified || 0;
-        document.getElementById('rf-bssids').textContent = d.unique_bssids || 0;
-        document.getElementById('rf-dominant').textContent = d.dominant_class || '-';
-        document.getElementById('rf-beacon').textContent = (d.beacon_rate || 0).toFixed(1);
-        document.getElementById('rf-probe').textContent = (d.probe_rate || 0).toFixed(1);
-        var deEl = document.getElementById('rf-deauth');
-        deEl.textContent = (d.deauth_rate || 0).toFixed(1);
-        deEl.style.color = d.deauth_rate > 5 ? '#e94560' : '#e0e0e0';
-        document.getElementById('rf-data').textContent = (d.data_rate || 0).toFixed(1);
-        document.getElementById('rf-batches').textContent = d.batches_processed || 0;
-        var ovEl = document.getElementById('rf-overflow');
-        ovEl.textContent = d.overflow_count || 0;
-        ovEl.style.color = d.overflow_count > 0 ? '#f0c040' : '#e0e0e0';
+        updateRfFromWs(d);
     });
 }
 
@@ -1503,6 +1509,7 @@ function updateAllCards(state) {
     if (state.bluetooth) updateBluetoothFromWs(state.bluetooth);
     if (state.wifi) updateWifiFromWs(state.wifi);
     if (state.attacks) updateAttacksFromWs(state.attacks);
+    if (state.qpu) updateRfFromWs(state.qpu);
     if (state.captures) updateCapturesFromWs(state.captures);
     if (state.recovery && state.health) updateRecoveryFromWs(state.recovery, state.health);
     if (state.personality) updatePersonalityFromWs(state.personality);
