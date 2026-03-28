@@ -248,6 +248,8 @@ pub mod mood_deltas {
     pub const RF_DEAUTH_STORM: f32 = 0.05;
     /// Mood increase during probe flood (>20/sec).
     pub const RF_PROBE_FLOOD: f32 = 0.02;
+    /// Mood boost when bull tells a joke (slows decay during idle).
+    pub const JOKE: f32 = 0.02;
 }
 
 // ---------------------------------------------------------------------------
@@ -2128,5 +2130,14 @@ mod tests {
         };
         p.apply_rf_environment(&rf);
         assert_eq!(p.override_face, Some(Face::Excited));
+    }
+
+    #[test]
+    fn test_joke_mood_boost() {
+        let mut p = Personality::new();
+        p.mood = Mood { value: 0.2 };
+        let initial = p.mood.value();
+        p.mood.adjust(mood_deltas::JOKE);
+        assert!((p.mood.value() - (initial + mood_deltas::JOKE)).abs() < 0.001);
     }
 }
