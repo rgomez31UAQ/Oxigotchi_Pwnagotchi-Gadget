@@ -12,6 +12,7 @@ __pycache__/
 firmware_analysis/
 bt_firmware_analysis/
 gpu_firmware_analysis/
+HCI/
 
 # Development
 *.log
