@@ -42,7 +42,7 @@ The `.cargo/config.toml` in the `rust/` directory pre-configures the linker and 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
 rustflags = [
-    "-L", "/mnt/c/msys64/home/user/pi-sysroot/usr/lib/aarch64-linux-gnu",
+    "-L", "/path/to/pi-sysroot/usr/lib/aarch64-linux-gnu",
     "-C", "link-arg=-Wl,--allow-shlib-undefined",
 ]
 ```
