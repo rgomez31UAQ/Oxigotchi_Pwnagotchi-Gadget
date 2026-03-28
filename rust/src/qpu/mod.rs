@@ -1,6 +1,7 @@
 pub mod classifier;
 pub mod engine;
 pub mod mailbox;
+pub mod rf;
 pub mod ringbuf;
 
 use serde::{Deserialize, Serialize};

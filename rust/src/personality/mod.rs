@@ -240,6 +240,14 @@ pub mod mood_deltas {
     pub const CRASH: f32 = -0.1;
     /// Mood decrease per idle epoch (long stretch with nothing).
     pub const IDLE_DECAY: f32 = -0.01;
+    /// Mood increase in busy RF environment (>100 frames/epoch).
+    pub const RF_BUSY: f32 = 0.03;
+    /// Mood decrease in quiet RF environment (0 frames).
+    pub const RF_QUIET: f32 = -0.01;
+    /// Mood increase during deauth storm (>10/sec).
+    pub const RF_DEAUTH_STORM: f32 = 0.05;
+    /// Mood increase during probe flood (>20/sec).
+    pub const RF_PROBE_FLOOD: f32 = 0.02;
 }
 
 // ---------------------------------------------------------------------------
@@ -638,6 +646,36 @@ impl Personality {
             return status_message(&self.context, &self.mood);
         }
         self.current_status.clone()
+    }
+
+    /// Apply RF environment observations to mood and face.
+    /// Called once per epoch after QPU classification.
+    pub fn apply_rf_environment(&mut self, rf: &crate::qpu::rf::RfEnvironment) {
+        use crate::qpu::rf;
+
+        if rf.total_frames > rf::BUSY_THRESHOLD {
+            self.mood.adjust(mood_deltas::RF_BUSY);
+        } else if rf.total_frames == 0 {
+            self.mood.adjust(mood_deltas::RF_QUIET);
+        }
+
+        if rf.deauth_rate > rf::DEAUTH_STORM_RATE {
+            self.mood.adjust(mood_deltas::RF_DEAUTH_STORM);
+            self.override_face = Some(Face::Raging);
+        }
+
+        if rf.probe_rate > rf::PROBE_FLOOD_RATE {
+            self.mood.adjust(mood_deltas::RF_PROBE_FLOOD);
+        }
+
+        if rf.unique_bssids > rf::RICH_BSSID_COUNT {
+            self.override_face = Some(Face::Excited);
+        }
+
+        // Lonely: APs exist but nobody's talking
+        if rf.beacon_rate > 0.0 && rf.data_rate == 0.0 && rf.probe_rate == 0.0 && rf.total_frames > 0 {
+            self.override_face = Some(Face::Lonely);
+        }
     }
 }
 
@@ -2039,5 +2077,54 @@ mod tests {
         }
         #[cfg(not(target_os = "linux"))]
         assert!(sample.is_none());
+    }
+
+    // ====================================================================
+    // RF environment mood/face tests
+    // ====================================================================
+
+    #[test]
+    fn test_rf_busy_mood() {
+        let mut p = Personality::new();
+        let initial = p.mood.value();
+        let rf = crate::qpu::rf::RfEnvironment {
+            total_frames: 200,
+            ..Default::default()
+        };
+        p.apply_rf_environment(&rf);
+        assert!((p.mood.value() - (initial + mood_deltas::RF_BUSY)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_rf_quiet_mood() {
+        let mut p = Personality::new();
+        let initial = p.mood.value();
+        let rf = crate::qpu::rf::RfEnvironment::default();
+        p.apply_rf_environment(&rf);
+        assert!((p.mood.value() - (initial + mood_deltas::RF_QUIET)).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_rf_deauth_storm_face() {
+        let mut p = Personality::new();
+        let rf = crate::qpu::rf::RfEnvironment {
+            deauth_rate: 15.0,
+            total_frames: 200,
+            ..Default::default()
+        };
+        p.apply_rf_environment(&rf);
+        assert_eq!(p.override_face, Some(Face::Raging));
+    }
+
+    #[test]
+    fn test_rf_rich_environment_face() {
+        let mut p = Personality::new();
+        let rf = crate::qpu::rf::RfEnvironment {
+            unique_bssids: 25,
+            total_frames: 200,
+            ..Default::default()
+        };
+        p.apply_rf_environment(&rf);
+        assert_eq!(p.override_face, Some(Face::Excited));
     }
 }
