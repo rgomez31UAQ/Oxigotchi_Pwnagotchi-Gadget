@@ -822,7 +822,41 @@ impl Daemon {
 
     /// Run one BT-mode epoch: scan, target, attack, update status.
     fn run_bt_epoch(&mut self) {
-        // Phase 1: Scan — age out stale devices, enforce limit
+        // Phase 0: Scan — discover nearby BT devices via HCI
+        if let Some(ref hci) = self.bt_hci_socket {
+            let scan_mode = self.config.bt_attacks.scan_mode;
+            let epoch_num = self.epoch_loop.metrics.epoch;
+
+            let discovered = match scan_mode {
+                bluetooth::attacks::BtScanMode::Ble => {
+                    bluetooth::attacks::scan::hci_le_scan(hci, 2000)
+                }
+                bluetooth::attacks::BtScanMode::Classic => {
+                    if self.bt_attack_scheduler.active_count() == 0 {
+                        bluetooth::attacks::scan::hci_inquiry(hci, 3)
+                    } else {
+                        vec![]
+                    }
+                }
+                bluetooth::attacks::BtScanMode::Both => {
+                    if epoch_num % 2 == 0 {
+                        bluetooth::attacks::scan::hci_le_scan(hci, 2000)
+                    } else if self.bt_attack_scheduler.active_count() == 0 {
+                        bluetooth::attacks::scan::hci_inquiry(hci, 3)
+                    } else {
+                        vec![]
+                    }
+                }
+            };
+
+            for dev in discovered {
+                self.bt_discovery.apply(
+                    bluetooth::model::observation::BtDiscoveryObservation::DeviceSeen(dev),
+                );
+            }
+        }
+
+        // Phase 1: Prune — age out stale devices, enforce limit
         self.bt_discovery.prune(self.config.bt_attacks.target_ttl_secs);
         self.bt_discovery.enforce_limit(256);
 
