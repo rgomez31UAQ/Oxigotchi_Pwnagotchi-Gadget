@@ -95,7 +95,21 @@ input:checked+.slider:before{transform:translateX(22px)}
 .logs-pre{background:#0a1628;color:#aaa;font-size:11px;font-family:'SF Mono','Fira Code',monospace;padding:10px;border-radius:6px;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
 .collapse-btn{background:none;border:1px solid #0f3460;color:#888;border-radius:6px;padding:6px 12px;font-size:12px;font-family:inherit;cursor:pointer;transition:.2s}
 .collapse-btn:hover{border-color:#00d4aa;color:#00d4aa}
-@media(max-width:400px){.grid-2{grid-template-columns:1fr}.stat-row{gap:4px}.stat .value{font-size:15px}}
+.bt-action-btn{background:#1a1a2e;color:#00d4aa;border:1px solid #00d4aa;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;margin:1px}
+.bt-action-btn:hover:not(:disabled){background:#00d4aa;color:#0f0f23}
+.bt-action-btn:disabled{opacity:0.3;cursor:not-allowed}
+.bt-badge{font-size:9px;padding:1px 5px;border-radius:8px;margin-left:6px;vertical-align:middle}
+.bt-badge-pr{color:#f0c040;border:1px solid #f0c040}
+.bt-badge-auto{color:#00d4aa;border:1px solid #00d4aa}
+.bt-state-untouched{color:#888}
+.bt-state-attacking{color:#e67e22;font-weight:bold}
+.bt-state-captured{color:#00d4aa;font-weight:bold}
+.bt-state-failed{color:#e94560}
+.bt-type-secondary{display:block;font-size:10px;color:#888}
+.bt-address{font-size:10px;color:#888;font-family:monospace}
+.bt-row-disabled{opacity:0.4;pointer-events:none}
+.bt-row-warning{border-left:2px solid #f0c040}
+@media(max-width:400px){.grid-2{grid-template-columns:1fr}.stat-row{gap:4px}.stat .value{font-size:15px}.bt-hide-mobile{display:none}}
 </style>
 </head>
 <body>
@@ -394,6 +408,56 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <button class="action-btn btn-restart" id="bt-scan-btn" onclick="btScan()">Scan for Devices</button>
 </div>
 <div id="bt-scan-results"></div>
+</div>
+</div>
+
+<!-- 14. BT Offensive — Nearby Devices -->
+<div class="card" id="card-bt-devices">
+<div class="card-title">BT Devices</div>
+<div class="sub">Bluetooth devices detected by offensive scanning.</div>
+<div class="ap-scroll">
+<table class="ap-table" id="bt-device-table">
+<thead><tr>
+<th>Name</th>
+<th>Address</th>
+<th>RSSI</th>
+<th>Type</th>
+<th>State</th>
+<th class="bt-hide-mobile">Seen</th>
+<th>Actions</th>
+</tr></thead>
+<tbody id="bt-device-tbody"><tr><td colspan="7" style="color:#555">No devices yet</td></tr></tbody>
+</table>
+</div>
+</div>
+
+<!-- 14b. BT Attacks -->
+<div class="card" id="card-bt-attacks">
+<div class="card-title">BT Attacks</div>
+<div style="color:#00d4aa;font-size:11px;margin-bottom:10px;padding:8px;background:#0f346033;border-radius:6px">Auto-attack toggles. KNOB and Clone can also be launched per-device above.</div>
+<div class="toggle-row" id="bt-row-smp_downgrade">
+<div class="toggle-info"><div class="toggle-label">SMP Downgrade<span class="bt-badge bt-badge-auto">auto</span></div><div class="toggle-desc">Downgrade pairing to legacy mode for key extraction</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-smp_downgrade" onchange="toggleBtAttack('smp_downgrade',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row" id="bt-row-knob">
+<div class="toggle-info"><div class="toggle-label">KNOB<span class="bt-badge bt-badge-auto">auto</span></div><div class="toggle-desc">Force minimum encryption key length (requires patchram)</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-knob" onchange="toggleBtAttack('knob',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row" id="bt-row-l2cap_fuzz">
+<div class="toggle-info"><div class="toggle-label">L2CAP Fuzz<span class="bt-badge bt-badge-auto">auto</span></div><div class="toggle-desc">Fuzz L2CAP signaling for crash discovery</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-l2cap_fuzz" onchange="toggleBtAttack('l2cap_fuzz',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row" id="bt-row-att_gatt_fuzz">
+<div class="toggle-info"><div class="toggle-label">ATT/GATT Fuzz<span class="bt-badge bt-badge-auto">auto</span></div><div class="toggle-desc">Fuzz BLE attribute protocol for crash discovery</div></div>
+<label class="switch"><input type="checkbox" id="bt-atk-att_gatt_fuzz" onchange="toggleBtAttack('att_gatt_fuzz',this.checked)"><span class="slider"></span></label>
+</div>
+<div class="toggle-row" id="bt-row-vendor_diag">
+<div class="toggle-info"><div class="toggle-label">Controller Diagnostics<span class="bt-badge bt-badge-pr">PR</span></div><div class="toggle-desc">Read local firmware state (requires patchram)</div></div>
+<button class="bt-action-btn" onclick="launchVendorDiagnostics()" id="btn-vendor-diag">Run</button>
+</div>
+<div style="margin-top:10px;padding-top:10px;border-top:1px solid #0f3460">
+<div style="font-size:12px;color:#888;margin-bottom:4px">BT Rage Level: <span id="bt-rage-label">Medium</span></div>
+<div style="font-size:11px;color:#888">Controls which auto-attacks run. Medium+ enables KNOB and Clone.</div>
 </div>
 </div>
 
@@ -1227,6 +1291,169 @@ function btPair(mac) {
     });
 }
 
+// --- BT Offensive functions ---
+
+window._btManualPending = false;
+window._btRageLevel = 'Medium';
+window._btPatchramReady = false;
+
+function isPatchramReady() { return window._btPatchramReady; }
+
+function toggleBtAttack(name, val) {
+    var data = {};
+    data[name] = val;
+    api('POST', '/api/bt/attacks/toggle', data).then(function() {
+        toast('BT attack ' + name + (val ? ' ON' : ' OFF'));
+        updateBtPatchramConstraintState();
+    });
+}
+
+function launchManualAttack(address, attack) {
+    if (window._btManualPending) {
+        toast('Manual attack already pending');
+        return;
+    }
+    window._btManualPending = true;
+    var label = attack === 'knob' ? 'KNOB' : (attack === 'ble_adv_injection' ? 'Clone' : attack);
+    toast(label + ' attack launched on ' + address);
+    fetch('/api/bt/attacks/manual', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({address: address, attack: attack})
+    }).then(function(r) { return r.json(); }).then(function(j) {
+        if (!j.ok) {
+            toast(j.message || 'Attack failed to queue');
+            window._btManualPending = false;
+        }
+    }).catch(function() {
+        toast('Failed to send attack request');
+        window._btManualPending = false;
+    });
+}
+
+function launchVendorDiagnostics() {
+    if (window._btManualPending) {
+        toast('Manual attack already pending');
+        return;
+    }
+    window._btManualPending = true;
+    toast('Running controller diagnostics...');
+    fetch('/api/bt/attacks/manual', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({attack: 'vendor_cmd_unlock'})
+    }).then(function(r) { return r.json(); }).then(function(j) {
+        if (!j.ok) {
+            toast(j.message || 'Diagnostics failed to queue');
+            window._btManualPending = false;
+        }
+    }).catch(function() {
+        toast('Failed to send diagnostics request');
+        window._btManualPending = false;
+    });
+}
+
+function updateBtDevicesFromWs(btDevices) {
+    if (!btDevices || !btDevices.devices) return;
+    var tbody = document.getElementById('bt-device-tbody');
+    if (btDevices.devices.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="color:#555">No devices yet</td></tr>';
+        return;
+    }
+    var rage = (window._btRageLevel || 'Medium').toLowerCase();
+    var rageMedium = rage === 'medium' || rage === 'high';
+    var html = '';
+    btDevices.devices.forEach(function(d) {
+        var name = d.name ? esc(d.name) : '<span style="color:#555">' + esc(d.address) + '</span>';
+        var rssi = d.rssi != null ? d.rssi + ' dBm' : '-';
+        var rssiColor = d.rssi == null ? '#555' : (d.rssi > -50 ? '#00d4aa' : (d.rssi > -70 ? '#f0c040' : '#e94560'));
+        var type = esc(d.transport) + (d.category ? '<span class="bt-type-secondary">' + esc(d.category) + '</span>' : '');
+        var stateClass = 'bt-state-' + (d.attack_state || 'untouched').toLowerCase();
+        var attacking = (d.attack_state || '').toLowerCase() === 'attacking';
+        var pending = !!window._btManualPending;
+        var dis = (attacking || pending || !rageMedium) ? ' disabled' : '';
+        var actions = '';
+        if (d.transport === 'Classic' || d.transport === 'Dual') {
+            actions += '<button class="bt-action-btn"' + dis + ' onclick="launchManualAttack(\'' + esc(d.address) + '\',\'knob\')">KNOB</button>';
+        }
+        if (d.transport === 'Ble' || d.transport === 'Dual') {
+            actions += '<button class="bt-action-btn"' + dis + ' onclick="launchManualAttack(\'' + esc(d.address) + '\',\'ble_adv_injection\')">Clone</button>';
+        }
+        html += '<tr>' +
+            '<td>' + name + '</td>' +
+            '<td class="bt-address">' + esc(d.address) + '</td>' +
+            '<td style="color:' + rssiColor + '">' + rssi + '</td>' +
+            '<td>' + type + '</td>' +
+            '<td class="' + stateClass + '">' + esc(d.attack_state || 'Untouched') + '</td>' +
+            '<td class="bt-hide-mobile">' + d.seen_count + '</td>' +
+            '<td>' + actions + '</td>' +
+            '</tr>';
+    });
+    tbody.innerHTML = html;
+}
+
+function updateBtAttacksFromWs(btAttacks) {
+    if (!btAttacks || !btAttacks.toggles) return;
+    var t = btAttacks.toggles;
+    var map = {
+        smp_downgrade: t.smp_downgrade,
+        knob: t.knob,
+        l2cap_fuzz: t.l2cap_fuzz,
+        att_gatt_fuzz: t.att_gatt_fuzz
+    };
+    Object.keys(map).forEach(function(key) {
+        var el = document.getElementById('bt-atk-' + key);
+        if (el && !el.matches(':focus')) el.checked = map[key];
+    });
+    window._btRageLevel = btAttacks.rage_level || 'Medium';
+    updateBtAttackConstraintState(btAttacks.rage_level || 'Medium');
+    updateBtPatchramConstraintState();
+}
+
+function updateBtAttackConstraintState(rageLevel) {
+    var label = document.getElementById('bt-rage-label');
+    if (label) label.textContent = rageLevel;
+}
+
+function updateBtPatchramConstraintState() {
+    [{row: 'bt-row-knob', input: 'bt-atk-knob'}].forEach(function(entry) {
+        var row = document.getElementById(entry.row);
+        var input = document.getElementById(entry.input);
+        if (!row || !input) return;
+        var blocked = input.checked && !isPatchramReady();
+        row.classList.toggle('bt-row-disabled', blocked);
+        if (blocked) {
+            row.title = 'Requires patchram attack firmware';
+        } else if (!row.classList.contains('bt-row-warning')) {
+            row.title = '';
+        }
+    });
+    // Also disable vendor diagnostics button if no patchram
+    var btn = document.getElementById('btn-vendor-diag');
+    if (btn) btn.disabled = !isPatchramReady();
+}
+
+function refreshBtDevices() {
+    api('GET', '/api/bt/devices').then(function(d) {
+        if (d) updateBtDevicesFromWs(d);
+    });
+}
+
+function refreshBtAttacks() {
+    api('GET', '/api/bt/attacks').then(function(d) {
+        if (d) updateBtAttacksFromWs(d);
+    });
+}
+
+function refreshBtPatchram() {
+    api('GET', '/api/bt/patchram').then(function(d) {
+        if (d) {
+            window._btPatchramReady = d.state === 'Applied' || d.state === 'Ready';
+            updateBtPatchramConstraintState();
+        }
+    });
+}
+
 function saveWpaSec() {
     var key = document.getElementById('wpasec-input').value.trim();
     api('POST', '/api/wpasec', {api_key: key}).then(function(r) {
@@ -1539,6 +1766,9 @@ function startPolling() {
     _pollTimers.push(setInterval(refreshLogs, 10000));
     _pollTimers.push(setInterval(refreshWpaSec, 30000));
     _pollTimers.push(setInterval(refreshDiscord, 30000));
+    _pollTimers.push(setInterval(refreshBtDevices, 10000));
+    _pollTimers.push(setInterval(refreshBtAttacks, 15000));
+    _pollTimers.push(setInterval(refreshBtPatchram, 30000));
 }
 
 function stopPolling() {
@@ -1559,6 +1789,13 @@ function connectWebSocket() {
         try {
             var state = JSON.parse(event.data);
             updateAllCards(state);
+            if (state.bt_manual_result) {
+                var r = state.bt_manual_result;
+                var icon = r.success ? '\u2713' : '\u2717';
+                var target = r.address || 'local';
+                toast(icon + ' ' + r.attack + ' on ' + target + ': ' + r.message);
+                window._btManualPending = false;
+            }
         } catch(e) {
             console.error('WS parse error:', e);
         }
@@ -1595,6 +1832,9 @@ setTimeout(refreshAps, 6000);
 setTimeout(refreshWhitelist, 6500);
 setTimeout(refreshWpaSec, 7000);
 setTimeout(refreshDiscord, 7500);
+setTimeout(refreshBtDevices, 8000);
+setTimeout(refreshBtAttacks, 8500);
+setTimeout(refreshBtPatchram, 9000);
 
 // Start polling as initial strategy; WS will take over once connected
 startPolling();
