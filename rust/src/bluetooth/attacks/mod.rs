@@ -135,6 +135,43 @@ impl Default for BtRageLevel {
 }
 
 // ---------------------------------------------------------------------------
+// BtScanMode
+// ---------------------------------------------------------------------------
+
+/// Which scan types to run each BT epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BtScanMode {
+    Ble,
+    Classic,
+    Both,
+}
+
+impl Default for BtScanMode {
+    fn default() -> Self {
+        Self::Both
+    }
+}
+
+impl BtScanMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ble => "ble",
+            Self::Classic => "classic",
+            Self::Both => "both",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "ble" => Some(Self::Ble),
+            "classic" => Some(Self::Classic),
+            "both" => Some(Self::Both),
+            _ => None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BtAttackConfig
 // ---------------------------------------------------------------------------
 
@@ -148,6 +185,10 @@ pub struct BtAttackConfig {
     /// Current rage level — filters which attacks can fire.
     #[serde(default)]
     pub rage_level: BtRageLevel,
+
+    /// Which scan types to run: Ble, Classic, or Both (alternating).
+    #[serde(default)]
+    pub scan_mode: BtScanMode,
 
     // -- attack toggles (ble_adv_injection and vendor_cmd_unlock removed — manual-only) --
     #[serde(default = "default_true")]
@@ -225,6 +266,7 @@ impl Default for BtAttackConfig {
         Self {
             enabled: true,
             rage_level: BtRageLevel::default(),
+            scan_mode: BtScanMode::default(),
             smp_downgrade: true,
             knob: true,
             ble_conn_hijack: false,
@@ -703,5 +745,31 @@ stock_hcd = "/tmp/stock.hcd"
     fn test_min_rage_level_is_pub() {
         assert_eq!(BtAttackType::VendorCmdUnlock.min_rage_level(), BtRageLevel::Low);
         assert_eq!(BtAttackType::Knob.min_rage_level(), BtRageLevel::Medium);
+    }
+
+    #[test]
+    fn test_scan_mode_default_is_both() {
+        let cfg = BtAttackConfig::default();
+        assert_eq!(cfg.scan_mode, BtScanMode::Both);
+    }
+
+    #[test]
+    fn test_scan_mode_serde_roundtrip() {
+        for mode in [BtScanMode::Ble, BtScanMode::Classic, BtScanMode::Both] {
+            let s = mode.as_str();
+            assert_eq!(BtScanMode::from_str(s), Some(mode));
+        }
+        assert_eq!(BtScanMode::from_str("garbage"), None);
+    }
+
+    #[test]
+    fn test_scan_mode_serde_default_missing_field() {
+        // Simulate a config.toml that doesn't have scan_mode at all
+        let toml = r#"
+enabled = true
+rage_level = "Medium"
+"#;
+        let cfg: BtAttackConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.scan_mode, BtScanMode::Both);
     }
 }
