@@ -104,15 +104,38 @@ input:checked+.slider:before{transform:translateX(22px)}
 .bt-badge{font-size:9px;padding:1px 5px;border-radius:8px;margin-left:6px;vertical-align:middle}
 .bt-badge-pr{color:#f0c040;border:1px solid #f0c040}
 .bt-badge-auto{color:#00d4aa;border:1px solid #00d4aa}
-.bt-state-untouched{color:#888}
-.bt-state-attacking{color:#e67e22;font-weight:bold}
-.bt-state-captured{color:#00d4aa;font-weight:bold}
-.bt-state-failed{color:#e94560}
-.bt-type-secondary{display:block;font-size:10px;color:#888}
-.bt-address{font-size:10px;color:#888;font-family:monospace}
 .bt-row-disabled{opacity:0.4;pointer-events:none}
 .bt-row-warning{border-left:2px solid #f0c040}
-@media(max-width:400px){.grid-2{grid-template-columns:1fr}.stat-row{gap:4px}.stat .value{font-size:15px}.bt-hide-mobile{display:none}}
+.bt-dev-list{display:flex;flex-direction:column;gap:6px;max-height:400px;overflow-y:auto;padding:2px}
+.bt-dev{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#0a1628;border-radius:10px;border:1px solid #0f346044;transition:border-color .2s}
+.bt-dev:hover{border-color:#0f3460}
+.bt-dev-signal{display:flex;align-items:flex-end;gap:2px;min-width:20px;height:18px}
+.bt-dev-signal .bar{width:3px;border-radius:1px;background:#333;transition:background .3s}
+.bt-dev-signal.sig-strong .bar{background:#00d4aa}
+.bt-dev-signal.sig-medium .bar:nth-child(-n+3){background:#f0c040}
+.bt-dev-signal.sig-weak .bar:nth-child(-n+2){background:#e94560}
+.bt-dev-signal.sig-dead .bar:first-child{background:#e94560}
+.bt-dev-info{flex:1;min-width:0}
+.bt-dev-name{font-size:13px;font-weight:600;color:#e0e0e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-dev-name.unnamed{color:#555;font-weight:400}
+.bt-dev-meta{font-size:10px;color:#666;margin-top:2px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.bt-dev-vendor{color:#888}
+.bt-dev-addr{font-family:'SF Mono','Fira Code',monospace;letter-spacing:0.3px}
+.bt-dev-transport{font-size:9px;padding:1px 5px;border-radius:4px;font-weight:600;letter-spacing:0.5px}
+.bt-dev-transport.ble{color:#00d4aa;background:#00d4aa15;border:1px solid #00d4aa33}
+.bt-dev-transport.classic{color:#5dade2;background:#5dade215;border:1px solid #5dade233}
+.bt-dev-rssi{font-size:10px;color:#555;min-width:42px;text-align:right}
+.bt-dev-state{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap}
+.bt-dev-state.st-untouched{color:#555;background:#55555515}
+.bt-dev-state.st-attacking{color:#e67e22;background:#e67e2220;border:1px solid #e67e2233;animation:pulse-attack 1.5s infinite}
+.bt-dev-state.st-targeted{color:#f0c040;background:#f0c04015;border:1px solid #f0c04033}
+.bt-dev-state.st-captured{color:#00d4aa;background:#00d4aa15;border:1px solid #00d4aa33}
+.bt-dev-state.st-failed{color:#e94560;background:#e9456015;border:1px solid #e9456033}
+@keyframes pulse-attack{0%,100%{opacity:1}50%{opacity:0.6}}
+.bt-dev-actions{display:flex;gap:4px;flex-shrink:0}
+.bt-dev-empty{text-align:center;padding:24px 12px;color:#444;font-size:13px}
+.bt-dev-count{font-size:11px;color:#555;text-align:right;padding:4px 0}
+@media(max-width:400px){.grid-2{grid-template-columns:1fr}.stat-row{gap:4px}.stat .value{font-size:15px}.bt-dev{padding:8px 10px;gap:8px}.bt-dev-rssi{display:none}}
 </style>
 </head>
 <body>
@@ -334,20 +357,10 @@ input:checked+.slider:before{transform:translateX(22px)}
 <!-- BT Nearby Devices -->
 <div class="card" id="card-bt-devices" data-modes="bt">
 <div class="card-title">Nearby Devices</div>
-<div class="sub">Bluetooth devices detected during scanning.</div>
-<div class="ap-scroll">
-<table class="bt-device-table" id="bt-device-table">
-<thead><tr>
-<th>Name</th>
-<th>Address</th>
-<th>RSSI</th>
-<th>Type</th>
-<th>State</th>
-<th class="bt-hide-mobile">Seen</th>
-<th>Actions</th>
-</tr></thead>
-<tbody id="bt-device-tbody"><tr><td colspan="7" style="color:#555">No devices yet</td></tr></tbody>
-</table>
+<div class="sub">Bluetooth devices detected via HCI scanning.</div>
+<div class="bt-dev-count" id="bt-dev-count"></div>
+<div class="bt-dev-list" id="bt-dev-list">
+<div class="bt-dev-empty">Scanning...</div>
 </div>
 </div>
 
@@ -1537,23 +1550,50 @@ function launchVendorDiagnostics() {
     });
 }
 
+function rssiToSignal(rssi) {
+    if (rssi == null) return {cls:'sig-dead',bars:[5,0,0,0]};
+    if (rssi > -50) return {cls:'sig-strong',bars:[5,9,13,18]};
+    if (rssi > -65) return {cls:'sig-medium',bars:[5,9,13,0]};
+    if (rssi > -80) return {cls:'sig-weak',bars:[5,9,0,0]};
+    return {cls:'sig-dead',bars:[5,0,0,0]};
+}
 function updateBtDevicesFromWs(btDevices) {
     if (!btDevices || !btDevices.devices) return;
-    var tbody = document.getElementById('bt-device-tbody');
+    var list = document.getElementById('bt-dev-list');
+    var countEl = document.getElementById('bt-dev-count');
     if (btDevices.devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="color:#555">No devices yet</td></tr>';
+        list.innerHTML = '<div class="bt-dev-empty">No devices yet</div>';
+        if (countEl) countEl.textContent = '';
         return;
     }
+    if (countEl) countEl.textContent = btDevices.devices.length + ' device' + (btDevices.devices.length !== 1 ? 's' : '');
     var rage = (window._btRageLevel || 'Medium').toLowerCase();
     var rageMedium = rage === 'medium' || rage === 'high';
     var html = '';
     btDevices.devices.forEach(function(d) {
-        var name = d.name ? esc(d.name) : '<span style="color:#555">' + esc(d.address) + '</span>';
-        var rssi = d.rssi != null ? d.rssi + ' dBm' : '-';
-        var rssiColor = d.rssi == null ? '#555' : (d.rssi > -50 ? '#00d4aa' : (d.rssi > -70 ? '#f0c040' : '#e94560'));
-        var type = esc(d.transport) + (d.category ? '<span class="bt-type-secondary">' + esc(d.category) + '</span>' : '');
-        var stateClass = 'bt-state-' + (d.attack_state || 'untouched').toLowerCase();
-        var attacking = (d.attack_state || '').toLowerCase() === 'attacking';
+        var sig = rssiToSignal(d.rssi);
+        var bars = '<div class="bt-dev-signal ' + sig.cls + '">';
+        for (var i = 0; i < 4; i++) bars += '<div class="bar" style="height:' + (sig.bars[i] || 3) + 'px"></div>';
+        bars += '</div>';
+
+        var nameStr = d.name ? esc(d.name) : (d.vendor ? esc(d.vendor) + ' Device' : d.address.substring(0, 8) + '...');
+        var nameCls = d.name ? '' : ' unnamed';
+
+        var meta = '';
+        if (d.vendor) meta += '<span class="bt-dev-vendor">' + esc(d.vendor) + '</span>';
+        meta += '<span class="bt-dev-addr">' + esc(d.address) + '</span>';
+
+        var tCls = (d.transport || '').toLowerCase() === 'classic' ? 'classic' : 'ble';
+        var transport = '<span class="bt-dev-transport ' + tCls + '">' + esc(d.transport || 'BLE') + '</span>';
+
+        var rssiStr = d.rssi != null ? d.rssi + ' dBm' : '';
+
+        var st = (d.attack_state || 'untouched').toLowerCase();
+        var stLabel = d.attack_state || 'Idle';
+        if (st === 'untouched') stLabel = 'Idle';
+        var state = '<span class="bt-dev-state st-' + st + '">' + esc(stLabel) + '</span>';
+
+        var attacking = st === 'attacking';
         var pending = !!window._btManualPending;
         var dis = (attacking || pending || !rageMedium) ? ' disabled' : '';
         var actions = '';
@@ -1563,17 +1603,17 @@ function updateBtDevicesFromWs(btDevices) {
         if (d.transport === 'Ble' || d.transport === 'Dual') {
             actions += '<button class="bt-action-btn"' + dis + ' onclick="launchManualAttack(\'' + esc(d.address) + '\',\'ble_adv_injection\')">Clone</button>';
         }
-        html += '<tr>' +
-            '<td>' + name + '</td>' +
-            '<td class="bt-address">' + esc(d.address) + '</td>' +
-            '<td style="color:' + rssiColor + '">' + rssi + '</td>' +
-            '<td>' + type + '</td>' +
-            '<td class="' + stateClass + '">' + esc(d.attack_state || 'Untouched') + '</td>' +
-            '<td class="bt-hide-mobile">' + d.seen_count + '</td>' +
-            '<td>' + actions + '</td>' +
-            '</tr>';
+
+        html += '<div class="bt-dev">' +
+            bars +
+            '<div class="bt-dev-info"><div class="bt-dev-name' + nameCls + '">' + nameStr + '</div>' +
+            '<div class="bt-dev-meta">' + transport + meta + '</div></div>' +
+            '<div class="bt-dev-rssi">' + rssiStr + '</div>' +
+            state +
+            '<div class="bt-dev-actions">' + actions + '</div>' +
+            '</div>';
     });
-    tbody.innerHTML = html;
+    list.innerHTML = html;
 }
 
 function updateBtAttacksFromWs(btAttacks) {
@@ -1954,33 +1994,7 @@ function isValidBtAddress(address) {
     return /^[0-9A-F]{2}(?::[0-9A-F]{2}){5}$/i.test(address || '');
 }
 
-function updateBtDevicesFromWs(btDevices) {
-    if (!btDevices || !btDevices.devices) return;
-    var tbody = document.getElementById('bt-device-tbody');
-    if (btDevices.devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="color:#555">No devices yet</td></tr>';
-        return;
-    }
-    var html = '';
-    btDevices.devices.forEach(function(d) {
-        var validAddress = isValidBtAddress(d.address);
-        var name = d.name ? esc(d.name) : '<span style="color:#555">' + esc(d.address) + '</span>';
-        var rssi = d.rssi != null ? d.rssi + ' dBm' : '-';
-        var rssiColor = d.rssi == null ? '#555' : (d.rssi > -50 ? '#00d4aa' : (d.rssi > -70 ? '#f0c040' : '#e94560'));
-        var type = esc(d.transport) + (d.category ? '<span class="bt-type-secondary">' + esc(d.category) + '</span>' : '');
-        var stateClass = 'bt-state-' + (d.attack_state || 'untouched').toLowerCase();
-        html += '<tr>' +
-            '<td>' + name + '</td>' +
-            '<td class="bt-address">' + esc(d.address) + '</td>' +
-            '<td style="color:' + rssiColor + '">' + rssi + '</td>' +
-            '<td>' + type + '</td>' +
-            '<td class="' + stateClass + '">' + esc(d.attack_state || 'Untouched') + '</td>' +
-            '<td class="bt-hide-mobile">' + d.seen_count + '</td>' +
-            '<td><button class="bt-target-btn"' + (validAddress ? ' onclick="setBtTarget(\'' + esc(d.address) + '\')"' : ' disabled title="Invalid BT address"') + '>Target</button></td>' +
-            '</tr>';
-    });
-    tbody.innerHTML = html;
-}
+// updateBtDevicesFromWs is defined once in the Hunting section above
 
 function setBtTarget(address) {
     if (!isValidBtAddress(address)) {

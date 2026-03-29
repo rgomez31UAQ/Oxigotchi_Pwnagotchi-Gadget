@@ -2428,6 +2428,7 @@ impl Daemon {
                 transport: format!("{:?}", d.transport),
                 attack_state: format!("{:?}", d.attack_state),
                 seen_count: d.seen_count,
+                vendor: d.manufacturer.clone(),
             }
         }).collect();
         s.bt_patchram_state = self.patchram.state.as_str().to_string();

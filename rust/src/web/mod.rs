@@ -921,6 +921,7 @@ pub struct BtDeviceInfo {
     pub transport: String,
     pub attack_state: String,
     pub seen_count: u32,
+    pub vendor: Option<String>,
 }
 
 /// BT devices response for GET /api/bt/devices.

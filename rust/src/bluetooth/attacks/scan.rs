@@ -88,6 +88,65 @@ fn parse_ad_name(ad_data: &[u8]) -> Option<String> {
     None
 }
 
+/// Parse Manufacturer Specific Data (AD type 0xFF) to extract a vendor name
+/// from the Bluetooth SIG company identifier.
+fn parse_ad_manufacturer(ad_data: &[u8]) -> Option<&'static str> {
+    let mut offset = 0;
+    while offset < ad_data.len() {
+        let len = ad_data[offset] as usize;
+        if len == 0 || offset + 1 + len > ad_data.len() {
+            break;
+        }
+        let ad_type = ad_data[offset + 1];
+        // 0xFF = Manufacturer Specific Data: company_id(2 LE) + data(N)
+        if ad_type == 0xFF && len >= 3 {
+            let company_id = u16::from_le_bytes([ad_data[offset + 2], ad_data[offset + 3]]);
+            return Some(company_id_to_vendor(company_id));
+        }
+        offset += 1 + len;
+    }
+    None
+}
+
+/// Map Bluetooth SIG company ID to a short vendor name.
+fn company_id_to_vendor(id: u16) -> &'static str {
+    match id {
+        0x004C => "Apple",
+        0x0006 => "Microsoft",
+        0x0075 => "Samsung",
+        0x00E0 => "Google",
+        0x0059 => "Nordic Semi",
+        0x000F => "Broadcom",
+        0x000D => "Texas Instruments",
+        0x0002 => "Intel",
+        0x001D => "Qualcomm",
+        0x0087 => "Garmin",
+        0x00D2 => "Tile",
+        0x0157 => "Xiaomi",
+        0x038F => "Xiaomi",
+        0x0310 => "Xiaomi",
+        0x0171 => "Amazon",
+        0x0131 => "Huawei",
+        0x0046 => "Sony",
+        0x000A => "CSR/Qualcomm",
+        0x0056 => "Sony Ericsson",
+        0x0078 => "Nike",
+        0x0154 => "Google",
+        0x02FF => "Anker",
+        0x0106 => "Bose",
+        0x012D => "Sonos",
+        0x0094 => "LG",
+        0x0186 => "JBL",
+        0x0009 => "Infineon",
+        0x0057 => "Harman",
+        0x0138 => "Fitbit",
+        0x01DA => "OPPO",
+        0x02A5 => "OnePlus",
+        0x0269 => "Realme",
+        _ => "Unknown",
+    }
+}
+
 /// Parse Appearance from AD structures. Returns 0 if not found.
 fn parse_ad_appearance(ad_data: &[u8]) -> u16 {
     let mut offset = 0;
@@ -143,6 +202,9 @@ fn parse_le_adv_reports(data: &[u8]) -> Vec<BtDeviceObservation> {
         } else {
             BtCategory::Unknown
         };
+        let manufacturer = parse_ad_manufacturer(ad_data)
+            .filter(|v| *v != "Unknown")
+            .map(|v| v.to_string());
 
         results.push(BtDeviceObservation {
             id: format!("ble:{address}"),
@@ -154,7 +216,7 @@ fn parse_le_adv_reports(data: &[u8]) -> Vec<BtDeviceObservation> {
             rssi_best: Some(rssi as i16),
             category,
             services: Vec::new(),
-            manufacturer: None,
+            manufacturer,
             first_seen: chrono::Utc::now(),
             ts: chrono::Utc::now(),
             seen_count: 1,
@@ -271,7 +333,7 @@ pub fn hci_le_scan(hci: &HciSocket, duration_ms: u32) -> Vec<BtDeviceObservation
     let scan_params = HciCommand::new(
         OGF_LE,
         LE_SET_SCAN_PARAMS,
-        vec![0x00, 0xA0, 0x00, 0xA0, 0x00, 0x00, 0x00],
+        vec![0x01, 0xA0, 0x00, 0xA0, 0x00, 0x00, 0x00],
     );
     match hci.send_command(&scan_params) {
         Ok(resp) if resp.status != 0 => {
