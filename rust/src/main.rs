@@ -856,6 +856,50 @@ impl Daemon {
             }
         }
 
+        // Phase 0b: Name resolution — connect to unnamed devices to read GATT Device Name
+        // Only when no attacks are active (avoids HCI/L2CAP contention)
+        {
+            let active = self.bt_attack_scheduler.active_count();
+            let total_devs = self.bt_discovery.devices_by_rssi().len();
+            let candidates = self.bt_discovery.devices_by_rssi().iter()
+                .filter(|d| d.name.is_none() && !d.name_resolve_attempted && d.connectable && d.transport == bluetooth::model::observation::BtTransport::Ble)
+                .count();
+            if candidates > 0 {
+                log::info!("bt_name_resolve: active={active} devices={total_devs} connectable_unnamed={candidates}");
+            }
+        }
+        if self.bt_attack_scheduler.active_count() == 0 {
+            let unnamed: Vec<(String, String, u8)> = self.bt_discovery
+                .devices_by_rssi()
+                .iter()
+                .filter(|d| d.name.is_none() && !d.name_resolve_attempted && d.connectable && d.transport == bluetooth::model::observation::BtTransport::Ble)
+                .take(1) // max 1 per epoch — LE connect timeout is 2s
+                .map(|d| {
+                    let addr_type = match d.address_type.as_deref() {
+                        Some("random") => 2u8,
+                        _ => 1u8,
+                    };
+                    (d.id.clone(), d.address.clone(), addr_type)
+                })
+                .collect();
+            if !unnamed.is_empty() {
+                log::info!("bt_name_resolve: attempting {} devices", unnamed.len());
+                let resolved = bluetooth::attacks::scan::resolve_ble_names(&unnamed, 3);
+                // Mark all attempted devices
+                for (id, _, _) in &unnamed {
+                    if let Some(dev) = self.bt_discovery.get_device_mut(id) {
+                        dev.name_resolve_attempted = true;
+                    }
+                }
+                // Apply resolved names
+                for (id, name) in resolved {
+                    if let Some(dev) = self.bt_discovery.get_device_mut(&id) {
+                        dev.name = Some(name);
+                    }
+                }
+            }
+        }
+
         // Phase 1: Prune — age out stale devices, enforce limit
         self.bt_discovery.prune(self.config.bt_attacks.target_ttl_secs);
         self.bt_discovery.enforce_limit(256);
@@ -2305,6 +2349,8 @@ impl Daemon {
                             attack_state: bluetooth::model::observation::BtDeviceAttackState::Untouched,
                             last_attack: None,
                             last_attack_detail: None,
+                            name_resolve_attempted: false,
+                            connectable: false, // BlueZ scan — unknown connectability
                         },
                     ),
                 );

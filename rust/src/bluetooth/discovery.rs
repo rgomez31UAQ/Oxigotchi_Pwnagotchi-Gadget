@@ -45,6 +45,10 @@ impl BtDiscoveryWorker {
                     if device.name.is_some() {
                         existing.name = device.name;
                     }
+                    // Promote to connectable if ever seen as connectable
+                    if device.connectable {
+                        existing.connectable = true;
+                    }
                 } else {
                     // New device — insert as-is
                     self.devices.insert(device.id.clone(), device);

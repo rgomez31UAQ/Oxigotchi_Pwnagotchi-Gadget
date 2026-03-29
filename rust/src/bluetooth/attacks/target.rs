@@ -143,6 +143,10 @@ mod tests {
             ts: now,
             seen_count: 1,
             attack_state,
+            last_attack: None,
+            last_attack_detail: None,
+            name_resolve_attempted: false,
+            connectable: true,
         }
     }
 

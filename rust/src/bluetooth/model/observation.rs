@@ -71,6 +71,12 @@ pub struct BtDeviceObservation {
     /// Short result detail (e.g. "Connection timeout", "Key captured").
     #[serde(default)]
     pub last_attack_detail: Option<String>,
+    /// Whether GATT name resolution has been attempted for this device.
+    #[serde(default)]
+    pub name_resolve_attempted: bool,
+    /// Whether the device advertised as connectable (BLE event_type 0x00/0x01).
+    #[serde(default)]
+    pub connectable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

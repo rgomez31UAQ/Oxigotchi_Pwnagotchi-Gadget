@@ -73,6 +73,42 @@ mod platform {
                     ));
                 }
 
+                // For BLE (addr_type 1 or 2): bind with CID + LE addr type
+                // so the kernel knows this is an LE fixed-channel connection,
+                // then set BT_SECURITY LOW. Matches BlueZ gatttool's approach.
+                if addr_type == 1 || addr_type == 2 {
+                    let local = SockaddrL2 {
+                        l2_family: AF_BLUETOOTH as libc::sa_family_t,
+                        l2_psm: 0,
+                        l2_bdaddr: [0u8; 6], // BDADDR_ANY
+                        l2_cid: cid.to_le(),  // Must match connect CID
+                        l2_bdaddr_type: 1,    // BDADDR_LE_PUBLIC (our adapter)
+                    };
+                    let ret = libc::bind(
+                        fd,
+                        &local as *const SockaddrL2 as *const libc::sockaddr,
+                        std::mem::size_of::<SockaddrL2>() as libc::socklen_t,
+                    );
+                    if ret < 0 {
+                        libc::close(fd);
+                        return Err(format!(
+                            "bind(LE, CID=0x{:04X}) failed: {}",
+                            cid,
+                            std::io::Error::last_os_error()
+                        ));
+                    }
+
+                    // SOL_BLUETOOTH=274, BT_SECURITY=4, BT_SECURITY_LOW=1
+                    let sec: [u8; 2] = [1, 0]; // level=LOW, key_size=0
+                    libc::setsockopt(
+                        fd,
+                        274, // SOL_BLUETOOTH
+                        4,   // BT_SECURITY
+                        sec.as_ptr() as *const libc::c_void,
+                        sec.len() as libc::socklen_t,
+                    );
+                }
+
                 let peer = SockaddrL2 {
                     l2_family: AF_BLUETOOTH as libc::sa_family_t,
                     l2_psm: psm.to_le(),
@@ -87,12 +123,42 @@ mod platform {
                     std::mem::size_of::<SockaddrL2>() as libc::socklen_t,
                 );
                 if ret < 0 {
-                    libc::close(fd);
-                    return Err(format!(
-                        "connect({}) failed: {}",
-                        addr,
-                        std::io::Error::last_os_error()
-                    ));
+                    let err = std::io::Error::last_os_error();
+                    if err.raw_os_error() == Some(libc::EINPROGRESS) {
+                        // LE connection in progress — poll for completion (5s)
+                        let mut pfd = libc::pollfd {
+                            fd,
+                            events: libc::POLLOUT,
+                            revents: 0,
+                        };
+                        let poll_ret = libc::poll(&mut pfd, 1, 5000);
+                        if poll_ret <= 0 {
+                            libc::close(fd);
+                            return Err(format!("connect({}) timed out", addr));
+                        }
+                        // Check SO_ERROR to see if connect succeeded
+                        let mut so_err: libc::c_int = 0;
+                        let mut so_len: libc::socklen_t =
+                            std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+                        libc::getsockopt(
+                            fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_ERROR,
+                            &mut so_err as *mut libc::c_int as *mut libc::c_void,
+                            &mut so_len,
+                        );
+                        if so_err != 0 {
+                            libc::close(fd);
+                            return Err(format!(
+                                "connect({}) failed: {}",
+                                addr,
+                                std::io::Error::from_raw_os_error(so_err)
+                            ));
+                        }
+                    } else {
+                        libc::close(fd);
+                        return Err(format!("connect({}) failed: {}", addr, err));
+                    }
                 }
 
                 Ok(Self { fd })

@@ -180,7 +180,7 @@ fn parse_le_adv_reports(data: &[u8]) -> Vec<BtDeviceObservation> {
         if offset + 9 > data.len() {
             break;
         }
-        let _event_type = data[offset];
+        let event_type = data[offset];
         let addr_type_byte = data[offset + 1];
         let addr_bytes = &data[offset + 2..offset + 8];
         let data_len = data[offset + 8] as usize;
@@ -223,6 +223,8 @@ fn parse_le_adv_reports(data: &[u8]) -> Vec<BtDeviceObservation> {
             attack_state: BtDeviceAttackState::Untouched,
             last_attack: None,
             last_attack_detail: None,
+            name_resolve_attempted: false,
+            connectable: event_type <= 0x01, // ADV_IND(0) or ADV_DIRECT_IND(1)
         });
     }
 
@@ -273,6 +275,8 @@ fn parse_inquiry_result(event_code: u8, data: &[u8]) -> Vec<BtDeviceObservation>
                 attack_state: BtDeviceAttackState::Untouched,
             last_attack: None,
             last_attack_detail: None,
+            name_resolve_attempted: false,
+            connectable: true, // Classic devices are always connectable
             });
         }
     } else if event_code == EVT_EXTENDED_INQUIRY_RESULT {
@@ -308,6 +312,8 @@ fn parse_inquiry_result(event_code: u8, data: &[u8]) -> Vec<BtDeviceObservation>
             attack_state: BtDeviceAttackState::Untouched,
             last_attack: None,
             last_attack_detail: None,
+            name_resolve_attempted: false,
+            connectable: true, // Classic devices are always connectable
         });
     }
 
@@ -478,6 +484,85 @@ pub fn hci_inquiry(hci: &HciSocket, inquiry_length: u8) -> Vec<BtDeviceObservati
 
     log::info!("bt_scan: Inquiry found {} devices", all_devices.len());
     all_devices
+}
+
+// ---------------------------------------------------------------------------
+// BLE Name Resolution via GATT
+// ---------------------------------------------------------------------------
+
+use super::l2cap_socket::L2capSocket;
+
+/// Resolve names for unnamed BLE devices by connecting and reading the
+/// GATT Device Name characteristic (UUID 0x2A00). Tries up to `max_per_epoch`
+/// devices, skipping any that have already been attempted.
+///
+/// Returns a Vec of (device_id, resolved_name) pairs.
+pub fn resolve_ble_names(
+    devices: &[(String, String, u8)], // (id, address, addr_type)
+    max_per_epoch: usize,
+) -> Vec<(String, String)> {
+    let mut resolved = Vec::new();
+    let mut tried = 0;
+
+    for (id, address, addr_type) in devices {
+        if tried >= max_per_epoch {
+            break;
+        }
+        tried += 1;
+
+        match read_gatt_device_name(address, *addr_type) {
+            Some(name) if !name.is_empty() => {
+                log::info!("bt_scan: resolved name for {address}: {name}");
+                resolved.push((id.clone(), name));
+            }
+            _ => {
+                log::info!("bt_scan: name resolve failed for {address}");
+            }
+        }
+    }
+
+    resolved
+}
+
+/// Connect to a BLE device and read GATT Device Name (0x2A00).
+///
+/// The kernel handles the LE connection via L2CAP connect (with proper
+/// bind CID + BT_SECURITY). Returns None on any failure.
+fn read_gatt_device_name(address: &str, addr_type: u8) -> Option<String> {
+    // L2CAP connect with CID=ATT — kernel creates LE connection
+    let sock = match L2capSocket::connect(address, addr_type, 0, 0x0004) {
+        Ok(s) => s,
+        Err(e) => {
+            log::info!("bt_scan: GATT connect to {address} failed: {e}");
+            return None;
+        }
+    };
+    log::info!("bt_scan: GATT connected to {address}");
+
+    // ATT Read By Type Request for Device Name (UUID 0x2A00)
+    let req: [u8; 7] = [0x08, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x2A];
+    sock.send(&req).ok()?;
+
+    // Read ATT response (2s timeout)
+    let mut buf = [0u8; 256];
+    let n = sock.recv(&mut buf, 2000).ok()?;
+    if n < 2 {
+        return None;
+    }
+
+    // ATT Read By Type Response: opcode 0x09, length, [handle(2) + value(N)]...
+    if buf[0] == 0x09 && n >= 4 {
+        let pair_len = buf[1] as usize;
+        if pair_len > 2 && n >= 2 + pair_len {
+            let name_bytes = &buf[4..2 + pair_len];
+            let name = String::from_utf8_lossy(name_bytes).trim().to_string();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+
+    None
 }
 
 // ---------------------------------------------------------------------------
