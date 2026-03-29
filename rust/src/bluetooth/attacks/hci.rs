@@ -235,6 +235,68 @@ mod platform {
             Ok(Self { fd: new_fd })
         }
 
+        /// Write an HCI command without reading the response.
+        /// Use for commands that return Command Status (0x0F) instead of
+        /// Command Complete, or when the response read would swallow
+        /// async events (e.g., advertising reports after LE scan enable).
+        pub fn write_command_raw(&self, cmd: &HciCommand) -> Result<(), String> {
+            let pkt = cmd.to_bytes();
+            let written = unsafe {
+                libc::write(self.fd, pkt.as_ptr() as *const libc::c_void, pkt.len())
+            };
+            if written < 0 {
+                return Err(format!(
+                    "HCI write_command_raw failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(())
+        }
+
+        /// Set socket filter to accept only HCI Event packets (0x04),
+        /// rejecting ACL/SCO data that would pollute scan collection.
+        pub fn set_event_filter(&self) -> Result<(), String> {
+            // struct hci_filter { u32 type_mask; u32 event_mask[2]; u16 opcode; }
+            // We want: type_mask bit 4 (HCI event pkt type 0x04),
+            // event_mask all bits set (accept all HCI events).
+            let mut filter = [0u8; 14];
+            // type_mask: set bit for HCI Event (packet indicator 0x04 → bit 4)
+            filter[0] = 0x10; // 1 << 4
+            // event_mask[0]: all events
+            filter[4] = 0xFF;
+            filter[5] = 0xFF;
+            filter[6] = 0xFF;
+            filter[7] = 0xFF;
+            // event_mask[1]: all events
+            filter[8] = 0xFF;
+            filter[9] = 0xFF;
+            filter[10] = 0xFF;
+            filter[11] = 0xFF;
+            // opcode: 0 = don't filter by opcode
+            filter[12] = 0;
+            filter[13] = 0;
+
+            const SOL_HCI: libc::c_int = 0;
+            const HCI_FILTER: libc::c_int = 2;
+
+            let ret = unsafe {
+                libc::setsockopt(
+                    self.fd,
+                    SOL_HCI,
+                    HCI_FILTER,
+                    filter.as_ptr() as *const libc::c_void,
+                    filter.len() as libc::socklen_t,
+                )
+            };
+            if ret < 0 {
+                return Err(format!(
+                    "setsockopt(HCI_FILTER) failed: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(())
+        }
+
         /// Wait for LE Meta subevent. Loops over 0x3E events, discarding
         /// non-matching subevents until the correct one arrives or timeout.
         pub fn wait_le_event(&self, subevent: u8, timeout_ms: i32) -> Result<Vec<u8>, String> {
@@ -317,6 +379,19 @@ mod platform {
         /// Clone the HCI socket for use in a background thread.
         pub fn try_clone(&self) -> Result<Self, String> {
             Self::open(self._dev_id)
+        }
+
+        pub fn write_command_raw(&self, cmd: &HciCommand) -> Result<(), String> {
+            log::info!(
+                "HciSocket stub: write_command_raw OGF=0x{:02X} OCF=0x{:04X}",
+                cmd.ogf, cmd.ocf
+            );
+            Ok(())
+        }
+
+        pub fn set_event_filter(&self) -> Result<(), String> {
+            log::info!("HciSocket stub: set_event_filter");
+            Ok(())
         }
     }
 }
@@ -401,5 +476,25 @@ mod tests {
         let hci = HciSocket::open(0).unwrap();
         let data = hci.wait_le_event(0x01, 2000).unwrap();
         assert!(!data.is_empty());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn test_write_command_raw_builds_packet() {
+        // Verify the method exists and accepts an HciCommand
+        let socket = HciSocket::open(0).unwrap();
+        let cmd = HciCommand::new(0x08, 0x000C, vec![0x01, 0x01]); // LE_Set_Scan_Enable
+        // On non-Linux stub, this is a no-op that succeeds
+        let result = socket.write_command_raw(&cmd);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn test_set_event_filter_exists() {
+        let socket = HciSocket::open(0).unwrap();
+        // On non-Linux stub, this is a no-op that succeeds
+        let result = socket.set_event_filter();
+        assert!(result.is_ok());
     }
 }
