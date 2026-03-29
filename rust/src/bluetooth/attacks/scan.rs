@@ -404,7 +404,7 @@ pub fn hci_inquiry(hci: &HciSocket, inquiry_length: u8) -> Vec<BtDeviceObservati
                     all_devices.extend(devices);
                 }
                 // Check for Inquiry Complete
-                if let Ok(_) = hci.wait_event(EVT_INQUIRY_COMPLETE, 100) {
+                if hci.wait_event(EVT_INQUIRY_COMPLETE, 100).is_ok() {
                     break;
                 }
             }
