@@ -226,6 +226,15 @@ mod platform {
             }
         }
 
+        /// Clone the HCI socket for use in a background thread.
+        pub fn try_clone(&self) -> Result<Self, String> {
+            let new_fd = unsafe { libc::dup(self.fd) };
+            if new_fd < 0 {
+                return Err(format!("dup() failed: {}", std::io::Error::last_os_error()));
+            }
+            Ok(Self { fd: new_fd })
+        }
+
         /// Wait for LE Meta subevent. Loops over 0x3E events, discarding
         /// non-matching subevents until the correct one arrives or timeout.
         pub fn wait_le_event(&self, subevent: u8, timeout_ms: i32) -> Result<Vec<u8>, String> {
@@ -303,6 +312,11 @@ mod platform {
             log::info!("HciSocket stub: wait_le_event(0x{:02X})", subevent);
             // Mock LE Connection Complete
             Ok(vec![0x00, 0x40, 0x00, 0x00, 0x01, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x18, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x00])
+        }
+
+        /// Clone the HCI socket for use in a background thread.
+        pub fn try_clone(&self) -> Result<Self, String> {
+            Self::open(self._dev_id)
         }
     }
 }

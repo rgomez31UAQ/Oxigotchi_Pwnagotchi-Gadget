@@ -1382,14 +1382,113 @@ impl Daemon {
             }
         }
 
-        // Process pending BT manual attack (no-op for now, placeholder for Task 5)
-        let bt_manual = {
+        // Check if a manual attack completed — clean up scheduler and prepare for result clearing
+        {
+            let s = self.shared_state.lock().unwrap();
+            if let Some(ref result) = s.bt_manual_result {
+                // Remove device from active attacks so auto-targeting can pick it up again
+                if let Some(ref addr) = result.address {
+                    self.bt_attack_scheduler.remove_active(addr);
+                }
+            }
+        }
+
+        // Process pending manual BT attack
+        let manual_attack = {
             let mut s = self.shared_state.lock().unwrap();
             s.pending_bt_manual_attack.take()
         };
-        if let Some(req) = bt_manual {
+        if let Some(req) = manual_attack {
             any_command = true;
-            info!("web: BT manual attack queued: {} on {:?}", req.attack, req.address);
+            let attack_type = match req.attack.as_str() {
+                "knob" => Some(bluetooth::attacks::BtAttackType::Knob),
+                "ble_adv_injection" => Some(bluetooth::attacks::BtAttackType::BleAdvInjection),
+                "vendor_cmd_unlock" => Some(bluetooth::attacks::BtAttackType::VendorCmdUnlock),
+                _ => None,
+            };
+
+            if let Some(attack) = attack_type {
+                if let Some(ref hci) = self.bt_hci_socket {
+                    let address = req.address.clone().unwrap_or_else(|| "local".to_string());
+                    info!("bt: manual attack {} on {}", req.attack, address);
+
+                    // Set face override for manual attack
+                    self.epoch_loop.personality.set_transition_override(
+                        crate::personality::Face::Raging,
+                        3,
+                    );
+
+                    // Mark device active in scheduler to prevent auto-targeting collision
+                    if let Some(ref addr) = req.address {
+                        self.bt_attack_scheduler.mark_active(addr, attack);
+                    }
+
+                    // Spawn background thread for blocking attack
+                    let hci_cloned = hci.try_clone();
+                    let shared = Arc::clone(&self.shared_state);
+                    let attack_addr = req.address.clone();
+                    let attack_name = req.attack.clone();
+                    std::thread::spawn(move || {
+                        let result = match hci_cloned {
+                            Ok(ref h) => {
+                                let addr = attack_addr.as_deref().unwrap_or("local");
+                                match attack {
+                                    bluetooth::attacks::BtAttackType::Knob => {
+                                        bluetooth::attacks::knob::run(h, addr)
+                                    }
+                                    bluetooth::attacks::BtAttackType::BleAdvInjection => {
+                                        bluetooth::attacks::ble_adv::run(h, addr)
+                                    }
+                                    bluetooth::attacks::BtAttackType::VendorCmdUnlock => {
+                                        bluetooth::attacks::vendor::run_diagnostics(h, addr)
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("bt: failed to clone HCI socket: {}", e);
+                                bluetooth::attacks::BtAttackResult {
+                                    attack_type: attack,
+                                    target_address: attack_addr
+                                        .clone()
+                                        .unwrap_or_else(|| "local".into()),
+                                    target_name: None,
+                                    success: false,
+                                    capture: None,
+                                    error: Some(format!("HCI socket clone failed: {}", e)),
+                                    timestamp: std::time::Instant::now(),
+                                }
+                            }
+                        };
+
+                        // Store result for WebSocket delivery
+                        let mut s = shared.lock().unwrap();
+                        s.bt_manual_result = Some(web::BtManualResult {
+                            address: if result.target_address == "local" {
+                                None
+                            } else {
+                                Some(result.target_address.clone())
+                            },
+                            attack: attack_name,
+                            success: result.success,
+                            message: if result.success {
+                                "Attack succeeded".into()
+                            } else {
+                                result.error.unwrap_or_else(|| "Unknown error".into())
+                            },
+                        });
+                    });
+                } else {
+                    // Not in BT mode — store error result
+                    let mut s = self.shared_state.lock().unwrap();
+                    s.bt_manual_result = Some(web::BtManualResult {
+                        address: req.address,
+                        attack: req.attack,
+                        success: false,
+                        message: "Not in BT mode — no HCI socket".into(),
+                    });
+                }
+            }
         }
 
         // Process BT scan request — spawn in background thread to avoid blocking
@@ -2447,6 +2546,9 @@ impl Daemon {
         s.wpasec_api_key = self.wpasec_config.api_key.clone();
         s.discord_webhook_url = self.discord_webhook_url.clone();
         s.discord_enabled = self.discord_enabled;
+
+        // Clear manual attack result after it's been included in the snapshot
+        s.bt_manual_result = None;
     }
 
     /// Check for pending display settings changes and apply immediately.
