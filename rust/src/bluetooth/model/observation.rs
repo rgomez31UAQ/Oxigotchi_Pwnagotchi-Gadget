@@ -65,6 +65,12 @@ pub struct BtDeviceObservation {
     pub ts: DateTime<Utc>,
     pub seen_count: u32,
     pub attack_state: BtDeviceAttackState,
+    /// Which attack was last attempted (e.g. "SmpDowngrade", "Knob").
+    #[serde(default)]
+    pub last_attack: Option<String>,
+    /// Short result detail (e.g. "Connection timeout", "Key captured").
+    #[serde(default)]
+    pub last_attack_detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

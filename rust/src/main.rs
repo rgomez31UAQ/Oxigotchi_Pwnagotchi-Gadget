@@ -917,7 +917,7 @@ impl Daemon {
                     // Store capture if present
                     self.bt_capture_manager.store(&result);
 
-                    // Update device state based on result
+                    // Update device state and attack detail based on result
                     if let Some(dev) = self.bt_discovery.get_device_mut(&target.device_id) {
                         dev.attack_state = if result.capture.is_some() {
                             bluetooth::model::observation::BtDeviceAttackState::Captured
@@ -925,6 +925,26 @@ impl Daemon {
                             bluetooth::model::observation::BtDeviceAttackState::Targeted
                         } else {
                             bluetooth::model::observation::BtDeviceAttackState::Failed
+                        };
+                        dev.last_attack = Some(format!("{:?}", target.attack));
+                        dev.last_attack_detail = if result.capture.is_some() {
+                            Some("Data captured".to_string())
+                        } else if result.success {
+                            Some("Completed".to_string())
+                        } else if let Some(ref e) = result.error {
+                            // Shorten common error messages for display
+                            let short = if e.contains("timeout") {
+                                "Connection timeout"
+                            } else if e.contains("rejected") || e.contains("refused") {
+                                "Rejected by device"
+                            } else if e.contains("not supported") {
+                                "Not supported"
+                            } else {
+                                e.as_str()
+                            };
+                            Some(short.to_string())
+                        } else {
+                            Some("No response".to_string())
                         };
                     }
 
@@ -2283,6 +2303,8 @@ impl Daemon {
                             ts: chrono::Utc::now(),
                             seen_count: 1,
                             attack_state: bluetooth::model::observation::BtDeviceAttackState::Untouched,
+                            last_attack: None,
+                            last_attack_detail: None,
                         },
                     ),
                 );
@@ -2429,6 +2451,8 @@ impl Daemon {
                 attack_state: format!("{:?}", d.attack_state),
                 seen_count: d.seen_count,
                 vendor: d.manufacturer.clone(),
+                last_attack: d.last_attack.clone(),
+                last_attack_detail: d.last_attack_detail.clone(),
             }
         }).collect();
         s.bt_patchram_state = self.patchram.state.as_str().to_string();

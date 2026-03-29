@@ -124,6 +124,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 .bt-dev-transport{font-size:9px;padding:1px 5px;border-radius:4px;font-weight:600;letter-spacing:0.5px}
 .bt-dev-transport.ble{color:#00d4aa;background:#00d4aa15;border:1px solid #00d4aa33}
 .bt-dev-transport.classic{color:#5dade2;background:#5dade215;border:1px solid #5dade233}
+.bt-dev-atk-detail{color:#e9456099;font-size:9px;font-style:italic}
 .bt-dev-rssi{font-size:10px;color:#555;min-width:42px;text-align:right}
 .bt-dev-state{font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;white-space:nowrap}
 .bt-dev-state.st-untouched{color:#555;background:#55555515}
@@ -1582,6 +1583,11 @@ function updateBtDevicesFromWs(btDevices) {
         var meta = '';
         if (d.vendor) meta += '<span class="bt-dev-vendor">' + esc(d.vendor) + '</span>';
         meta += '<span class="bt-dev-addr">' + esc(d.address) + '</span>';
+        if (d.last_attack && st !== 'untouched') {
+            var atkShort = d.last_attack.replace(/([A-Z])/g, ' $1').trim();
+            var detail = d.last_attack_detail ? ' \u2014 ' + esc(d.last_attack_detail) : '';
+            meta += '<span class="bt-dev-atk-detail">' + esc(atkShort) + detail + '</span>';
+        }
 
         var tCls = (d.transport || '').toLowerCase() === 'classic' ? 'classic' : 'ble';
         var transport = '<span class="bt-dev-transport ' + tCls + '">' + esc(d.transport || 'BLE') + '</span>';
@@ -1591,7 +1597,15 @@ function updateBtDevicesFromWs(btDevices) {
         var st = (d.attack_state || 'untouched').toLowerCase();
         var stLabel = d.attack_state || 'Idle';
         if (st === 'untouched') stLabel = 'Idle';
-        var state = '<span class="bt-dev-state st-' + st + '">' + esc(stLabel) + '</span>';
+        // Build tooltip with attack detail
+        var tooltip = '';
+        if (d.last_attack) {
+            var atkName = d.last_attack.replace(/([A-Z])/g, ' $1').trim();
+            tooltip = atkName;
+            if (d.last_attack_detail) tooltip += ': ' + d.last_attack_detail;
+        }
+        var titleAttr = tooltip ? ' title="' + esc(tooltip) + '"' : '';
+        var state = '<span class="bt-dev-state st-' + st + '"' + titleAttr + '>' + esc(stLabel) + '</span>';
 
         var attacking = st === 'attacking';
         var pending = !!window._btManualPending;
