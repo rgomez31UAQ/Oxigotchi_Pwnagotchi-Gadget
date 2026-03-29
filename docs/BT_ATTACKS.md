@@ -2,7 +2,7 @@
 
 **Status: Experimental**
 
-BT offensive mode is functional but limited by the BCM43436B0 hardware on the Pi Zero 2W. 5 of 8 attack types work. Manual device targeting is not yet implemented. Unlike WiFi (where deauth frames are unauthenticated and trivially spoofed), Bluetooth connections are authenticated at the link layer — there is no equivalent of WiFi deauth in BT.
+BT offensive mode is functional but limited by the BCM43436B0 hardware on the Pi Zero 2W. 6 of 8 attack types work. Manual device targeting is not yet implemented. Unlike WiFi (where deauth frames are unauthenticated and trivially spoofed), Bluetooth connections are authenticated at the link layer — there is no equivalent of WiFi deauth in BT.
 
 ## Hardware Constraints
 
@@ -14,7 +14,7 @@ The Pi Zero 2W uses a BCM43436B0 (also identified as BCM43430B0) combo chip shar
 
 ## Attack Status
 
-### Working (5/8)
+### Working (6/8)
 
 | Attack | Type | Rage Level | What It Does |
 |--------|------|-----------|--------------|
@@ -23,12 +23,7 @@ The Pi Zero 2W uses a BCM43436B0 (also identified as BCM43430B0) combo chip shar
 | **L2CAP Fuzz** | Classic | Medium+ | Opens L2CAP signaling channel to target, sends 4 malformed packets (oversized echo, invalid info type, reserved PSM, bad MTU). Detects crashes and captures triggering payload. |
 | **ATT/GATT Fuzz** | BLE | Medium+ | Opens ATT fixed channel, sends 5 malformed PDUs (invalid handle ranges, empty writes, oversized offsets). Detects crashes and captures trigger. |
 | **Vendor Cmd Unlock** | Local | Low+ | Reads the LOCAL controller's firmware state — sends READ_LOCAL_VERSION, READ_VERBOSE_CONFIG, and reads patchram base (0x211700). Diagnostics tool, not an attack on external devices. Requires attack patchram loaded. |
-
-### Broken — Firmware RE Incomplete (1/8)
-
-| Attack | Type | Problem |
-|--------|------|---------|
-| **KNOB** | Classic | Key Negotiation of Bluetooth attack. Should patch the LMP key-size handler to force `key_size=1`, making encryption trivially crackable. Currently broken: the LMP handler address in firmware has not been reverse-engineered, so `discover_lmp_key_size_addr()` returns `None`. The patch payload bytes are also TBD. Requires attack patchram. |
+| **KNOB** | Classic | Low+ | Key Negotiation of Bluetooth attack. Patches the BCM43430B0 firmware's key-size validation global at RAM 0x205F7C via BCM vendor Write_RAM (0xFC4C) to force `key_size=1`, then initiates a BR/EDR connection. The target negotiates minimum encryption key entropy via LMP, making the session key trivially crackable. Original global value is always restored after the attack completes. Also scans ROM for the LMP dispatch table as a diagnostic fallback. |
 
 ### Hardware-Impossible on BCM43436B0 (2/8)
 
@@ -43,11 +38,11 @@ Three discrete levels filter which attacks are permitted:
 
 | Level | Permitted | Description |
 |-------|-----------|-------------|
-| **Low** | SMP Downgrade, KNOB*, Vendor Cmd Unlock | Passive diagnostics and self-targeted. Minimal risk. |
+| **Low** | SMP Downgrade, KNOB, Vendor Cmd Unlock | Passive diagnostics, key-size downgrade, and self-targeted. Minimal risk. |
 | **Medium** | All Low + BLE Adv Injection, L2CAP Fuzz, ATT/GATT Fuzz | Active attacks on external devices. |
 | **High** | All Medium + SMP MITM*, BLE Conn Hijack* | Full aggression including MITM and hijack. |
 
-*These attacks are toggled on at the rage level but fail due to hardware/RE limitations (see above).
+*These attacks are toggled on at the rage level but fail due to hardware limitations (see above).
 
 ## Target Selection
 
@@ -75,6 +70,7 @@ The WiFi attack surface is fundamentally larger because the 802.11 standard was 
 ## What BT Mode Is Good For
 
 - **Pairing key capture** (SMP Downgrade) — grab keys from devices that accept new pairing
+- **Encryption downgrade** (KNOB) — force minimum key size on BR/EDR connections, making encryption crackable
 - **Device impersonation** (BLE Adv Injection) — clone a device's address and broadcast as it
 - **Vulnerability discovery** (L2CAP/ATT Fuzz) — find crashable devices
 - **Firmware diagnostics** (Vendor Cmd Unlock) — inspect the local BT chip state
@@ -82,7 +78,7 @@ The WiFi attack surface is fundamentally larger because the 802.11 standard was 
 
 ## Future Work
 
-- **KNOB**: Requires BCM43436B0 BT firmware reverse engineering to locate the LMP key-size handler and write the patch payload
 - **Manual targeting**: Wire `pending_bt_target` through to `TargetSelector` so the dashboard "Target" button actually works
+- **KNOB LMP dispatch patch**: The current KNOB approach patches a RAM global. A more targeted approach would patch the LMP dispatch table entry for opcode 0x10 directly — ROM scan infrastructure is in place but the dispatch table hook is not yet implemented
 - **SMP MITM**: Would need an external USB BT adapter (CSR8510 or similar) as a second radio
 - **BLE Conn Hijack**: No path forward on BCM43436B0 — patchram space is a hard physical limit
