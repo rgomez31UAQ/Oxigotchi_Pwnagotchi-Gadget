@@ -726,7 +726,7 @@ function applyModeVisibility(rawMode) {
     _currentMode = mode;
     document.querySelectorAll('[data-modes]').forEach(function(el) {
         var modes = el.getAttribute('data-modes').split(' ');
-        el.style.display = modes.indexOf(mode) >= 0 ? '' : 'none';
+        el.style.display = modes.indexOf(mode) >= 0 ? 'block' : 'none';
     });
     updateSectionLabelVisibility();
 }

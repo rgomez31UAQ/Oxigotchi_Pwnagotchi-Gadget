@@ -3360,7 +3360,9 @@ mod tests {
         let s = state.lock().unwrap();
         assert!(!s.attack_deauth);
         assert!(s.attack_csa);
-        assert!(s.pending_attack_toggle.is_some());
+        let toggle = s.pending_attack_toggle.as_ref().expect("toggle should be queued");
+        assert_eq!(toggle.deauth, Some(false));
+        assert_eq!(toggle.csa, Some(true));
     }
 
     #[tokio::test]
@@ -3768,7 +3770,8 @@ mod tests {
         let (router, state) = test_router();
         let (status, body) = post_json(&router, "/api/channels", r#"{"autohunt":true}"#).await;
         assert_eq!(status, 200);
-        assert!(body.contains("\"ok\":true"));
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
         let s = state.lock().unwrap();
         let cfg = s
             .pending_channel_config
@@ -3863,7 +3866,8 @@ mod tests {
         )
         .await;
         assert_eq!(status, 200);
-        assert!(body.contains("\"ok\":true"));
+        let resp: ActionResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.ok);
     }
 
     #[tokio::test]
@@ -4850,5 +4854,285 @@ mod tests {
         assert_eq!(snapshot.bt_captures.total, 6, "total should be 3+1+0+2=6");
 
         assert_eq!(snapshot.bt_patchram.state, "attack");
+    }
+
+    // =========================================================================
+    // Malformed JSON rejection tests — every POST handler with Json<T> extractor
+    // =========================================================================
+
+    const MALFORMED_JSON: &str = r#"{"broken":tru"#;
+
+    #[tokio::test]
+    async fn test_mode_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/mode", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_rate_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/rate", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_attacks_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/attacks", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_rage_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/rage", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_whitelist_add_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/whitelist/add", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_whitelist_remove_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/whitelist/remove", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_wifi_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/wifi", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_wpasec_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/wpasec", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_discord_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/discord", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_settings_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/settings", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_bluetooth_toggle_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/bluetooth", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_capture_all_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/capture-all", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_bt_target_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/bt/attacks/target", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_radio_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/radio", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_plugins_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/plugins", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_bt_pair_rejects_malformed_json() {
+        let (router, _) = test_router();
+        let (status, _) = post_json(&router, "/api/bluetooth/pair", MALFORMED_JSON).await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+    }
+
+    // =========================================================================
+    // Wrong content-type rejection tests — text/plain should be rejected
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_mode_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/mode", "text/plain", r#"{"mode":"BT"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_rate_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/rate", "text/plain", r#"{"rate":2}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_attacks_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/attacks", "text/plain", r#"{"deauth":false}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_rage_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/rage", "text/plain", r#"{"level":3}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_channels_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/channels", "text/plain", r#"{"autohunt":true}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_whitelist_add_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/whitelist/add", "text/plain",
+            r#"{"value":"AA:BB:CC:DD:EE:FF","entry_type":"mac"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_whitelist_remove_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/whitelist/remove", "text/plain",
+            r#"{"value":"AA:BB:CC:DD:EE:FF"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_wifi_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/wifi", "text/plain", r#"{"skip_captured":true}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_wpasec_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/wpasec", "text/plain", r#"{"api_key":"test"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_discord_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/discord", "text/plain",
+            r#"{"webhook_url":"http://x","enabled":true}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_settings_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/settings", "text/plain", r#"{"name":"test"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_bluetooth_toggle_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/bluetooth", "text/plain", r#"{"visible":true}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_capture_all_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/capture-all", "text/plain", r#"{"enabled":true}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_bt_target_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/bt/attacks/target", "text/plain",
+            r#"{"address":"AA:BB:CC:DD:EE:FF"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_radio_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/radio", "text/plain", r#"{"request":"WIFI"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_plugins_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/plugins", "text/plain", r#"[]"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+    }
+
+    #[tokio::test]
+    async fn test_bt_pair_rejects_wrong_content_type() {
+        let (router, _) = test_router();
+        let (status, _) = post_with_content_type(
+            &router, "/api/bluetooth/pair", "text/plain",
+            r#"{"mac":"AA:BB:CC:DD:EE:FF"}"#,
+        ).await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
     }
 }

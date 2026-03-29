@@ -713,7 +713,7 @@ impl Personality {
         // Clear RF-based face override each epoch — only re-set if conditions still hold.
         // Without this, a transient condition (e.g., 20+ BSSIDs once) sticks forever.
         match self.override_face {
-            Some(Face::Raging | Face::Excited | Face::Lonely) => {
+            Some(Face::Raging | Face::Lonely) => {
                 self.override_face = None;
             }
             _ => {} // preserve non-RF overrides (battery, crash, etc.)
@@ -734,9 +734,6 @@ impl Personality {
             self.mood.adjust(mood_deltas::RF_PROBE_FLOOD);
         }
 
-        if rf.unique_bssids > rf::RICH_BSSID_COUNT {
-            self.override_face = Some(Face::Excited);
-        }
 
         // Lonely: APs exist but nobody's talking
         if rf.beacon_rate > 0.0 && rf.data_rate == 0.0 && rf.probe_rate == 0.0 && rf.total_frames > 0 {
@@ -2197,7 +2194,8 @@ mod tests {
     }
 
     #[test]
-    fn test_rf_rich_environment_face() {
+    fn test_rf_rich_environment_no_override() {
+        // Rich BSSID count should NOT override face — let mood drive it
         let mut p = Personality::new();
         let rf = crate::qpu::rf::RfEnvironment {
             unique_bssids: 25,
@@ -2205,32 +2203,7 @@ mod tests {
             ..Default::default()
         };
         p.apply_rf_environment(&rf);
-        assert_eq!(p.override_face, Some(Face::Excited));
-    }
-
-    #[test]
-    fn test_rf_override_clears_when_condition_gone() {
-        let mut p = Personality::new();
-        // First epoch: many BSSIDs → Excited override
-        let rich_rf = crate::qpu::rf::RfEnvironment {
-            unique_bssids: 25,
-            total_frames: 200,
-            ..Default::default()
-        };
-        p.apply_rf_environment(&rich_rf);
-        assert_eq!(p.override_face, Some(Face::Excited));
-
-        // Next epoch: quiet RF → override should clear
-        let quiet_rf = crate::qpu::rf::RfEnvironment {
-            unique_bssids: 5,
-            total_frames: 10,
-            ..Default::default()
-        };
-        p.apply_rf_environment(&quiet_rf);
-        assert_eq!(
-            p.override_face, None,
-            "RF override should clear when condition no longer holds"
-        );
+        assert_eq!(p.override_face, None, "rich BSSID should not set face override");
     }
 
     #[test]
@@ -2373,7 +2346,7 @@ mod tests {
 
     #[test]
     fn test_rf_override_cycle_all_faces() {
-        let rf_faces = [Face::Raging, Face::Excited, Face::Lonely];
+        let rf_faces = [Face::Raging, Face::Lonely];
         for face in &rf_faces {
             let mut p = Personality::new();
             p.override_face = Some(*face);
