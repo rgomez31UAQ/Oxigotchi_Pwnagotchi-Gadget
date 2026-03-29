@@ -820,12 +820,6 @@ pub struct BtRageLevelRequest {
     pub level: String,
 }
 
-/// BT target request for POST /api/bt/attacks/target.
-#[derive(Debug, Clone, Deserialize)]
-pub struct BtTargetRequest {
-    pub address: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BtManualAttackRequest {
     pub address: Option<String>,
@@ -1215,7 +1209,7 @@ pub const API_CAPTURE_ALL: &str = "/api/capture-all";
 pub const API_BT_ATTACKS: &str = "/api/bt/attacks";
 pub const API_BT_ATTACKS_TOGGLE: &str = "/api/bt/attacks/toggle";
 pub const API_BT_ATTACKS_RAGE: &str = "/api/bt/attacks/rage";
-pub const API_BT_ATTACKS_TARGET: &str = "/api/bt/attacks/target";
+pub const API_BT_ATTACKS_MANUAL: &str = "/api/bt/attacks/manual";
 pub const API_BT_DEVICES: &str = "/api/bt/devices";
 pub const API_BT_CAPTURES: &str = "/api/bt/captures";
 pub const API_BT_PATCHRAM: &str = "/api/bt/patchram";
@@ -2324,19 +2318,87 @@ async fn bt_attacks_rage_handler(
     })
 }
 
-/// POST /api/bt/attacks/target -> set BT attack target (legacy stub, replaced by manual attack in Task 5)
-async fn bt_attacks_target_handler(
+/// Returns true if the given string is a valid Bluetooth address (XX:XX:XX:XX:XX:XX, hex digits).
+fn is_valid_bt_address(addr: &str) -> bool {
+    let parts: Vec<&str> = addr.split(':').collect();
+    parts.len() == 6 && parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// POST /api/bt/attacks/manual -> queue a manual BT attack
+async fn bt_manual_attack_handler(
     State(state): State<SharedState>,
-    Json(body): Json<BtTargetRequest>,
+    Json(body): Json<BtManualAttackRequest>,
 ) -> Json<ActionResponse> {
+    // 1. Validate attack name is manual-capable
+    let attack_type = match body.attack.as_str() {
+        "knob" => crate::bluetooth::attacks::BtAttackType::Knob,
+        "ble_adv_injection" => crate::bluetooth::attacks::BtAttackType::BleAdvInjection,
+        "vendor_cmd_unlock" => crate::bluetooth::attacks::BtAttackType::VendorCmdUnlock,
+        _ => {
+            return Json(ActionResponse {
+                ok: false,
+                message: format!("Unknown or non-manual attack: {}", body.attack),
+            });
+        }
+    };
+
+    // 2. Validate address if required (not needed for vendor_cmd_unlock)
+    if attack_type != crate::bluetooth::attacks::BtAttackType::VendorCmdUnlock {
+        match &body.address {
+            Some(addr) if is_valid_bt_address(addr) => {}
+            Some(_) => {
+                return Json(ActionResponse {
+                    ok: false,
+                    message: "Invalid BT address".into(),
+                });
+            }
+            None => {
+                return Json(ActionResponse {
+                    ok: false,
+                    message: "Address required for this attack".into(),
+                });
+            }
+        }
+    }
+
     let mut s = state.lock().unwrap();
-    s.pending_bt_manual_attack = Some(BtManualAttackRequest {
-        address: Some(body.address.clone()),
-        attack: "auto".to_string(),
-    });
+
+    // 3. Reject if another manual attack is pending
+    if s.pending_bt_manual_attack.is_some() {
+        return Json(ActionResponse {
+            ok: false,
+            message: "Manual attack already pending".into(),
+        });
+    }
+
+    // 4. Check rage level
+    let current_rage = crate::bluetooth::attacks::BtRageLevel::from_str(&s.bt_rage_level)
+        .unwrap_or(crate::bluetooth::attacks::BtRageLevel::Low);
+    if attack_type.min_rage_level() > current_rage {
+        return Json(ActionResponse {
+            ok: false,
+            message: format!(
+                "{} requires rage level {:?} or higher",
+                body.attack,
+                attack_type.min_rage_level()
+            ),
+        });
+    }
+
+    // 5. Optimistic update — mark device as Attacking if address provided
+    if let Some(ref addr) = body.address {
+        for dev in &mut s.bt_device_list {
+            if dev.address == *addr {
+                dev.attack_state = "Attacking".to_string();
+                break;
+            }
+        }
+    }
+
+    s.pending_bt_manual_attack = Some(body);
     Json(ActionResponse {
         ok: true,
-        message: format!("BT target set to {}", body.address),
+        message: "Manual attack queued".into(),
     })
 }
 
@@ -2490,7 +2552,7 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
         .route(API_BT_ATTACKS, get(bt_attacks_get_handler))
         .route(API_BT_ATTACKS_TOGGLE, post(bt_attacks_toggle_handler))
         .route(API_BT_ATTACKS_RAGE, post(bt_attacks_rage_handler))
-        .route(API_BT_ATTACKS_TARGET, post(bt_attacks_target_handler))
+        .route(API_BT_ATTACKS_MANUAL, post(bt_manual_attack_handler))
         .route(API_BT_DEVICES, get(bt_devices_handler))
         .route(API_BT_CAPTURES, get(bt_captures_handler))
         .route(API_BT_PATCHRAM, get(bt_patchram_handler))
@@ -4210,5 +4272,77 @@ mod tests {
         assert_eq!(resp.ap_ttl_secs, 180);
         assert!(!resp.display_invert);
         assert_eq!(resp.display_rotation, 0);
+    }
+
+    // === Manual BT attack endpoint tests ===
+
+    #[tokio::test]
+    async fn test_bt_manual_attack_rejects_invalid_address() {
+        let state = test_state();
+        let body = BtManualAttackRequest {
+            address: Some("invalid".into()),
+            attack: "knob".into(),
+        };
+        let resp = bt_manual_attack_handler(State(state), Json(body)).await;
+        assert!(!resp.ok);
+    }
+
+    #[tokio::test]
+    async fn test_bt_manual_attack_accepts_valid_request() {
+        let state = test_state();
+        {
+            let mut s = state.lock().unwrap();
+            s.bt_rage_level = "Medium".into();
+        }
+        let body = BtManualAttackRequest {
+            address: Some("AA:BB:CC:DD:EE:FF".into()),
+            attack: "knob".into(),
+        };
+        let resp = bt_manual_attack_handler(State(state.clone()), Json(body)).await;
+        assert!(resp.ok);
+        let s = state.lock().unwrap();
+        assert!(s.pending_bt_manual_attack.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_bt_manual_attack_rejects_non_manual() {
+        let state = test_state();
+        let body = BtManualAttackRequest {
+            address: Some("AA:BB:CC:DD:EE:FF".into()),
+            attack: "smp_downgrade".into(),
+        };
+        let resp = bt_manual_attack_handler(State(state), Json(body)).await;
+        assert!(!resp.ok);
+    }
+
+    #[tokio::test]
+    async fn test_bt_manual_attack_rejects_when_pending() {
+        let state = test_state();
+        {
+            let mut s = state.lock().unwrap();
+            s.bt_rage_level = "Medium".into();
+            s.pending_bt_manual_attack = Some(BtManualAttackRequest {
+                address: Some("11:22:33:44:55:66".into()),
+                attack: "knob".into(),
+            });
+        }
+        let body = BtManualAttackRequest {
+            address: Some("AA:BB:CC:DD:EE:FF".into()),
+            attack: "knob".into(),
+        };
+        let resp = bt_manual_attack_handler(State(state), Json(body)).await;
+        assert!(!resp.ok);
+        assert!(resp.message.contains("already pending"));
+    }
+
+    #[tokio::test]
+    async fn test_bt_manual_vendor_no_address_required() {
+        let state = test_state();
+        let body = BtManualAttackRequest {
+            address: None,
+            attack: "vendor_cmd_unlock".into(),
+        };
+        let resp = bt_manual_attack_handler(State(state), Json(body)).await;
+        assert!(resp.ok);
     }
 }
