@@ -95,6 +95,9 @@ input:checked+.slider:before{transform:translateX(22px)}
 .logs-pre{background:#0a1628;color:#aaa;font-size:11px;font-family:'SF Mono','Fira Code',monospace;padding:10px;border-radius:6px;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
 .collapse-btn{background:none;border:1px solid #0f3460;color:#888;border-radius:6px;padding:6px 12px;font-size:12px;font-family:inherit;cursor:pointer;transition:.2s}
 .collapse-btn:hover{border-color:#00d4aa;color:#00d4aa}
+.bt-rage-btn{flex:1;padding:12px 0;border:2px solid #0f3460;border-radius:10px;background:transparent;color:#e0e0e0;font-size:14px;font-weight:bold;font-family:inherit;cursor:pointer;text-align:center;transition:.2s}
+.bt-rage-btn.active{background:#0f3460;color:#00d4aa;border-color:#00d4aa}
+.bt-rage-btn:active{transform:scale(0.95)}
 .bt-action-btn{background:#1a1a2e;color:#00d4aa;border:1px solid #00d4aa;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;margin:1px}
 .bt-action-btn:hover:not(:disabled){background:#00d4aa;color:#0f0f23}
 .bt-action-btn:disabled{opacity:0.3;cursor:not-allowed}
@@ -341,7 +344,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <th>Type</th>
 <th>State</th>
 <th class="bt-hide-mobile">Seen</th>
-<th></th>
+<th>Actions</th>
 </tr></thead>
 <tbody id="bt-device-tbody"><tr><td colspan="7" style="color:#555">No devices yet</td></tr></tbody>
 </table>
@@ -499,26 +502,6 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <button class="action-btn btn-restart" id="bt-scan-btn" onclick="btScan()">Scan for Devices</button>
 </div>
 <div id="bt-scan-results"></div>
-</div>
-</div>
-
-<!-- 14. BT Offensive — Nearby Devices -->
-<div class="card" id="card-bt-devices">
-<div class="card-title">BT Devices</div>
-<div class="sub">Bluetooth devices detected by offensive scanning.</div>
-<div class="ap-scroll">
-<table class="ap-table" id="bt-device-table">
-<thead><tr>
-<th>Name</th>
-<th>Address</th>
-<th>RSSI</th>
-<th>Type</th>
-<th>State</th>
-<th class="bt-hide-mobile">Seen</th>
-<th>Actions</th>
-</tr></thead>
-<tbody id="bt-device-tbody"><tr><td colspan="7" style="color:#555">No devices yet</td></tr></tbody>
-</table>
 </div>
 </div>
 
@@ -2019,8 +2002,14 @@ function setBtRage(level) {
 }
 
 function updateBtAttackConstraintState(level) {
-    // No attacks currently require High rage level (hardware-impossible ones removed).
-    // Kept as a hook for future rage-level-gated attacks.
+    var isLow = (level === 'Low');
+    // Medium+ attacks: disabled at Low rage
+    ['smp_downgrade','knob','ble_adv_injection','l2cap_fuzz','att_gatt_fuzz'].forEach(function(key) {
+        var row = document.getElementById('bt-row-' + key);
+        var input = document.getElementById('bt-atk-' + key);
+        if (row) row.classList.toggle('bt-row-disabled', isLow);
+        if (input) input.disabled = isLow;
+    });
 }
 
 function updateBtRageFromWs(btAttacks) {

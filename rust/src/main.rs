@@ -114,6 +114,9 @@ struct Daemon {
     gpu_optimizer: gpu::optimize::snapshot::SnapshotOptimizer,
     qpu_engine: Option<qpu::engine::QpuEngine>,
     mode: OperatingMode,
+    /// Set by load_runtime_state() when persisted mode != RAGE.
+    /// boot() checks this to skip WiFi and queue a BT transition.
+    boot_target_mode: Option<String>,
     shared_state: web::SharedState,
     ws_tx: tokio::sync::broadcast::Sender<String>,
     prev_cpu_sample: Option<personality::CpuSample>,
@@ -214,6 +217,7 @@ impl Daemon {
             gpu_optimizer: gpu::optimize::snapshot::SnapshotOptimizer::new(),
             qpu_engine: None, // initialized in boot()
             mode: OperatingMode::Rage,
+            boot_target_mode: None,
             shared_state,
             ws_tx,
             prev_cpu_sample: None,
@@ -299,16 +303,27 @@ impl Daemon {
             }
         }
 
-        // Start WiFi monitor mode first — RAGE is the default mode.
-        // BT only connects when user switches to SAFE mode via button.
-        // BCM43436B0 shares UART: whichever starts first gets it.
-        match self.wifi.start_monitor() {
-            Ok(()) => info!("WiFi monitor mode started"),
-            Err(e) => {
-                log::error!("Failed to start WiFi monitor: {e}");
-                self.epoch_loop
-                    .personality
-                    .set_override(personality::Face::WifiDown);
+        // Load persisted runtime state early — mode must be known before
+        // deciding whether to start WiFi or BT.
+        self.load_runtime_state();
+
+        // Start WiFi monitor mode — but only if booting into a WiFi mode.
+        // If the persisted mode is BT, skip WiFi and queue a mode switch
+        // so the first epoch transitions the radio to BT.
+        if let Some(ref target) = self.boot_target_mode {
+            info!("persisted mode is {target} — skipping WiFi, will transition in first epoch");
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_mode_switch = Some(target.clone());
+            drop(s);
+        } else {
+            match self.wifi.start_monitor() {
+                Ok(()) => info!("WiFi monitor mode started"),
+                Err(e) => {
+                    log::error!("Failed to start WiFi monitor: {e}");
+                    self.epoch_loop
+                        .personality
+                        .set_override(personality::Face::WifiDown);
+                }
             }
         }
 
@@ -364,9 +379,6 @@ impl Daemon {
             info!("usb0 not present, skipping network setup");
         }
 
-        // Load persisted runtime state BEFORE starting AO (whitelist, attack toggles, etc.)
-        self.load_runtime_state();
-
         // Point AO output to tmpfs (verified mode) or SD directly (collect-all mode).
         if self.capture_all {
             self.ao.config.output_dir = CAPTURE_DIR.to_string();
@@ -388,41 +400,46 @@ impl Daemon {
             info!("AO whitelist: {:?}", self.ao.config.whitelist);
         }
 
-        // Start AngryOxide subprocess
-        match self.ao.start() {
-            Ok(()) => info!("AO started: PID {}", self.ao.pid),
-            Err(e) => {
-                log::error!("AO failed to start: {e}");
-                self.epoch_loop
-                    .personality
-                    .set_override(personality::Face::AoCrashed);
-            }
-        }
-
-        // QPU initialization
-        if self.config.qpu.enabled {
-            match qpu::engine::QpuEngine::init(self.config.qpu.to_engine_config()) {
-                Ok(mut engine) => {
-                    info!(
-                        "QPU engine initialized: {} QPUs available",
-                        engine.num_qpus()
-                    );
-                    // Start pcap capture thread on wlan0mon
-                    match engine.start_capture("wlan0mon") {
-                        Ok(()) => info!("QPU capture thread started on wlan0mon"),
-                        Err(e) => log::warn!("QPU capture start failed: {e} (frames from AO only)"),
-                    }
-                    self.qpu_engine = Some(engine);
-                }
+        // Skip AO/QPU/radio-lock when booting into non-WiFi mode —
+        // enter_bt_mode()/enter_safe_mode() handles the radio transition
+        // in the first epoch.
+        if self.boot_target_mode.is_none() {
+            // Start AngryOxide subprocess
+            match self.ao.start() {
+                Ok(()) => info!("AO started: PID {}", self.ao.pid),
                 Err(e) => {
-                    log::warn!("QPU init failed (CPU fallback): {}", e);
+                    log::error!("AO failed to start: {e}");
+                    self.epoch_loop
+                        .personality
+                        .set_override(personality::Face::AoCrashed);
                 }
             }
-        }
 
-        // Acquire radio lock — WIFI is the default boot mode
-        if let Err(e) = self.radio.acquire_lock(radio::RadioMode::Wifi) {
-            log::warn!("failed to acquire WIFI radio lock on boot: {e}");
+            // QPU initialization
+            if self.config.qpu.enabled {
+                match qpu::engine::QpuEngine::init(self.config.qpu.to_engine_config()) {
+                    Ok(mut engine) => {
+                        info!(
+                            "QPU engine initialized: {} QPUs available",
+                            engine.num_qpus()
+                        );
+                        // Start pcap capture thread on wlan0mon
+                        match engine.start_capture("wlan0mon") {
+                            Ok(()) => info!("QPU capture thread started on wlan0mon"),
+                            Err(e) => log::warn!("QPU capture start failed: {e} (frames from AO only)"),
+                        }
+                        self.qpu_engine = Some(engine);
+                    }
+                    Err(e) => {
+                        log::warn!("QPU init failed (CPU fallback): {}", e);
+                    }
+                }
+            }
+
+            // Acquire radio lock — WiFi mode
+            if let Err(e) = self.radio.acquire_lock(radio::RadioMode::Wifi) {
+                log::warn!("failed to acquire WIFI radio lock on boot: {e}");
+            }
         }
 
         // Initial state sync to web
@@ -1951,6 +1968,7 @@ impl Daemon {
             "display_rotation": self.screen.config.rotation,
             "min_rssi": s.min_rssi,
             "ap_ttl_secs": s.ap_ttl_secs,
+            "operating_mode": self.mode.as_str(),
         });
         drop(s);
         let path = "/var/lib/oxigotchi/state.json";
@@ -2140,6 +2158,17 @@ impl Daemon {
         if let Some(ttl) = state.get("ap_ttl_secs").and_then(|v| v.as_u64()) {
             let mut s = self.shared_state.lock().unwrap();
             s.ap_ttl_secs = ttl.clamp(30, 600);
+        }
+
+        // Restore operating mode — boot() checks self.mode to decide
+        // whether to start WiFi or BT. We set a separate flag so boot()
+        // knows to skip WiFi, but keep self.mode as Rage so enter_bt_mode()
+        // guard (`self.mode != Bt`) doesn't skip the transition.
+        if let Some(mode_str) = state.get("operating_mode").and_then(|v| v.as_str()) {
+            if mode_str != "RAGE" {
+                self.boot_target_mode = Some(mode_str.to_string());
+                info!("state: will restore operating mode {mode_str} after boot");
+            }
         }
 
         info!("loaded runtime state from {path}");
@@ -2616,8 +2645,7 @@ impl Daemon {
             // Status text
             let status = &self.epoch_loop.personality.current_status;
             self.screen.draw_status(status);
-            // Name
-            self.screen.draw_name(&self.config.name);
+            // No hostname in BT mode — it overlaps the face and BT stats
             // LINE 2
             self.screen.draw_hline(0, 108, display::DISPLAY_WIDTH);
             // Lua indicators
