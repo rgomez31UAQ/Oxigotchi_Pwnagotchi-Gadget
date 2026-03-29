@@ -2628,6 +2628,25 @@ mod tests {
         (status, String::from_utf8_lossy(&body).to_string())
     }
 
+    /// Helper: make a POST request with an explicit content type.
+    async fn post_with_content_type(
+        router: &Router,
+        path: &str,
+        content_type: &str,
+        body: &str,
+    ) -> (u16, String) {
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", content_type)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = router.clone().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
+
     // === Serialization tests (keep existing ones) ===
 
     #[test]
@@ -4352,13 +4371,19 @@ mod tests {
         let (status, body) = get(&router, "/api/bt/attacks").await;
         assert_eq!(status, 200);
         let resp: BtAttackResponse = serde_json::from_str(&body).unwrap();
+        assert!(resp.enabled);
         assert_eq!(resp.rage_level, "Medium");
-        assert!(resp.enabled); // default is true
-        assert!(resp.toggles.smp_downgrade); // default ON
-        assert!(!resp.toggles.smp_mitm); // default OFF
-        assert!(resp.toggles.knob); // default ON
-        assert!(resp.toggles.vendor_cmd_unlock); // default ON
+        assert!(resp.toggles.smp_downgrade);
+        assert!(!resp.toggles.smp_mitm);
+        assert!(resp.toggles.knob);
+        assert!(!resp.toggles.ble_adv_injection);
+        assert!(!resp.toggles.ble_conn_hijack);
+        assert!(!resp.toggles.l2cap_fuzz);
+        assert!(!resp.toggles.att_gatt_fuzz);
+        assert!(resp.toggles.vendor_cmd_unlock);
         assert_eq!(resp.stats.total_attacks, 0);
+        assert_eq!(resp.stats.total_captures, 0);
+        assert_eq!(resp.stats.active_attacks, 0);
         assert_eq!(resp.stats.devices_seen, 0);
     }
 
@@ -4367,20 +4392,38 @@ mod tests {
         let (router, state) = test_router();
         {
             let mut s = state.lock().unwrap();
+            s.bt_attack_enabled = false;
+            s.bt_attack_smp_downgrade = false;
             s.bt_attack_smp_mitm = true;
             s.bt_attack_knob = false;
+            s.bt_attack_ble_adv_injection = true;
+            s.bt_attack_ble_conn_hijack = true;
+            s.bt_attack_l2cap_fuzz = true;
+            s.bt_attack_att_gatt_fuzz = true;
+            s.bt_attack_vendor_cmd_unlock = false;
             s.bt_rage_level = "High".into();
-            s.bt_attack_enabled = true;
+            s.bt_total_attacks = 9;
+            s.bt_total_captures = 4;
             s.bt_active_attacks = 2;
+            s.bt_devices_seen = 7;
         }
         let (status, body) = get(&router, "/api/bt/attacks").await;
         assert_eq!(status, 200);
         let resp: BtAttackResponse = serde_json::from_str(&body).unwrap();
-        assert!(resp.enabled);
+        assert!(!resp.enabled);
         assert_eq!(resp.rage_level, "High");
+        assert!(!resp.toggles.smp_downgrade);
         assert!(resp.toggles.smp_mitm);
         assert!(!resp.toggles.knob);
+        assert!(resp.toggles.ble_adv_injection);
+        assert!(resp.toggles.ble_conn_hijack);
+        assert!(resp.toggles.l2cap_fuzz);
+        assert!(resp.toggles.att_gatt_fuzz);
+        assert!(!resp.toggles.vendor_cmd_unlock);
+        assert_eq!(resp.stats.total_attacks, 9);
+        assert_eq!(resp.stats.total_captures, 4);
         assert_eq!(resp.stats.active_attacks, 2);
+        assert_eq!(resp.stats.devices_seen, 7);
     }
 
     // === BT attacks toggle handler ===
@@ -4399,7 +4442,9 @@ mod tests {
         assert!(resp.ok);
         let s = state.lock().unwrap();
         assert!(s.bt_attack_smp_mitm, "smp_mitm should update immediately");
-        assert!(s.pending_bt_attack_toggle.is_some());
+        let pending = s.pending_bt_attack_toggle.as_ref().expect("toggle should be queued");
+        assert_eq!(pending.attack, "smp_mitm");
+        assert!(pending.enabled);
     }
 
     #[tokio::test]
@@ -4416,11 +4461,24 @@ mod tests {
             let resp: ActionResponse = serde_json::from_str(&body).unwrap();
             assert!(resp.ok, "toggle {} should return ok:true", atk);
             let s = state.lock().unwrap();
-            assert!(
-                s.pending_bt_attack_toggle.is_some(),
-                "toggle {} should queue pending",
-                atk,
-            );
+            let field_enabled = match *atk {
+                "smp_downgrade" => s.bt_attack_smp_downgrade,
+                "smp_mitm" => s.bt_attack_smp_mitm,
+                "knob" => s.bt_attack_knob,
+                "ble_adv_injection" => s.bt_attack_ble_adv_injection,
+                "ble_conn_hijack" => s.bt_attack_ble_conn_hijack,
+                "l2cap_fuzz" => s.bt_attack_l2cap_fuzz,
+                "att_gatt_fuzz" => s.bt_attack_att_gatt_fuzz,
+                "vendor_cmd_unlock" => s.bt_attack_vendor_cmd_unlock,
+                _ => unreachable!(),
+            };
+            assert!(field_enabled, "toggle {} should update the requested field", atk);
+            let pending = s
+                .pending_bt_attack_toggle
+                .as_ref()
+                .expect("toggle should be queued");
+            assert_eq!(pending.attack, *atk, "toggle {} should queue the matching request", atk);
+            assert!(pending.enabled, "toggle {} should queue enabled:true", atk);
         }
     }
 
@@ -4457,6 +4515,75 @@ mod tests {
         assert!(resp.ok);
         let s = state.lock().unwrap();
         assert!(!s.bt_attack_knob, "knob should be disabled immediately");
+        let pending = s.pending_bt_attack_toggle.as_ref().expect("toggle should be queued");
+        assert_eq!(pending.attack, "knob");
+        assert!(!pending.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_bt_toggle_rejects_malformed_json() {
+        let (router, state) = test_router();
+        let (status, _) = post_json(
+            &router,
+            "/api/bt/attacks/toggle",
+            r#"{"attack":"knob","enabled":tru"#,
+        )
+        .await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+        let s = state.lock().unwrap();
+        assert!(s.bt_attack_knob, "state should remain unchanged on parse failure");
+        assert!(s.pending_bt_attack_toggle.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_bt_toggle_rejects_wrong_content_type() {
+        let (router, state) = test_router();
+        let (status, _) = post_with_content_type(
+            &router,
+            "/api/bt/attacks/toggle",
+            "text/plain",
+            r#"{"attack":"knob","enabled":false}"#,
+        )
+        .await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+        let s = state.lock().unwrap();
+        assert!(s.bt_attack_knob, "state should remain unchanged on extractor rejection");
+        assert!(s.pending_bt_attack_toggle.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_bt_toggle_concurrent_updates_keep_state_consistent() {
+        let (router, state) = test_router();
+        let req_a = post_json(
+            &router,
+            "/api/bt/attacks/toggle",
+            r#"{"attack":"smp_mitm","enabled":true}"#,
+        );
+        let req_b = post_json(
+            &router,
+            "/api/bt/attacks/toggle",
+            r#"{"attack":"knob","enabled":false}"#,
+        );
+        let ((status_a, body_a), (status_b, body_b)) = tokio::join!(req_a, req_b);
+
+        assert_eq!(status_a, 200);
+        assert_eq!(status_b, 200);
+        assert!(serde_json::from_str::<ActionResponse>(&body_a).unwrap().ok);
+        assert!(serde_json::from_str::<ActionResponse>(&body_b).unwrap().ok);
+
+        let s = state.lock().unwrap();
+        assert!(s.bt_attack_smp_mitm, "first toggle should be applied");
+        assert!(!s.bt_attack_knob, "second toggle should be applied");
+        assert!(
+            matches!(
+                s.pending_bt_attack_toggle.as_ref(),
+                Some(BtAttackToggle { attack, enabled: true }) if attack == "smp_mitm"
+            ) || matches!(
+                s.pending_bt_attack_toggle.as_ref(),
+                Some(BtAttackToggle { attack, enabled: false }) if attack == "knob"
+            ),
+            "pending request should reflect whichever concurrent update ran last",
+        );
     }
 
     // === BT rage level handler ===
@@ -4523,6 +4650,37 @@ mod tests {
         assert!(!resp.ok, "lowercase 'low' should be rejected");
     }
 
+    #[tokio::test]
+    async fn test_bt_rage_rejects_malformed_json() {
+        let (router, state) = test_router();
+        let (status, _) = post_json(
+            &router,
+            "/api/bt/attacks/rage",
+            r#"{"level":"High""#,
+        )
+        .await;
+        assert_ne!(status, 200, "malformed JSON should be rejected");
+        let s = state.lock().unwrap();
+        assert_eq!(s.bt_rage_level, "Medium");
+        assert!(s.pending_bt_rage_level.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_bt_rage_rejects_wrong_content_type() {
+        let (router, state) = test_router();
+        let (status, _) = post_with_content_type(
+            &router,
+            "/api/bt/attacks/rage",
+            "text/plain",
+            r#"{"level":"High"}"#,
+        )
+        .await;
+        assert_ne!(status, 200, "non-JSON content-type should be rejected");
+        let s = state.lock().unwrap();
+        assert_eq!(s.bt_rage_level, "Medium");
+        assert!(s.pending_bt_rage_level.is_none());
+    }
+
     // === BT devices handler ===
 
     #[tokio::test]
@@ -4540,7 +4698,7 @@ mod tests {
         let (router, state) = test_router();
         {
             let mut s = state.lock().unwrap();
-            s.bt_devices_seen = 2;
+            s.bt_devices_seen = 5;
             s.bt_device_list = vec![
                 BtDeviceInfo {
                     address: "AA:BB:CC:DD:EE:01".into(),
@@ -4565,11 +4723,21 @@ mod tests {
         let (status, body) = get(&router, "/api/bt/devices").await;
         assert_eq!(status, 200);
         let resp: BtDevicesResponse = serde_json::from_str(&body).unwrap();
-        assert_eq!(resp.count, 2);
+        assert_eq!(resp.count, 5, "count should reflect devices_seen, not devices.len()");
         assert_eq!(resp.devices.len(), 2);
+        assert_eq!(resp.devices[0].address, "AA:BB:CC:DD:EE:01");
         assert_eq!(resp.devices[0].name.as_deref(), Some("Speaker"));
+        assert_eq!(resp.devices[0].rssi, Some(-55));
+        assert_eq!(resp.devices[0].category, "audio");
+        assert_eq!(resp.devices[0].transport, "Ble");
+        assert_eq!(resp.devices[0].attack_state, "Untouched");
+        assert_eq!(resp.devices[0].seen_count, 3);
+        assert_eq!(resp.devices[1].address, "AA:BB:CC:DD:EE:02");
         assert!(resp.devices[1].name.is_none());
         assert!(resp.devices[1].rssi.is_none());
+        assert_eq!(resp.devices[1].transport, "Classic");
+        assert_eq!(resp.devices[1].attack_state, "Attacking");
+        assert_eq!(resp.devices[1].seen_count, 1);
     }
 
     // === BT captures handler ===
@@ -4633,9 +4801,9 @@ mod tests {
 
     // === WsSnapshot BT fields ===
 
-    #[tokio::test]
-    async fn test_ws_snapshot_includes_bt_data() {
-        let (router, state) = test_router();
+    #[test]
+    fn test_ws_snapshot_includes_bt_data() {
+        let state = test_state();
         {
             let mut s = state.lock().unwrap();
             s.bt_attack_enabled = true;
@@ -4643,30 +4811,44 @@ mod tests {
             s.bt_devices_seen = 5;
             s.bt_active_attacks = 2;
             s.bt_total_attacks = 10;
+            s.bt_total_captures = 6;
+            s.bt_attack_ble_adv_injection = true;
             s.bt_capture_keys = 3;
             s.bt_capture_transcripts = 1;
             s.bt_capture_crashes = 0;
             s.bt_capture_vendor = 2;
             s.bt_patchram_state = "attack".into();
+            s.bt_device_list = vec![BtDeviceInfo {
+                address: "AA:BB:CC:DD:EE:03".into(),
+                name: Some("Tracker".into()),
+                rssi: Some(-42),
+                category: "sensor".into(),
+                transport: "Ble".into(),
+                attack_state: "Queued".into(),
+                seen_count: 9,
+            }];
         }
-        // WsSnapshot is built via build_ws_snapshot; test via /api/bt/* endpoints
-        // which use the same state fields
-        let (_, atk_body) = get(&router, "/api/bt/attacks").await;
-        let atk: BtAttackResponse = serde_json::from_str(&atk_body).unwrap();
-        assert!(atk.enabled);
-        assert_eq!(atk.rage_level, "High");
-        assert_eq!(atk.stats.devices_seen, 5);
-        assert_eq!(atk.stats.active_attacks, 2);
-        assert_eq!(atk.stats.total_attacks, 10);
+        let s = state.lock().unwrap();
+        let snapshot = build_ws_snapshot(&s);
 
-        let (_, cap_body) = get(&router, "/api/bt/captures").await;
-        let cap: BtCapturesResponse = serde_json::from_str(&cap_body).unwrap();
-        assert_eq!(cap.keys, 3);
-        assert_eq!(cap.transcripts, 1);
-        assert_eq!(cap.total, 6, "total should be 3+1+0+2=6");
+        assert!(snapshot.bt_attacks.enabled);
+        assert_eq!(snapshot.bt_attacks.rage_level, "High");
+        assert!(snapshot.bt_attacks.toggles.ble_adv_injection);
+        assert_eq!(snapshot.bt_attacks.stats.devices_seen, 5);
+        assert_eq!(snapshot.bt_attacks.stats.active_attacks, 2);
+        assert_eq!(snapshot.bt_attacks.stats.total_attacks, 10);
+        assert_eq!(snapshot.bt_attacks.stats.total_captures, 6);
 
-        let (_, pr_body) = get(&router, "/api/bt/patchram").await;
-        let pr: BtPatchramResponse = serde_json::from_str(&pr_body).unwrap();
-        assert_eq!(pr.state, "attack");
+        assert_eq!(snapshot.bt_devices.count, 5);
+        assert_eq!(snapshot.bt_devices.devices.len(), 1);
+        assert_eq!(snapshot.bt_devices.devices[0].address, "AA:BB:CC:DD:EE:03");
+        assert_eq!(snapshot.bt_devices.devices[0].name.as_deref(), Some("Tracker"));
+
+        assert_eq!(snapshot.bt_captures.keys, 3);
+        assert_eq!(snapshot.bt_captures.transcripts, 1);
+        assert_eq!(snapshot.bt_captures.vendor, 2);
+        assert_eq!(snapshot.bt_captures.total, 6, "total should be 3+1+0+2=6");
+
+        assert_eq!(snapshot.bt_patchram.state, "attack");
     }
 }
