@@ -14,6 +14,7 @@ function on_load(config)
         x    = config.x,
         y    = config.y,
         font = "small",
+        modes = {"RAGE", "SAFE"},
     })
 end
 
