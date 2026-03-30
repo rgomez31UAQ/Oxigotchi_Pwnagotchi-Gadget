@@ -2729,76 +2729,42 @@ impl Daemon {
     }
 
     /// Update the e-ink display with current state.
-    /// Layout matches Python angryoxide.py AO mode — see docs/DISPLAY_SPEC.md.
-    /// In BT mode, uses a dedicated layout with BT-specific stats.
+    /// Unified render path for ALL modes — face varies by mode, indicators
+    /// are filtered via `get_visible_indicators(mode)`.
     fn update_display(&mut self) {
         self.screen.clear();
 
-        // ---- BT mode: dedicated layout ----
+        // ---- Face selection (mode-dependent) ----
         if self.mode == OperatingMode::Bt {
             let summary = self.bt_discovery.summary();
             let active = self.bt_attack_scheduler.active_count();
             let captures = self.bt_capture_manager.total_captures();
-            let patchram_state = self.patchram.state.as_str();
-            let battery_str = if self.battery.available {
-                format!("{}%", self.battery.status.level)
-            } else {
-                "?".to_string()
-            };
-            let uptime = self.epoch_loop.uptime_str();
-
-            // BT-specific face
             let patchram_error = self.patchram.state == bluetooth::patchram::PatchramState::Error;
             let face = personality::bt_mode_face(
                 active,
                 summary.devices_now,
-                captures as u32,
+                captures,
                 patchram_error,
             );
-
-            // LINE 1
-            self.screen.draw_hline(0, 14, display::DISPLAY_WIDTH);
-            // Face
             self.screen.draw_face(&face);
-            // BT stats overlay
-            self.screen.draw_bt_mode(
-                summary.devices_now,
-                active,
-                captures as u32,
-                patchram_state,
-                &battery_str,
-                &uptime,
-            );
-            // Status text
-            let status = &self.epoch_loop.personality.current_status;
-            self.screen.draw_status(status);
-            // No hostname in BT mode — it overlaps the face and BT stats
-            // LINE 2
-            self.screen.draw_hline(0, 108, display::DISPLAY_WIDTH);
-            // Lua indicators
-            for ind in self.lua.get_indicators() {
-                self.screen.draw_indicator(&ind);
-            }
-            self.screen.flush();
-            return;
+        } else {
+            let face = self.epoch_loop.current_face();
+            self.screen.draw_face(&face);
         }
 
         // ---- LINE 1 (y=14) ----
         self.screen.draw_hline(0, 14, display::DISPLAY_WIDTH);
 
-        // ---- FACE at (0,16) — 120x66 bull bitmap ----
-        let face = self.epoch_loop.current_face();
-        self.screen.draw_face(&face);
+        // NOTE: Status text is rendered by status_msg.lua plugin (ALL-mode indicator).
+        // Do NOT add a hardcoded draw_status() here — it would duplicate the plugin output.
 
         // ---- XP BAR right of face (~125, 65) ----
-        // "Lv N" text then graphical bar, matching Python "Lv 1  Exp|███" style
         let xp = &self.epoch_loop.personality.xp;
         let lv_str = format!("Lv {}", xp.level);
         self.screen.draw_text(&lv_str, 125, 73);
-        // Bar: fixed position so layout works for Lv 1 through Lv 999
-        let bar_x: u32 = 168; // gap after "Lv 100" (ends ~x=155)
+        let bar_x: u32 = 168;
         let bar_y: u32 = 74;
-        let bar_w: u32 = 80; // extends to x=248
+        let bar_w: u32 = 80;
         let bar_h: u32 = 7;
         let needed = xp.xp_to_next_level();
         let filled_w = if needed > 0 {
@@ -2809,25 +2775,21 @@ impl Daemon {
         // Outline
         for dx in 0..bar_w {
             self.screen.set_pixel(
-                bar_x + dx,
-                bar_y,
+                bar_x + dx, bar_y,
                 embedded_graphics::pixelcolor::BinaryColor::On,
             );
             self.screen.set_pixel(
-                bar_x + dx,
-                bar_y + bar_h - 1,
+                bar_x + dx, bar_y + bar_h - 1,
                 embedded_graphics::pixelcolor::BinaryColor::On,
             );
         }
         for dy in 0..bar_h {
             self.screen.set_pixel(
-                bar_x,
-                bar_y + dy,
+                bar_x, bar_y + dy,
                 embedded_graphics::pixelcolor::BinaryColor::On,
             );
             self.screen.set_pixel(
-                bar_x + bar_w - 1,
-                bar_y + dy,
+                bar_x + bar_w - 1, bar_y + dy,
                 embedded_graphics::pixelcolor::BinaryColor::On,
             );
         }
@@ -2835,8 +2797,7 @@ impl Daemon {
         for dy in 1..(bar_h - 1) {
             for dx in 1..=filled_w {
                 self.screen.set_pixel(
-                    bar_x + dx,
-                    bar_y + dy,
+                    bar_x + dx, bar_y + dy,
                     embedded_graphics::pixelcolor::BinaryColor::On,
                 );
             }
@@ -2845,8 +2806,9 @@ impl Daemon {
         // ---- LINE 2 (y=108) ----
         self.screen.draw_hline(0, 108, display::DISPLAY_WIDTH);
 
-        // ---- LUA PLUGIN INDICATORS ----
-        for ind in self.lua.get_indicators() {
+        // ---- LUA PLUGIN INDICATORS (mode-filtered) ----
+        let mode_str = self.mode.as_str();
+        for ind in self.lua.get_visible_indicators(mode_str) {
             self.screen.draw_indicator(&ind);
         }
 

@@ -158,30 +158,6 @@ impl Screen {
         self.flush();
     }
 
-    /// Draw BT mode display layout (mirrors RAGE layout with BT-specific stats)
-    pub fn draw_bt_mode(
-        &mut self,
-        devices: u32,
-        active_attacks: u32,
-        captures: u32,
-        patchram_state: &str,
-        battery: &str,
-        uptime: &str,
-    ) {
-        // Top bar
-        self.draw_text(&format!("D:{}", devices), 0, 0);
-        self.draw_text(&format!("ATK:{}", active_attacks), 60, 0);
-        self.draw_text(uptime, 178, 0);
-        self.draw_text("BT", 234, 0);
-
-        // Bottom indicators
-        self.draw_text(&format!("D:{}", devices), 0, 112);
-        self.draw_text(&format!("ATK:{}", active_attacks), 52, 112);
-        self.draw_text(&format!("CAP:{}", captures), 96, 112);
-        self.draw_text(battery, 140, 112);
-        self.draw_text(&format!("PR:{}", patchram_state), 200, 112);
-    }
-
     /// Draw a Lua-registered indicator on the framebuffer.
     /// Handles label prefix, font selection, and word-wrap.
     pub fn draw_indicator(&mut self, ind: &crate::lua::Indicator) {
