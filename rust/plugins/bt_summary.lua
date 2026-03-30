@@ -27,6 +27,6 @@ function on_epoch(state)
         .. " | " .. state.bt_active_attacks .. "a"
         .. " | " .. state.bt_total_captures .. "c"
         .. " | PR:" .. pr
-    if #s > 30 then s = s:sub(1, 30) end
+    if #s > 28 then s = s:sub(1, 28) end
     set_indicator("bt_summary", s)
 end
