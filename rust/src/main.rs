@@ -346,6 +346,8 @@ impl Daemon {
             lua::PluginConfig::default_for("bt_status", 96, 112),
             lua::PluginConfig::default_for("battery", 140, 112),
             lua::PluginConfig::default_for("mode", 214, 112),
+            lua::PluginConfig::default_for("bt_summary", 0, 0),
+            lua::PluginConfig::default_for("bt_devices", 130, 0),
         ];
         let plugin_configs = match lua::config::read_plugins_toml() {
             Some(pt) => {
