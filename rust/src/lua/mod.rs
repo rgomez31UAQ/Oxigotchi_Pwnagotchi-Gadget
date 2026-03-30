@@ -55,11 +55,6 @@ impl std::ops::BitOrAssign for ModeSet {
     }
 }
 
-impl PartialEq<u8> for ModeSet {
-    fn eq(&self, other: &u8) -> bool {
-        self.0 == *other
-    }
-}
 
 /// A text indicator registered by a Lua plugin.
 #[derive(Debug, Clone)]
@@ -1139,10 +1134,10 @@ mod tests {
 
     #[test]
     fn test_mode_set_constants() {
-        assert_eq!(ModeSet::RAGE, 0b001);
-        assert_eq!(ModeSet::BT, 0b010);
-        assert_eq!(ModeSet::SAFE, 0b100);
-        assert_eq!(ModeSet::ALL, 0b111);
+        assert_eq!(ModeSet::RAGE, ModeSet(0b001));
+        assert_eq!(ModeSet::BT, ModeSet(0b010));
+        assert_eq!(ModeSet::SAFE, ModeSet(0b100));
+        assert_eq!(ModeSet::ALL, ModeSet(0b111));
     }
 
     #[test]
