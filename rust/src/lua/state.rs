@@ -47,6 +47,7 @@ pub struct EpochState {
     pub bt_active_attacks: u32,
     pub bt_total_captures: u32,
     pub bt_patchram_state: String,
+    pub bt_rage_level: String,
 
     // network
     pub internet_online: bool,
@@ -115,6 +116,7 @@ impl EpochState {
         t.set("bt_active_attacks", self.bt_active_attacks)?;
         t.set("bt_total_captures", self.bt_total_captures)?;
         t.set("bt_patchram_state", self.bt_patchram_state.clone())?;
+        t.set("bt_rage_level", self.bt_rage_level.clone())?;
 
         t.set("internet_online", self.internet_online)?;
         t.set("display_ip", self.display_ip.as_str())?;

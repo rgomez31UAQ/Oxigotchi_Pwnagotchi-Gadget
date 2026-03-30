@@ -2021,6 +2021,7 @@ impl Daemon {
             bt_active_attacks: self.bt_attack_scheduler.active_count(),
             bt_total_captures: self.bt_capture_manager.total_captures(),
             bt_patchram_state: self.patchram.state.as_str().to_string(),
+            bt_rage_level: self.config.bt_attacks.rage_level.as_str().to_string(),
             internet_online: self.network.internet == network::InternetStatus::Online,
             display_ip: self
                 .network
