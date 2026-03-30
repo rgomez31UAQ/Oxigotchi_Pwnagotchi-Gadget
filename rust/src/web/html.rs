@@ -251,7 +251,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <label class="switch"><input type="checkbox" id="rage-toggle" onchange="toggleRage(this.checked)"><span class="slider"></span></label>
 </div>
 <div class="rage-row">
-<input type="range" class="rage-slider" id="rage-slider" min="1" max="7" value="4" oninput="slideRage(parseInt(this.value))" disabled>
+<input type="range" class="rage-slider" id="rage-slider" min="1" max="3" value="2" oninput="slideRage(parseInt(this.value))" disabled>
 <div class="rage-level" id="rage-label">&mdash;</div>
 </div>
 <div class="rage-disclaimer" id="rage-yolo">&#9888; YOLO: Only combo that crashed in stress tests. AO may die &mdash; daemon auto-recovers.</div>
@@ -1319,15 +1319,11 @@ function toggleAttack(name, val) {
         toast('Attack ' + name + (val ? ' ON' : ' OFF'));
     });
 }
-var _rageNames = {1:'Chill',2:'Lurk',3:'Prowl',4:'Hunt',5:'RAGE',6:'FURY',7:'YOLO'};
+var _rageNames = {1:'Chill',2:'Hunt',3:'RAGE'};
 var _ragePresets = {
     1:{rate:1,dwell:5000,ch:[1,6,11]},
-    2:{rate:1,dwell:2000,ch:[1,6,11]},
-    3:{rate:1,dwell:2000,ch:[1,2,3,4,5,6,7,8,9,10,11,12,13]},
-    4:{rate:2,dwell:2000,ch:[1,2,3,4,5,6,7,8,9,10,11,12,13]},
-    5:{rate:2,dwell:1000,ch:[1,2,3,4,5,6,7,8,9,10,11,12,13]},
-    6:{rate:3,dwell:1000,ch:[1,2,3,4,5,6,7,8,9,10,11,12,13]},
-    7:{rate:3,dwell:500,ch:[1,2,3,4,5,6,7,8,9,10,11,12,13]}
+    2:{rate:2,dwell:1000,ch:[1,2,3,4,5,6,7,8,9,10,11,12,13]},
+    3:{rate:3,dwell:500,ch:[1,2,3,4,5,6,7,8,9,10,11,12,13]},
 };
 
 function updateRageLabel(level, enabled) {
@@ -1336,14 +1332,14 @@ function updateRageLabel(level, enabled) {
     var desc = document.getElementById('rage-desc');
     var yolo = document.getElementById('rage-yolo');
     var toggle = document.getElementById('rage-toggle');
-    if (enabled && level >= 1 && level <= 7) {
+    if (enabled && level >= 1 && level <= 3) {
         toggle.checked = true;
         slider.disabled = false;
         slider.value = level;
         label.textContent = level + ' \u2014 ' + (_rageNames[level] || '?');
-        label.className = 'rage-level' + (level === 7 ? ' yolo' : '');
+        label.className = 'rage-level' + (level === 3 ? ' yolo' : '');
         desc.textContent = _rageNames[level] + ' preset active';
-        yolo.style.display = level === 7 ? 'block' : 'none';
+        yolo.style.display = level === 3 ? 'block' : 'none';
         // Sync rate buttons, channels, and dwell to preset values instantly
         var p = _ragePresets[level];
         if (p) {
@@ -1369,7 +1365,7 @@ function updateRageLabel(level, enabled) {
 
 function toggleRage(on) {
     if (on) {
-        var level = parseInt(document.getElementById('rage-slider').value) || 4;
+        var level = parseInt(document.getElementById('rage-slider').value) || 2;
         api('POST', '/api/rage', {level: level}).then(function(r) {
             if (r && r.ok) { updateRageLabel(level, true); toast('RAGE ' + _rageNames[level]); refreshWifi(); refreshAttacks(); }
         });

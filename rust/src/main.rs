@@ -2224,7 +2224,7 @@ impl Daemon {
             s.rage_enabled = enabled;
             if enabled {
                 if let Some(level) = state.get("rage_level").and_then(|v| v.as_u64()) {
-                    let level = (level as u8).clamp(1, 7);
+                    let level = (level as u8).clamp(1, 3);
                     s.rage_level = level;
                     if let Some(p) = crate::rage::preset(level) {
                         info!("state: restoring RAGE level {} ({})", p.level, p.name);
@@ -3699,12 +3699,12 @@ mod tests {
         let mut daemon = make_daemon();
         {
             let mut s = daemon.shared_state.lock().unwrap();
-            s.pending_rage_change = Some(Some(4));
+            s.pending_rage_change = Some(Some(2));
         }
         daemon.process_web_commands();
-        // Level 4 = Hunt: rate 2, dwell 2000ms, all 13 channels
+        // Level 2 = Hunt: rate 2, dwell 1000ms, all 13 channels
         assert_eq!(daemon.ao.config.rate, 2);
-        assert_eq!(daemon.wifi.channel_config.dwell_ms, 2000);
+        assert_eq!(daemon.wifi.channel_config.dwell_ms, 1000);
         assert_eq!(
             daemon.wifi.channel_config.channels,
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
@@ -3712,7 +3712,7 @@ mod tests {
         assert!(!daemon.autohunt);
         let s = daemon.shared_state.lock().unwrap();
         assert!(s.rage_enabled);
-        assert_eq!(s.rage_level, 4);
+        assert_eq!(s.rage_level, 2);
     }
 
     #[test]
@@ -3721,7 +3721,7 @@ mod tests {
         {
             let mut s = daemon.shared_state.lock().unwrap();
             s.rage_enabled = true;
-            s.rage_level = 4;
+            s.rage_level = 2;
             s.pending_rage_change = Some(None);
         }
         daemon.process_web_commands();
@@ -3735,7 +3735,7 @@ mod tests {
         {
             let mut s = daemon.shared_state.lock().unwrap();
             s.rage_enabled = true;
-            s.rage_level = 5;
+            s.rage_level = 3;
             s.pending_rate_change = Some(1);
         }
         daemon.process_web_commands();

@@ -1794,7 +1794,7 @@ async fn rage_handler(
     let mut s = state.lock().unwrap();
     match body.level {
         Some(level) => {
-            let clamped = level.clamp(1, 7);
+            let clamped = level.clamp(1, 3);
             // Optimistic: update all preset-controlled fields so UI reflects them instantly
             s.rage_enabled = true;
             s.rage_level = clamped;
@@ -3740,13 +3740,13 @@ mod tests {
     #[tokio::test]
     async fn test_post_rage_sets_level() {
         let (router, state) = test_router();
-        let (status, body) = post_json(&router, "/api/rage", r#"{"level": 4}"#).await;
+        let (status, body) = post_json(&router, "/api/rage", r#"{"level": 2}"#).await;
         assert_eq!(status, 200);
         let resp: ActionResponse = serde_json::from_str(&body).unwrap();
         assert!(resp.ok);
-        assert!(resp.message.contains("4"));
+        assert!(resp.message.contains("2"));
         let s = state.lock().unwrap();
-        assert_eq!(s.pending_rage_change, Some(Some(4)));
+        assert_eq!(s.pending_rage_change, Some(Some(2)));
     }
 
     #[tokio::test]
@@ -3761,12 +3761,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_post_rage_clamps_to_7() {
+    async fn test_post_rage_clamps_to_3() {
         let (router, state) = test_router();
         let (status, _) = post_json(&router, "/api/rage", r#"{"level": 10}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
-        assert_eq!(s.pending_rage_change, Some(Some(7)));
+        assert_eq!(s.pending_rage_change, Some(Some(3)));
     }
 
     #[tokio::test]
@@ -4035,14 +4035,14 @@ mod tests {
     #[tokio::test]
     async fn test_rage_enable_immediately_updates_state() {
         let (router, state) = test_router();
-        let (status, _) = post_json(&router, "/api/rage", r#"{"level":5}"#).await;
+        let (status, _) = post_json(&router, "/api/rage", r#"{"level":2}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert!(
             s.rage_enabled,
             "rage_enabled should update immediately so slider doesn't jump back"
         );
-        assert_eq!(s.rage_level, 5, "rage_level should update immediately");
+        assert_eq!(s.rage_level, 2, "rage_level should update immediately");
     }
 
     #[tokio::test]
@@ -4051,7 +4051,7 @@ mod tests {
         {
             let mut s = state.lock().unwrap();
             s.rage_enabled = true;
-            s.rage_level = 5;
+            s.rage_level = 2;
         }
         let (status, _) = post_json(&router, "/api/rage", r#"{"level":null}"#).await;
         assert_eq!(status, 200);
@@ -4165,12 +4165,12 @@ mod tests {
     #[tokio::test]
     async fn test_rage_clamp_immediately_updates_state() {
         let (router, state) = test_router();
-        // Level 99 should be clamped to 7
+        // Level 99 should be clamped to 3
         let (status, _) = post_json(&router, "/api/rage", r#"{"level":99}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(
-            s.rage_level, 7,
+            s.rage_level, 3,
             "clamped rage level should be reflected immediately"
         );
     }
@@ -4178,8 +4178,8 @@ mod tests {
     #[tokio::test]
     async fn test_rage_preset_immediately_updates_rate_channels_dwell() {
         let (router, state) = test_router();
-        // Level 5 = RAGE: rate 2, dwell 1000ms, all 13 channels
-        let (status, _) = post_json(&router, "/api/rage", r#"{"level":5}"#).await;
+        // Level 2 = Hunt: rate 2, dwell 1000ms, all 13 channels
+        let (status, _) = post_json(&router, "/api/rage", r#"{"level":2}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(s.attack_rate, 2, "rage preset should set rate immediately");
@@ -4199,17 +4199,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rage_level6_immediately_updates_rate_to_3() {
+    async fn test_rage_level3_immediately_updates_rate_to_3() {
         let (router, state) = test_router();
-        // Level 6 = FURY: rate 3
-        let (status, _) = post_json(&router, "/api/rage", r#"{"level":6}"#).await;
+        // Level 3 = RAGE: rate 3
+        let (status, _) = post_json(&router, "/api/rage", r#"{"level":3}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(
             s.attack_rate, 3,
-            "FURY preset should set rate 3 immediately"
+            "RAGE preset should set rate 3 immediately"
         );
-        assert_eq!(s.wifi_dwell_ms, 1000);
+        assert_eq!(s.wifi_dwell_ms, 500);
     }
 
     // === Settings panel tests (display invert, rotation, min_rssi, ap_ttl) ===
