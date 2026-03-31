@@ -113,8 +113,8 @@ pub struct DaemonState {
     pub bt_scan_mode: String,
     pub bt_attack_smp_downgrade: bool,
     pub bt_attack_knob: bool,
-    pub bt_attack_ble_conn_hijack: bool,
     pub bt_attack_l2cap_fuzz: bool,
+    pub bt_attack_l2cap_conn_flood: bool,
     pub bt_attack_att_gatt_fuzz: bool,
     pub bt_total_attacks: u64,
     pub bt_total_captures: u64,
@@ -133,6 +133,8 @@ pub struct DaemonState {
     pub pending_bt_scan_mode: Option<String>,
     pub pending_bt_manual_attack: Option<BtManualAttackRequest>,
     pub bt_manual_result: Option<BtManualResult>,
+    /// Broadcasts remaining before clearing bt_manual_result.
+    pub bt_manual_result_ttl: u8,
 
     // -- gpu --
     pub gpu_mode: String,
@@ -321,8 +323,8 @@ impl DaemonState {
             bt_scan_mode: "both".into(),
             bt_attack_smp_downgrade: true,
             bt_attack_knob: true,
-            bt_attack_ble_conn_hijack: false,
             bt_attack_l2cap_fuzz: false,
+            bt_attack_l2cap_conn_flood: false,
             bt_attack_att_gatt_fuzz: false,
             bt_total_attacks: 0,
             bt_total_captures: 0,
@@ -339,6 +341,7 @@ impl DaemonState {
             pending_bt_scan_mode: None,
             pending_bt_manual_attack: None,
             bt_manual_result: None,
+            bt_manual_result_ttl: 0,
             gpu_mode: "Off".into(),
             gpu_signal: "None".into(),
             gpu_submit_seen: false,
@@ -585,6 +588,7 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
                 smp_downgrade: s.bt_attack_smp_downgrade,
                 knob: s.bt_attack_knob,
                 l2cap_fuzz: s.bt_attack_l2cap_fuzz,
+                l2cap_conn_flood: s.bt_attack_l2cap_conn_flood,
                 att_gatt_fuzz: s.bt_attack_att_gatt_fuzz,
             },
             stats: BtAttackStats {
@@ -899,6 +903,7 @@ pub struct BtAttackToggles {
     pub smp_downgrade: bool,
     pub knob: bool,
     pub l2cap_fuzz: bool,
+    pub l2cap_conn_flood: bool,
     pub att_gatt_fuzz: bool,
 }
 
@@ -1794,7 +1799,7 @@ async fn rage_handler(
     let mut s = state.lock().unwrap();
     match body.level {
         Some(level) => {
-            let clamped = level.clamp(1, 3);
+            let clamped = level.clamp(1, 7);
             // Optimistic: update all preset-controlled fields so UI reflects them instantly
             s.rage_enabled = true;
             s.rage_level = clamped;
@@ -2326,6 +2331,7 @@ async fn bt_attacks_get_handler(State(state): State<SharedState>) -> Json<BtAtta
             smp_downgrade: s.bt_attack_smp_downgrade,
             knob: s.bt_attack_knob,
             l2cap_fuzz: s.bt_attack_l2cap_fuzz,
+            l2cap_conn_flood: s.bt_attack_l2cap_conn_flood,
             att_gatt_fuzz: s.bt_attack_att_gatt_fuzz,
         },
         stats: BtAttackStats {
@@ -2347,8 +2353,8 @@ async fn bt_attacks_toggle_handler(
     match body.attack.as_str() {
         "smp_downgrade" => s.bt_attack_smp_downgrade = body.enabled,
         "knob" => s.bt_attack_knob = body.enabled,
-        "ble_conn_hijack" => s.bt_attack_ble_conn_hijack = body.enabled,
         "l2cap_fuzz" => s.bt_attack_l2cap_fuzz = body.enabled,
+        "l2cap_conn_flood" => s.bt_attack_l2cap_conn_flood = body.enabled,
         "att_gatt_fuzz" => s.bt_attack_att_gatt_fuzz = body.enabled,
         _ => {}
     }
@@ -2414,6 +2420,9 @@ async fn bt_manual_attack_handler(
     let attack_type = match body.attack.as_str() {
         "knob" => crate::bluetooth::attacks::BtAttackType::Knob,
         "ble_adv_injection" => crate::bluetooth::attacks::BtAttackType::BleAdvInjection,
+        "l2cap_fuzz" => crate::bluetooth::attacks::BtAttackType::L2capFuzz,
+        "l2cap_conn_flood" => crate::bluetooth::attacks::BtAttackType::L2capConnFlood,
+        "att_gatt_fuzz" => crate::bluetooth::attacks::BtAttackType::AttGattFuzz,
         "vendor_cmd_unlock" => crate::bluetooth::attacks::BtAttackType::VendorCmdUnlock,
         _ => {
             return Json(ActionResponse {
@@ -3761,12 +3770,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_post_rage_clamps_to_3() {
+    async fn test_post_rage_clamps_to_7() {
         let (router, state) = test_router();
         let (status, _) = post_json(&router, "/api/rage", r#"{"level": 10}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
-        assert_eq!(s.pending_rage_change, Some(Some(3)));
+        assert_eq!(s.pending_rage_change, Some(Some(7)));
     }
 
     #[tokio::test]
@@ -4165,12 +4174,12 @@ mod tests {
     #[tokio::test]
     async fn test_rage_clamp_immediately_updates_state() {
         let (router, state) = test_router();
-        // Level 99 should be clamped to 3
+        // Level 99 should be clamped to 7
         let (status, _) = post_json(&router, "/api/rage", r#"{"level":99}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(
-            s.rage_level, 3,
+            s.rage_level, 7,
             "clamped rage level should be reflected immediately"
         );
     }
@@ -4178,13 +4187,13 @@ mod tests {
     #[tokio::test]
     async fn test_rage_preset_immediately_updates_rate_channels_dwell() {
         let (router, state) = test_router();
-        // Level 2 = Hunt: rate 2, dwell 1000ms, all 13 channels
-        let (status, _) = post_json(&router, "/api/rage", r#"{"level":2}"#).await;
+        // Level 4 = Hunt: rate 2, dwell 2000ms, all 13 channels
+        let (status, _) = post_json(&router, "/api/rage", r#"{"level":4}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(s.attack_rate, 2, "rage preset should set rate immediately");
         assert_eq!(
-            s.wifi_dwell_ms, 1000,
+            s.wifi_dwell_ms, 2000,
             "rage preset should set dwell immediately"
         );
         assert_eq!(
@@ -4199,17 +4208,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rage_level3_immediately_updates_rate_to_3() {
+    async fn test_rage_level6_immediately_updates_rate_to_3() {
         let (router, state) = test_router();
-        // Level 3 = RAGE: rate 3
-        let (status, _) = post_json(&router, "/api/rage", r#"{"level":3}"#).await;
+        // Level 6 = FURY: rate 3, dwell 1000ms
+        let (status, _) = post_json(&router, "/api/rage", r#"{"level":6}"#).await;
         assert_eq!(status, 200);
         let s = state.lock().unwrap();
         assert_eq!(
             s.attack_rate, 3,
-            "RAGE preset should set rate 3 immediately"
+            "FURY preset should set rate 3 immediately"
         );
-        assert_eq!(s.wifi_dwell_ms, 500);
+        assert_eq!(s.wifi_dwell_ms, 1000);
     }
 
     // === Settings panel tests (display invert, rotation, min_rssi, ap_ttl) ===

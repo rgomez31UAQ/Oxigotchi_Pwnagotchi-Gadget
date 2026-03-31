@@ -62,6 +62,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAtt
             success: false,
             capture: None,
             error: Some(format!("LE_Create_Connection failed: {}", e)),
+            detail: None,
             timestamp: start,
         };
     }
@@ -78,6 +79,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAtt
                 success: false,
                 capture: None,
                 error: Some(format!("LE Connection Complete timeout: {}", e)),
+                detail: None,
                 timestamp: start,
             };
         }
@@ -94,6 +96,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAtt
             success: false,
             capture: None,
             error: Some(format!("LE connection failed, HCI status 0x{:02X}", conn_status)),
+            detail: None,
             timestamp: start,
         };
     }
@@ -111,6 +114,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAtt
                 success: false,
                 capture: None,
                 error: Some(format!("L2CAP SMP connect failed: {}", e)),
+                detail: None,
                 timestamp: start,
             };
         }
@@ -134,6 +138,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAtt
             success: false,
             capture: None,
             error: Some(format!("SMP Pairing Request send failed: {}", e)),
+            detail: None,
             timestamp: start,
         };
     }
@@ -152,6 +157,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAtt
                 success: false,
                 capture: None,
                 error: Some(format!("SMP Pairing Response recv failed: {}", e)),
+                detail: None,
                 timestamp: start,
             };
         }
@@ -173,6 +179,7 @@ pub fn run_downgrade(hci: &HciSocket, target_addr: &str, addr_type: u8) -> BtAtt
             data: transcript,
         }),
         error: None,
+        detail: None,
         timestamp: start,
     }
 }

@@ -347,6 +347,7 @@ impl Daemon {
             lua::PluginConfig::default_for("battery", 140, 112),
             lua::PluginConfig::default_for("mode", 214, 112),
             lua::PluginConfig::default_for("bt_summary", 0, 0),
+            lua::PluginConfig::default_for("bt_devices", 0, 0),
         ];
         let plugin_configs = match lua::config::read_plugins_toml() {
             Some(pt) => {
@@ -682,10 +683,15 @@ impl Daemon {
         // before generate_status(), so face state is consistent across display + web.
         self.sync_to_web();
         web::broadcast_state(&self.shared_state, &self.ws_tx);
-        // Clear manual attack result AFTER it has been broadcast to clients.
+        // Keep manual attack result visible for a few broadcasts, then clear.
         {
             let mut s = self.shared_state.lock().unwrap();
-            s.bt_manual_result = None;
+            if s.bt_manual_result.is_some() {
+                s.bt_manual_result_ttl = s.bt_manual_result_ttl.saturating_sub(1);
+                if s.bt_manual_result_ttl == 0 {
+                    s.bt_manual_result = None;
+                }
+            }
         }
 
         // ---- Sleep + watchdog ----
@@ -939,6 +945,10 @@ impl Daemon {
                         bluetooth::attacks::BtAttackType::L2capFuzz => {
                             let addr_type = self.bt_discovery.get_device_addr_type(&target.device_id);
                             bluetooth::attacks::l2cap_fuzz::run(&target.device_address, addr_type)
+                        }
+                        bluetooth::attacks::BtAttackType::L2capConnFlood => {
+                            let addr_type = self.bt_discovery.get_device_addr_type(&target.device_id);
+                            bluetooth::attacks::l2cap_conn_flood::run(&target.device_address, addr_type, 30)
                         }
                         bluetooth::attacks::BtAttackType::AttGattFuzz => {
                             let addr_type = self.bt_discovery.get_device_addr_type(&target.device_id);
@@ -1451,6 +1461,7 @@ impl Daemon {
                     Some(crate::bluetooth::attacks::BtAttackType::BleAdvInjection)
                 }
                 "l2cap_fuzz" => Some(crate::bluetooth::attacks::BtAttackType::L2capFuzz),
+                "l2cap_conn_flood" => Some(crate::bluetooth::attacks::BtAttackType::L2capConnFlood),
                 "att_gatt_fuzz" => {
                     Some(crate::bluetooth::attacks::BtAttackType::AttGattFuzz)
                 }
@@ -1523,6 +1534,9 @@ impl Daemon {
             let attack_type = match req.attack.as_str() {
                 "knob" => Some(bluetooth::attacks::BtAttackType::Knob),
                 "ble_adv_injection" => Some(bluetooth::attacks::BtAttackType::BleAdvInjection),
+                "l2cap_fuzz" => Some(bluetooth::attacks::BtAttackType::L2capFuzz),
+                "l2cap_conn_flood" => Some(bluetooth::attacks::BtAttackType::L2capConnFlood),
+                "att_gatt_fuzz" => Some(bluetooth::attacks::BtAttackType::AttGattFuzz),
                 "vendor_cmd_unlock" => Some(bluetooth::attacks::BtAttackType::VendorCmdUnlock),
                 _ => None,
             };
@@ -1562,6 +1576,16 @@ impl Daemon {
                                     bluetooth::attacks::BtAttackType::VendorCmdUnlock => {
                                         bluetooth::attacks::vendor::run_diagnostics(h, addr)
                                     }
+                                    bluetooth::attacks::BtAttackType::L2capFuzz => {
+                                        bluetooth::attacks::l2cap_fuzz::run(addr, 0)
+                                    }
+                                    bluetooth::attacks::BtAttackType::L2capConnFlood => {
+                                        let addr_type = 0; // BR/EDR classic
+                                        bluetooth::attacks::l2cap_conn_flood::run(addr, addr_type, 30)
+                                    }
+                                    bluetooth::attacks::BtAttackType::AttGattFuzz => {
+                                        bluetooth::attacks::att_fuzz::run(addr, 1) // BLE addr type
+                                    }
                                     _ => unreachable!(),
                                 }
                             }
@@ -1576,6 +1600,7 @@ impl Daemon {
                                     success: false,
                                     capture: None,
                                     error: Some(format!("HCI socket clone failed: {}", e)),
+                                    detail: None,
                                     timestamp: std::time::Instant::now(),
                                 }
                             }
@@ -1591,12 +1616,15 @@ impl Daemon {
                             },
                             attack: attack_name,
                             success: result.success,
-                            message: if result.success {
-                                "Attack succeeded".into()
+                            message: if let Some(detail) = result.detail {
+                                detail
+                            } else if result.success {
+                                "OK".into()
                             } else {
-                                result.error.unwrap_or_else(|| "Unknown error".into())
+                                result.error.unwrap_or_else(|| "failed".into())
                             },
                         });
+                        s.bt_manual_result_ttl = 5;
                     });
                 } else {
                     // Not in BT mode — store error result
@@ -1607,6 +1635,7 @@ impl Daemon {
                         success: false,
                         message: "Not in BT mode — no HCI socket".into(),
                     });
+                    s.bt_manual_result_ttl = 5;
                 }
             }
         }
@@ -2224,7 +2253,7 @@ impl Daemon {
             s.rage_enabled = enabled;
             if enabled {
                 if let Some(level) = state.get("rage_level").and_then(|v| v.as_u64()) {
-                    let level = (level as u8).clamp(1, 3);
+                    let level = (level as u8).clamp(1, 7);
                     s.rage_level = level;
                     if let Some(p) = crate::rage::preset(level) {
                         info!("state: restoring RAGE level {} ({})", p.level, p.name);
@@ -2438,7 +2467,7 @@ impl Daemon {
         s.battery_available = bat_avail;
 
         s.wifi_state = format!("{:?}", self.wifi.state);
-        s.wifi_aps_tracked = self.wifi.tracker.count();
+        s.wifi_aps_tracked = self.ao.ap_count() as usize;
         s.wifi_channels = self.wifi.channel_config.channels.clone();
         s.wifi_dwell_ms = self.wifi.channel_config.dwell_ms;
         s.autohunt_enabled = self.autohunt;
@@ -2476,8 +2505,8 @@ impl Daemon {
         s.bt_rage_level = self.config.bt_attacks.rage_level.as_str().to_string();
         s.bt_attack_smp_downgrade = self.config.bt_attacks.smp_downgrade;
         s.bt_attack_knob = self.config.bt_attacks.knob;
-        s.bt_attack_ble_conn_hijack = self.config.bt_attacks.ble_conn_hijack;
         s.bt_attack_l2cap_fuzz = self.config.bt_attacks.l2cap_fuzz;
+        s.bt_attack_l2cap_conn_flood = self.config.bt_attacks.l2cap_conn_flood;
         s.bt_attack_att_gatt_fuzz = self.config.bt_attacks.att_gatt_fuzz;
         s.bt_total_attacks = self.bt_attack_scheduler.total_attacks;
         s.bt_total_captures = self.bt_attack_scheduler.total_captures;
@@ -3699,12 +3728,12 @@ mod tests {
         let mut daemon = make_daemon();
         {
             let mut s = daemon.shared_state.lock().unwrap();
-            s.pending_rage_change = Some(Some(2));
+            s.pending_rage_change = Some(Some(4));
         }
         daemon.process_web_commands();
-        // Level 2 = Hunt: rate 2, dwell 1000ms, all 13 channels
+        // Level 4 = Hunt: rate 2, dwell 2000ms, all 13 channels
         assert_eq!(daemon.ao.config.rate, 2);
-        assert_eq!(daemon.wifi.channel_config.dwell_ms, 1000);
+        assert_eq!(daemon.wifi.channel_config.dwell_ms, 2000);
         assert_eq!(
             daemon.wifi.channel_config.channels,
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
@@ -3712,7 +3741,7 @@ mod tests {
         assert!(!daemon.autohunt);
         let s = daemon.shared_state.lock().unwrap();
         assert!(s.rage_enabled);
-        assert_eq!(s.rage_level, 2);
+        assert_eq!(s.rage_level, 4);
     }
 
     #[test]

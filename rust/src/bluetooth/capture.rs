@@ -205,6 +205,7 @@ mod tests {
             success: true,
             capture,
             error: None,
+            detail: None,
             timestamp: Instant::now(),
         }
     }

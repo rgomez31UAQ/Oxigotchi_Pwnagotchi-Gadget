@@ -11,6 +11,7 @@ pub mod att_fuzz;
 pub mod ble_adv;
 pub mod hci;
 pub mod knob;
+pub mod l2cap_conn_flood;
 pub mod l2cap_fuzz;
 pub mod smp;
 pub mod target;
@@ -29,18 +30,20 @@ pub enum BtAttackType {
     Knob,
     BleAdvInjection,
     L2capFuzz,
+    L2capConnFlood,
     AttGattFuzz,
     VendorCmdUnlock,
 }
 
 impl BtAttackType {
-    /// All 6 active variants in canonical order.
+    /// All 7 active variants in canonical order.
     /// SmpMitm and BleConnHijack are retired — removed from auto scheduling.
-    pub const ALL: [BtAttackType; 6] = [
+    pub const ALL: [BtAttackType; 7] = [
         BtAttackType::SmpDowngrade,
         BtAttackType::Knob,
         BtAttackType::BleAdvInjection,
         BtAttackType::L2capFuzz,
+        BtAttackType::L2capConnFlood,
         BtAttackType::AttGattFuzz,
         BtAttackType::VendorCmdUnlock,
     ];
@@ -52,6 +55,7 @@ impl BtAttackType {
             Self::Knob => "knob",
             Self::BleAdvInjection => "ble_adv_injection",
             Self::L2capFuzz => "l2cap_fuzz",
+            Self::L2capConnFlood => "l2cap_conn_flood",
             Self::AttGattFuzz => "att_gatt_fuzz",
             Self::VendorCmdUnlock => "vendor_cmd_unlock",
         }
@@ -74,17 +78,17 @@ impl BtAttackType {
 
     /// Whether this attack targets BR/EDR (classic) connections.
     pub fn is_classic(self) -> bool {
-        matches!(self, Self::Knob | Self::L2capFuzz)
+        matches!(self, Self::Knob | Self::L2capFuzz | Self::L2capConnFlood)
     }
 
     /// Whether this attack runs automatically via TargetSelector each epoch.
     pub fn is_auto(self) -> bool {
-        matches!(self, Self::SmpDowngrade | Self::Knob | Self::L2capFuzz | Self::AttGattFuzz)
+        matches!(self, Self::SmpDowngrade | Self::Knob | Self::L2capFuzz | Self::L2capConnFlood | Self::AttGattFuzz)
     }
 
     /// Whether this attack can be launched manually against a specific device.
     pub fn is_manual(self) -> bool {
-        matches!(self, Self::Knob | Self::BleAdvInjection | Self::VendorCmdUnlock)
+        matches!(self, Self::Knob | Self::BleAdvInjection | Self::L2capFuzz | Self::L2capConnFlood | Self::AttGattFuzz | Self::VendorCmdUnlock)
     }
 
     /// Minimum rage level required to activate this attack.
@@ -94,6 +98,8 @@ impl BtAttackType {
             Self::VendorCmdUnlock => BtRageLevel::Low,
             // Medium: active attacks that target external devices
             Self::SmpDowngrade | Self::Knob | Self::BleAdvInjection | Self::L2capFuzz | Self::AttGattFuzz => BtRageLevel::Medium,
+            // High: disruptive flood attacks
+            Self::L2capConnFlood => BtRageLevel::High,
         }
     }
 }
@@ -197,9 +203,9 @@ pub struct BtAttackConfig {
     #[serde(default = "default_true")]
     pub knob: bool,
     #[serde(default)]
-    pub ble_conn_hijack: bool,
-    #[serde(default)]
     pub l2cap_fuzz: bool,
+    #[serde(default)]
+    pub l2cap_conn_flood: bool,
     #[serde(default)]
     pub att_gatt_fuzz: bool,
 
@@ -270,8 +276,8 @@ impl Default for BtAttackConfig {
             scan_mode: BtScanMode::default(),
             smp_downgrade: true,
             knob: true,
-            ble_conn_hijack: false,
             l2cap_fuzz: false,
+            l2cap_conn_flood: false,
             att_gatt_fuzz: false,
             min_rssi: default_min_rssi(),
             max_concurrent_attacks: default_max_concurrent(),
@@ -287,13 +293,14 @@ impl Default for BtAttackConfig {
 }
 
 impl BtAttackConfig {
-    /// Returns the toggle state for each of the 4 auto attacks, in order:
-    /// [smp_downgrade, knob, l2cap_fuzz, att_gatt_fuzz].
-    pub fn enabled_toggles(&self) -> [bool; 4] {
+    /// Returns the toggle state for each of the 5 auto attacks, in order:
+    /// [smp_downgrade, knob, l2cap_fuzz, l2cap_conn_flood, att_gatt_fuzz].
+    pub fn enabled_toggles(&self) -> [bool; 5] {
         [
             self.smp_downgrade,
             self.knob,
             self.l2cap_fuzz,
+            self.l2cap_conn_flood,
             self.att_gatt_fuzz,
         ]
     }
@@ -305,6 +312,7 @@ impl BtAttackConfig {
             BtAttackType::SmpDowngrade => self.smp_downgrade = enabled,
             BtAttackType::Knob => self.knob = enabled,
             BtAttackType::L2capFuzz => self.l2cap_fuzz = enabled,
+            BtAttackType::L2capConnFlood => self.l2cap_conn_flood = enabled,
             BtAttackType::AttGattFuzz => self.att_gatt_fuzz = enabled,
             _ => {} // manual-only attacks have no toggle
         }
@@ -318,6 +326,7 @@ impl BtAttackConfig {
             BtAttackType::SmpDowngrade,
             BtAttackType::Knob,
             BtAttackType::L2capFuzz,
+            BtAttackType::L2capConnFlood,
             BtAttackType::AttGattFuzz,
         ];
         auto_attacks
@@ -363,6 +372,8 @@ pub struct BtAttackResult {
     pub success: bool,
     pub capture: Option<BtCapture>,
     pub error: Option<String>,
+    /// Human-readable summary of what happened (e.g. "5/5 sent, no crash").
+    pub detail: Option<String>,
     pub timestamp: Instant,
 }
 
@@ -454,7 +465,6 @@ mod tests {
         assert_eq!(cfg.rage_level, BtRageLevel::Medium);
         assert!(cfg.smp_downgrade);
         assert!(cfg.knob);
-        assert!(!cfg.ble_conn_hijack);
         assert!(!cfg.l2cap_fuzz);
         assert!(!cfg.att_gatt_fuzz);
         assert_eq!(cfg.min_rssi, -80);
@@ -469,7 +479,7 @@ mod tests {
     fn test_enabled_toggles_order() {
         let cfg = BtAttackConfig::default();
         let t = cfg.enabled_toggles();
-        assert_eq!(t, [true, true, false, false]); // smp=true, knob=true, l2cap=false, att=false
+        assert_eq!(t, [true, true, false, false, false]); // smp=true, knob=true, l2cap_fuzz=false, l2cap_conn_flood=false, att=false
     }
 
     #[test]
@@ -506,9 +516,10 @@ mod tests {
         let mut cfg = BtAttackConfig::default();
         cfg.rage_level = BtRageLevel::High;
         cfg.l2cap_fuzz = true;
+        cfg.l2cap_conn_flood = true;
         cfg.att_gatt_fuzz = true;
         let active = cfg.active_at_rage_level();
-        assert_eq!(active.len(), 4);
+        assert_eq!(active.len(), 5);
     }
 
     #[test]
@@ -537,6 +548,11 @@ mod tests {
         assert!(!BtAttackType::Knob.is_ble());
         assert!(BtAttackType::Knob.requires_patchram());
 
+        // L2capConnFlood is classic, no patchram
+        assert!(BtAttackType::L2capConnFlood.is_classic());
+        assert!(!BtAttackType::L2capConnFlood.is_ble());
+        assert!(!BtAttackType::L2capConnFlood.requires_patchram());
+
         assert!(BtAttackType::VendorCmdUnlock.requires_patchram());
         assert!(!BtAttackType::VendorCmdUnlock.is_ble());
         assert!(!BtAttackType::VendorCmdUnlock.is_classic());
@@ -560,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_all_variants_count() {
-        assert_eq!(BtAttackType::ALL.len(), 6);
+        assert_eq!(BtAttackType::ALL.len(), 7);
     }
 
     #[test]
@@ -580,7 +596,6 @@ enabled = true
 rage_level = "High"
 smp_downgrade = false
 knob = true
-ble_conn_hijack = true
 l2cap_fuzz = true
 att_gatt_fuzz = true
 min_rssi = -70
@@ -668,6 +683,7 @@ stock_hcd = "/tmp/stock.hcd"
             success: false,
             capture: None,
             error: Some("timeout".into()),
+            detail: None,
             timestamp: Instant::now(),
         });
         assert_eq!(sched.total_attacks, 1);
@@ -685,6 +701,7 @@ stock_hcd = "/tmp/stock.hcd"
                 key: vec![0xAA; 16],
             }),
             error: None,
+            detail: None,
             timestamp: Instant::now(),
         });
         assert_eq!(sched.total_attacks, 2);
@@ -703,6 +720,7 @@ stock_hcd = "/tmp/stock.hcd"
                 success: false,
                 capture: None,
                 error: None,
+                detail: None,
                 timestamp: Instant::now(),
             });
         }
@@ -727,6 +745,7 @@ stock_hcd = "/tmp/stock.hcd"
         assert!(BtAttackType::SmpDowngrade.is_auto());
         assert!(BtAttackType::Knob.is_auto());
         assert!(BtAttackType::L2capFuzz.is_auto());
+        assert!(BtAttackType::L2capConnFlood.is_auto());
         assert!(BtAttackType::AttGattFuzz.is_auto());
         assert!(!BtAttackType::BleAdvInjection.is_auto());
         assert!(!BtAttackType::VendorCmdUnlock.is_auto());
@@ -736,16 +755,18 @@ stock_hcd = "/tmp/stock.hcd"
     fn test_is_manual() {
         assert!(BtAttackType::Knob.is_manual());
         assert!(BtAttackType::BleAdvInjection.is_manual());
+        assert!(BtAttackType::L2capFuzz.is_manual());
+        assert!(BtAttackType::L2capConnFlood.is_manual());
+        assert!(BtAttackType::AttGattFuzz.is_manual());
         assert!(BtAttackType::VendorCmdUnlock.is_manual());
         assert!(!BtAttackType::SmpDowngrade.is_manual());
-        assert!(!BtAttackType::L2capFuzz.is_manual());
-        assert!(!BtAttackType::AttGattFuzz.is_manual());
     }
 
     #[test]
     fn test_min_rage_level_is_pub() {
         assert_eq!(BtAttackType::VendorCmdUnlock.min_rage_level(), BtRageLevel::Low);
         assert_eq!(BtAttackType::Knob.min_rage_level(), BtRageLevel::Medium);
+        assert_eq!(BtAttackType::L2capConnFlood.min_rage_level(), BtRageLevel::High);
     }
 
     #[test]

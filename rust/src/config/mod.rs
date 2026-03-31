@@ -284,7 +284,7 @@ mod tests {
     const SAMPLE_TOML: &str = r#"
 [main]
 name = "oxigotchi"
-whitelist = ["Alpha", "Alpha 5G"]
+whitelist = ["YourNetwork", "YourNetwork-5G"]
 
 [ui]
 invert = true
@@ -303,7 +303,7 @@ name = "DejaVuSansMono"
     fn test_parse_full_config() {
         let cfg = Config::from_toml(SAMPLE_TOML).unwrap();
         assert_eq!(cfg.name, "oxigotchi");
-        assert_eq!(cfg.whitelist, vec!["Alpha", "Alpha 5G"]);
+        assert_eq!(cfg.whitelist, vec!["YourNetwork", "YourNetwork-5G"]);
         assert!(cfg.ui.invert);
         assert_eq!(cfg.ui.fps, 0);
         assert!(cfg.display.enabled);

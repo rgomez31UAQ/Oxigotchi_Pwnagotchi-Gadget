@@ -37,6 +37,7 @@ pub fn run(target_addr: &str, addr_type: u8) -> BtAttackResult {
                 success: false,
                 capture: None,
                 error: Some(format!("L2CAP connect failed: {}", e)),
+                detail: Some("connect failed".into()),
                 timestamp: start,
             };
         }
@@ -78,6 +79,14 @@ pub fn run(target_addr: &str, addr_type: u8) -> BtAttackResult {
         trigger,
     });
 
+    let total = fuzz_vectors.len();
+    let crashed = capture.is_some();
+    let detail = if crashed {
+        format!("{}/{} sent, CRASH detected", sent_count, total)
+    } else {
+        format!("{}/{} sent, no crash", sent_count, total)
+    };
+
     BtAttackResult {
         attack_type: BtAttackType::L2capFuzz,
         target_address: target_addr.to_string(),
@@ -85,6 +94,7 @@ pub fn run(target_addr: &str, addr_type: u8) -> BtAttackResult {
         success: sent_count > 0,
         capture,
         error: None,
+        detail: Some(detail),
         timestamp: start,
     }
 }

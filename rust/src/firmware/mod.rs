@@ -194,9 +194,9 @@ pub fn sdio_write(_addr: u32, _data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Firmware RAM addresses for crash counters (BCM43436B0 v7 patch).
-pub const ADDR_CRASH_SUPPRESS: u32 = 0x3C094;
-pub const ADDR_HARDFAULT: u32 = 0x3C098;
+/// Firmware RAM addresses for crash counters — must be provided via firmware config.
+pub const ADDR_CRASH_SUPPRESS: u32 = 0; // TODO: load from firmware config
+pub const ADDR_HARDFAULT: u32 = 0;      // TODO: load from firmware config
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FirmwareHealth {
@@ -303,7 +303,8 @@ mod tests {
 
     #[test]
     fn test_read_frame_layout() {
-        let payload = build_read_payload(0x3C094, 4);
+        let test_addr: u32 = 0x1000; // arbitrary test address
+        let payload = build_read_payload(test_addr, 4);
         let frame = build_netlink_frame(CMD_SDIO_RAMRW, false, &payload);
 
         assert_eq!(frame.len(), 40); // 16 + 8 + 8 + 8
@@ -315,10 +316,10 @@ mod tests {
         assert_eq!(u32::from_le_bytes(frame[24..28].try_into().unwrap()), 0x500);
         // set = 0 (GET)
         assert_eq!(u32::from_le_bytes(frame[28..32].try_into().unwrap()), 0);
-        // addr = 0x3C094
+        // addr
         assert_eq!(
             u32::from_le_bytes(frame[32..36].try_into().unwrap()),
-            0x3C094
+            test_addr
         );
         // length = 4
         assert_eq!(u32::from_le_bytes(frame[36..40].try_into().unwrap()), 4);
@@ -326,7 +327,8 @@ mod tests {
 
     #[test]
     fn test_write_frame_layout() {
-        let payload = build_write_payload(0x3C094, &[0, 0, 0, 0]);
+        let test_addr: u32 = 0x1000; // arbitrary test address
+        let payload = build_write_payload(test_addr, &[0, 0, 0, 0]);
         let frame = build_netlink_frame(CMD_SDIO_RAMRW, true, &payload);
 
         assert_eq!(frame.len(), 40); // 16 + 8 + 8 + 8

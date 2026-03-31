@@ -44,6 +44,7 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
             success: false,
             capture: None,
             error: Some(format!("Write_BDADDR failed: {}", e)),
+            detail: None,
             timestamp: start,
         };
     }
@@ -74,6 +75,7 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
             success: false,
             capture: None,
             error: Some(format!("Set_Adv_Params failed: {}", e)),
+            detail: None,
             timestamp: start,
         };
     }
@@ -109,6 +111,7 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
             success: false,
             capture: None,
             error: Some(format!("Set_Adv_Data failed: {}", e)),
+            detail: None,
             timestamp: start,
         };
     }
@@ -142,6 +145,7 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
                 } else {
                     Some(format!("HCI status 0x{:02X}", resp.status))
                 },
+                detail: None,
                 timestamp: start,
             }
         }
@@ -154,6 +158,7 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
                 success: false,
                 capture: None,
                 error: Some(format!("Set_Adv_Enable failed: {}", e)),
+                detail: None,
                 timestamp: start,
             }
         }

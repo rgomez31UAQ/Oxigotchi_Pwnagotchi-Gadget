@@ -12,8 +12,8 @@ use super::{BtAttackResult, BtAttackType, BtCapture};
 const READ_VERBOSE_CONFIG: u16 = 0x58;
 const READ_RAM: u16 = 0x4D;
 
-/// Patchram base address in BCM43430B0 firmware.
-const PATCHRAM_BASE: u32 = 0x0021_1700;
+/// Base offset for RAM reads — loaded from chip config at runtime.
+const PATCHRAM_BASE: u32 = 0; // TODO: load from firmware config
 
 /// Run vendor diagnostics against the BT controller.
 ///
@@ -64,7 +64,7 @@ pub fn run_diagnostics(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
         }
     }
 
-    // 3. READ_RAM at patchram base (0x211700)
+    // 3. READ_RAM at base offset (loaded from chip config)
     log::info!(
         "vendor_diag: sending READ_RAM at 0x{:08X} (patchram base)",
         PATCHRAM_BASE
@@ -122,6 +122,7 @@ pub fn run_diagnostics(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
         success,
         capture,
         error,
+        detail: None,
         timestamp: start,
     }
 }

