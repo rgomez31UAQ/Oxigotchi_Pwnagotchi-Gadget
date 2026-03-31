@@ -1,7 +1,7 @@
 """
 Live integration tests for the Oxigotchi system.
 
-Connects to the real Pi at 192.168.137.8 and verifies the full stack:
+Connects to the real Pi and verifies the full stack:
 firmware, AO binary, plugin, web dashboard, services, and safety features.
 
 Run with:
@@ -9,6 +9,7 @@ Run with:
 """
 
 import json
+import os
 import subprocess
 import urllib.request
 import urllib.error
@@ -19,7 +20,7 @@ import pytest
 # Configuration
 # ---------------------------------------------------------------------------
 
-PI_HOST = "192.168.137.8"
+PI_HOST = os.environ.get("PI_HOST", "10.0.0.2")
 PI_USER = "pi"
 PI_PASS = "raspberry"
 WEB_PORT = 8080

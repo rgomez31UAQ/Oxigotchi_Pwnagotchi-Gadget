@@ -28,7 +28,7 @@ interface = "wlan0mon"
 no_setup = true
 nexmon_mode = false
 output_dir = "/etc/pwnagotchi/handshakes/"
-whitelist = ["Alpha", "Alpha 5G"]
+whitelist = ["YourNetwork", "YourNetwork-5G"]
 
 # Disable plugins that are redundant or conflict in AO mode
 [main.plugins.walkby]

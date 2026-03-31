@@ -8,13 +8,9 @@ Usage:
 
     pi = Pi()                    # connects to 10.0.0.2:8888
     pi.status()                  # full system status
-    pi.read_mem(0x0113F4, 8)     # read 8 bytes of firmware RAM
-    pi.write_mem(0x063124, b'..') # write bytes to firmware RAM
-    pi.read_bulk([               # batch read (one TCP round-trip)
-        (0x0113F4, 8),
-        (0x011430, 8),
-        (0x011460, 8),
-    ])
+    pi.read_mem(addr, 8)         # read 8 bytes of firmware RAM
+    pi.write_mem(addr, b'..')    # write bytes to firmware RAM
+    pi.read_bulk([(a, n), ...])  # batch read (one TCP round-trip)
     pi.shell("ls /tmp")          # run shell command
     pi.dmesg()                   # recent dmesg
 """
@@ -151,13 +147,18 @@ class Pi:
             time.sleep(poll)
         return False
 
-    def verify_thresholds(self):
-        """Read all 3 threshold addresses. Returns dict with status."""
-        addrs = [
-            (0x0113F4, "PSM", 0xFF, 0x05),
-            (0x011430, "DPC", 0xFF, 0x05),
-            (0x011460, "RSSI", 0xFF, 0x0A),
-        ]
+    def verify_thresholds(self, threshold_config=None):
+        """Read all 3 threshold addresses. Returns dict with status.
+
+        threshold_config: list of (addr, name, patched_val, orig_val) tuples.
+            Load from firmware config file. If None, returns empty dict.
+        """
+        if threshold_config is None:
+            # Threshold addresses must be loaded from firmware config
+            print("WARNING: No threshold config provided. Load addresses from firmware config.")
+            return {}
+
+        addrs = threshold_config
         regions = [(a, 8) for a, _, _, _ in addrs]
         reads = self.read_bulk(regions)
 

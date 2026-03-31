@@ -1,0 +1,590 @@
+#!/bin/bash
+# bake_release.sh — Build a distributable oxigotchi SD card image from scratch
+# Run inside WSL: sudo bash /mnt/c/msys64/home/user/oxigotchi/tools/bake_release.sh
+#
+# Requirements:
+#   - A base Raspberry Pi OS Lite (64-bit, Bookworm+) .img file
+#   - Cross-compiled oxigotchi binary at rust/target/aarch64-unknown-linux-gnu/release/oxigotchi
+#   - pishrink.sh installed (/usr/local/bin/pishrink.sh)
+#   - WSL with losetup, zip, aarch64-linux-gnu-gcc
+#
+# Output: oxigotchi-release.img.zip in the repo root
+set -euo pipefail
+
+echo "============================================="
+echo "=== Oxigotchi Release Image Builder       ==="
+echo "============================================="
+echo ""
+
+# ─── Configuration ───
+REPO=/mnt/c/msys64/home/user/oxigotchi
+BASE_IMG="${1:-/mnt/d/oxigotchi-v3.0.img}"
+RELEASE_IMG="/mnt/d/oxigotchi-release.img"
+BINARY="$REPO/rust/target/aarch64-unknown-linux-gnu/release/oxigotchi"
+VERSION="3.0"
+
+if [ ! -f "$BASE_IMG" ]; then
+    echo "ERROR: Base image not found at $BASE_IMG"
+    echo "Usage: sudo bash $0 [path-to-base-pi-os.img]"
+    exit 1
+fi
+
+if [ ! -f "$BINARY" ]; then
+    echo "ERROR: Cross-compiled binary not found at $BINARY"
+    echo "Build it first: cd rust && cargo build --release --target aarch64-unknown-linux-gnu"
+    exit 1
+fi
+
+# Verify binary is aarch64
+if ! file "$BINARY" | grep -q "aarch64\|ARM aarch64"; then
+    echo "ERROR: Binary is not aarch64: $(file "$BINARY")"
+    exit 1
+fi
+
+# ─── 0a. Cross-compile wlan_keepalive ───
+echo "=== 0a. Cross-compile wlan_keepalive ==="
+aarch64-linux-gnu-gcc -O2 -static -o /tmp/wlan_keepalive "$REPO/tools/wlan_keepalive.c"
+file /tmp/wlan_keepalive
+echo "  Done"
+
+# ─── 0b. Copy base image ───
+echo ""
+echo "=== 0b. Copy base image ==="
+cp "$BASE_IMG" "$RELEASE_IMG"
+echo "  Copied to $RELEASE_IMG"
+
+# ─── 0c. Cleanup previous mounts ───
+echo ""
+echo "=== 0c. Cleanup previous mounts ==="
+sudo umount /mnt/piroot 2>/dev/null || true
+sudo umount /mnt/piboot 2>/dev/null || true
+sudo losetup -D 2>/dev/null || true
+sleep 1
+
+# ─── 1. Mount image ───
+echo ""
+echo "=== 1. Mount image ==="
+sudo losetup -fP "$RELEASE_IMG"
+LOOPDEV=$(losetup -j "$RELEASE_IMG" | head -1 | cut -d: -f1)
+echo "Loop device: $LOOPDEV"
+sudo mkdir -p /mnt/piboot /mnt/piroot
+sudo mount "${LOOPDEV}p2" /mnt/piroot
+sudo mount "${LOOPDEV}p1" /mnt/piboot
+PI=/mnt/piroot
+echo "  Image mounted at $PI"
+
+# Trap to ensure cleanup on error
+cleanup() {
+    echo ""
+    echo "=== Cleanup: unmounting ==="
+    sync
+    sudo umount /mnt/piboot 2>/dev/null || true
+    sudo umount /mnt/piroot 2>/dev/null || true
+    sudo losetup -D 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# ─── 2. Install oxigotchi binary ───
+echo ""
+echo "=== 2. Install oxigotchi binary ==="
+sudo cp "$BINARY" "$PI/usr/local/bin/rusty-oxigotchi"
+sudo chmod +x "$PI/usr/local/bin/rusty-oxigotchi"
+sudo chown root:root "$PI/usr/local/bin/rusty-oxigotchi"
+file "$PI/usr/local/bin/rusty-oxigotchi"
+echo "  Binary installed"
+
+# ─── 3. Config directory ───
+echo ""
+echo "=== 3. Create config directory ==="
+sudo mkdir -p "$PI/etc/oxigotchi"
+cat > /tmp/oxigotchi-config.toml <<'CFGEOF'
+# Oxigotchi default config — edit to match your setup
+# See https://github.com/YOUR_REPO/oxigotchi for documentation
+
+[general]
+name = "oxigotchi"
+
+[wifi]
+# Networks to never attack (your home network)
+whitelist = ["YourNetwork", "YourNetwork-5G"]
+
+[bluetooth]
+# Set your phone's BT MAC to enable tethering
+phone_mac = ""
+phone_name = ""
+
+[wpa_sec]
+# Get your API key from https://wpa-sec.stanev.org
+api_key = ""
+
+[display]
+# Waveshare e-ink model: "2in13_v4" for most Pi Zero 2W setups
+model = "2in13_v4"
+CFGEOF
+sudo cp /tmp/oxigotchi-config.toml "$PI/etc/oxigotchi/config.toml"
+echo "  Config installed at /etc/oxigotchi/config.toml"
+
+# ─── 4. Lua plugins ───
+echo ""
+echo "=== 4. Install Lua plugins ==="
+sudo mkdir -p "$PI/etc/oxigotchi/plugins"
+for p in "$REPO"/rust/plugins/*.lua; do
+    sudo cp "$p" "$PI/etc/oxigotchi/plugins/$(basename "$p")"
+    echo "  Copied $(basename "$p")"
+done
+echo "  $(ls "$REPO"/rust/plugins/*.lua | wc -l) plugins installed"
+
+# ─── 5. Face PNGs ───
+echo ""
+echo "=== 5. Install face PNGs ==="
+sudo mkdir -p "$PI/etc/oxigotchi/faces"
+for f in "$REPO"/faces/eink/*.png; do
+    sudo cp "$f" "$PI/etc/oxigotchi/faces/$(basename "$f")"
+done
+echo "  $(ls "$REPO"/faces/eink/*.png | wc -l) face PNGs installed"
+
+# ─── 6. Helper scripts ───
+echo ""
+echo "=== 6. Install helper scripts ==="
+# WiFi recovery
+sudo cp "$REPO/tools/wifi-recovery.sh" "$PI/usr/local/bin/wifi-recovery.sh"
+# Boot diagnostics
+sudo cp "$REPO/tools/bootlog.sh" "$PI/usr/local/bin/bootlog.sh"
+# USB0 fallback
+sudo cp "$REPO/scripts/usb0-fallback.sh" "$PI/usr/local/bin/usb0-fallback.sh"
+# WiFi ndev fix
+sudo cp "$REPO/scripts/fix_ndev_on_boot.sh" "$PI/usr/local/bin/fix_ndev_on_boot.sh"
+# BT keepalive
+sudo cp "$REPO/scripts/bt-keepalive.sh" "$PI/usr/local/bin/bt-keepalive.sh"
+# Buffer cleaner
+sudo cp "$REPO/scripts/buffer-cleaner.sh" "$PI/usr/local/bin/buffer-cleaner.sh"
+# PiSugar watchdog
+sudo cp "$REPO/scripts/pisugar-watchdog.sh" "$PI/usr/local/bin/pisugar-watchdog.sh"
+# Safe shutdown
+sudo cp "$REPO/scripts/safe-shutdown.sh" "$PI/usr/local/bin/safe-shutdown.sh"
+# wlan_keepalive binary
+sudo cp /tmp/wlan_keepalive "$PI/usr/local/bin/wlan_keepalive"
+
+# CRLF fix + chmod all scripts
+for f in "$PI"/usr/local/bin/*.sh "$PI/usr/local/bin/wlan_keepalive"; do
+    if [ -f "$f" ]; then
+        sudo sed -i 's/\r$//' "$f"
+        sudo chmod +x "$f"
+    fi
+done
+echo "  All scripts installed, CRLF fixed, chmod +x"
+
+# ─── 7. Systemd services ───
+echo ""
+echo "=== 7. Install systemd services ==="
+SVC_DIR="$PI/etc/systemd/system"
+
+# Copy service files from repo
+for svc in rusty-oxigotchi resize-rootfs emergency-ssh wifi-recovery wlan-keepalive \
+           bootlog usb0-fallback fix-ndev nm-watchdog bt-agent bt-keepalive \
+           buffer-cleaner epd-startup pisugar-watchdog wifi-watchdog; do
+    if [ -f "$REPO/services/${svc}.service" ]; then
+        sudo cp "$REPO/services/${svc}.service" "$SVC_DIR/${svc}.service"
+        sudo sed -i 's/\r$//' "$SVC_DIR/${svc}.service"
+        sudo chmod 644 "$SVC_DIR/${svc}.service"
+        echo "  Installed: ${svc}.service"
+    fi
+done
+
+# Timer units
+for timer in bt-keepalive buffer-cleaner nm-watchdog pisugar-watchdog; do
+    if [ -f "$REPO/services/${timer}.timer" ]; then
+        sudo cp "$REPO/services/${timer}.timer" "$SVC_DIR/${timer}.timer"
+        sudo sed -i 's/\r$//' "$SVC_DIR/${timer}.timer"
+        sudo chmod 644 "$SVC_DIR/${timer}.timer"
+        echo "  Installed: ${timer}.timer"
+    fi
+done
+
+# Path unit for patches
+if [ -f "$REPO/services/oxigotchi-patches.path" ]; then
+    sudo cp "$REPO/services/oxigotchi-patches.path" "$SVC_DIR/oxigotchi-patches.path"
+    sudo cp "$REPO/services/oxigotchi-patches.service" "$SVC_DIR/oxigotchi-patches.service"
+    sudo sed -i 's/\r$//' "$SVC_DIR/oxigotchi-patches.path" "$SVC_DIR/oxigotchi-patches.service"
+    sudo chmod 644 "$SVC_DIR/oxigotchi-patches.path" "$SVC_DIR/oxigotchi-patches.service"
+    echo "  Installed: oxigotchi-patches.path + .service"
+fi
+
+# ─── 8. Enable services ───
+echo ""
+echo "=== 8. Enable services ==="
+sudo mkdir -p "$SVC_DIR/multi-user.target.wants"
+sudo mkdir -p "$SVC_DIR/timers.target.wants"
+
+# Core services
+for svc in rusty-oxigotchi resize-rootfs emergency-ssh wifi-recovery wlan-keepalive \
+           bootlog usb0-fallback fix-ndev bt-agent wifi-watchdog; do
+    if [ -f "$SVC_DIR/${svc}.service" ]; then
+        sudo ln -sf "/etc/systemd/system/${svc}.service" "$SVC_DIR/multi-user.target.wants/${svc}.service"
+        echo "  Enabled: $svc"
+    fi
+done
+
+# Timers
+for timer in bt-keepalive buffer-cleaner nm-watchdog pisugar-watchdog; do
+    if [ -f "$SVC_DIR/${timer}.timer" ]; then
+        sudo ln -sf "/etc/systemd/system/${timer}.timer" "$SVC_DIR/timers.target.wants/${timer}.timer"
+        echo "  Enabled timer: $timer"
+    fi
+done
+
+# ─── 9. Hostname ───
+echo ""
+echo "=== 9. Set hostname ==="
+echo "oxigotchi" | sudo tee "$PI/etc/hostname" > /dev/null
+sudo sed -i '/^127\.0\.1\.1[[:space:]]/s/[[:space:]].*$/\toxigotchi/' "$PI/etc/hosts"
+if ! grep -q '127.0.1.1' "$PI/etc/hosts"; then
+    echo "127.0.1.1	oxigotchi" | sudo tee -a "$PI/etc/hosts" > /dev/null
+fi
+echo "  Hostname: oxigotchi"
+
+# ─── 10. User setup (pi:raspberry) ───
+echo ""
+echo "=== 10. User setup ==="
+# Set password for pi user
+# Generate hash for "raspberry"
+HASH=$(openssl passwd -6 raspberry)
+sudo sed -i "s|^pi:[^:]*:|pi:${HASH}:|" "$PI/etc/shadow"
+echo "  Password set to: raspberry"
+
+# ─── 11. SSH configuration ───
+echo ""
+echo "=== 11. SSH configuration ==="
+sudo mkdir -p "$PI/etc/ssh/sshd_config.d"
+printf 'PasswordAuthentication yes\nPermitRootLogin yes\nKbdInteractiveAuthentication yes\nUseDNS no\n' | sudo tee "$PI/etc/ssh/sshd_config.d/99-oxigotchi.conf" > /dev/null
+
+# Generate SSH host keys (fresh, unique per image build)
+sudo rm -f "$PI"/etc/ssh/ssh_host_*
+sudo ssh-keygen -A -f "$PI" 2>&1 || true
+sudo chmod 600 $PI/etc/ssh/ssh_host_*_key 2>/dev/null || true
+sudo chmod 644 $PI/etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+
+# NO authorized_keys — public release, password auth only
+# Remove immutable bits first (base image may have chattr +i on authorized_keys)
+sudo chattr -i "$PI/home/pi/.ssh/authorized_keys" 2>/dev/null || true
+sudo rm -rf "$PI/home/pi/.ssh" 2>/dev/null || true
+echo "  SSH: password auth, no authorized_keys, fresh host keys"
+
+# ─── 12. NetworkManager dual-IP config ───
+echo ""
+echo "=== 12. NetworkManager config ==="
+NM_DIR="$PI/etc/NetworkManager/system-connections"
+sudo mkdir -p "$NM_DIR"
+
+cat > /tmp/nm-usb0.conf <<'NM_USB'
+[connection]
+id=USB Gadget
+uuid=69b44b21-30f2-4bbf-a0d9-af5637ef9e25
+type=ethernet
+autoconnect=true
+autoconnect-priority=10
+interface-name=usb0
+
+[ethernet]
+
+[ipv4]
+address1=10.0.0.2/24
+address2=192.168.137.2/24
+gateway=10.0.0.1
+dns=8.8.8.8;1.1.1.1;
+method=manual
+
+[ipv6]
+addr-gen-mode=default
+method=disabled
+
+[proxy]
+NM_USB
+sudo cp /tmp/nm-usb0.conf "$NM_DIR/USB Gadget.nmconnection"
+sudo chmod 600 "$NM_DIR/USB Gadget.nmconnection"
+echo "  Dual-IP: 10.0.0.2 + 192.168.137.2 on usb0"
+
+# ─── 13. System configuration ───
+echo ""
+echo "=== 13. System configuration ==="
+
+# Default target: multi-user (no desktop)
+sudo ln -sf /lib/systemd/system/multi-user.target "$PI/etc/systemd/system/default.target"
+echo "  Default target: multi-user"
+
+# Neutralize rc.local
+printf '#!/bin/bash\nexit 0\n' | sudo tee "$PI/etc/rc.local" > /dev/null
+sudo chmod +x "$PI/etc/rc.local"
+echo "  rc.local neutralized"
+
+# Swap: 100MB
+printf 'CONF_SWAPSIZE=100\nCONF_SWAPFILE=/var/swap\n' | sudo tee "$PI/etc/dphys-swapfile" > /dev/null
+echo "  Swap: 100MB"
+
+# tmpfs for /tmp
+if ! grep -q '/tmp' "$PI/etc/fstab"; then
+    echo 'tmpfs /tmp tmpfs defaults,noatime,nosuid,size=50m 0 0' | sudo tee -a "$PI/etc/fstab" > /dev/null
+fi
+echo "  /tmp: tmpfs"
+
+# Disable apt daily timers
+sudo rm -f "$PI/etc/systemd/system/timers.target.wants/apt-daily.timer" 2>/dev/null
+sudo rm -f "$PI/etc/systemd/system/timers.target.wants/apt-daily-upgrade.timer" 2>/dev/null
+echo "  apt daily timers disabled"
+
+# Timezone: UTC (neutral for public release)
+sudo ln -sf /usr/share/zoneinfo/UTC "$PI/etc/localtime" 2>/dev/null
+echo "  Timezone: UTC"
+
+# Hardware watchdog in config.txt
+BOOT_CFG="$PI/boot/firmware/config.txt"
+if [ ! -f "$BOOT_CFG" ]; then
+    BOOT_CFG="/mnt/piboot/config.txt"
+fi
+if [ -f "$BOOT_CFG" ]; then
+    if ! grep -q 'dtparam=watchdog=on' "$BOOT_CFG"; then
+        echo 'dtparam=watchdog=on' | sudo tee -a "$BOOT_CFG" > /dev/null
+    fi
+    echo "  Hardware watchdog enabled"
+fi
+
+# Blacklist camera module
+sudo mkdir -p "$PI/etc/modprobe.d"
+echo "blacklist bcm2835_v4l2" | sudo tee "$PI/etc/modprobe.d/blacklist-camera.conf" > /dev/null
+echo "  Camera module blacklisted"
+
+# modules.conf — ensure brcmfmac loads
+MODULES_CONF="$PI/etc/modules-load.d/modules.conf"
+if [ -f "$MODULES_CONF" ]; then
+    if ! grep -q 'brcmfmac' "$MODULES_CONF"; then
+        echo 'brcmfmac' | sudo tee -a "$MODULES_CONF" > /dev/null
+    fi
+else
+    sudo mkdir -p "$(dirname "$MODULES_CONF")"
+    echo 'brcmfmac' | sudo tee "$MODULES_CONF" > /dev/null
+fi
+echo "  brcmfmac in modules.conf"
+
+# Disable cloud-init
+sudo mkdir -p "$PI/etc/cloud"
+sudo touch "$PI/etc/cloud/cloud-init.disabled"
+echo "  cloud-init disabled"
+
+# ─── 14. Disable unwanted services ───
+echo ""
+echo "=== 14. Disable unwanted services ==="
+for svc in ModemManager systemd-networkd usb0-ip rpi-usb-gadget-ics userconfig \
+           pi-helper rpi-eeprom-update; do
+    sudo rm -f "$PI/etc/systemd/system/multi-user.target.wants/${svc}.service" 2>/dev/null
+    echo "  Disabled: $svc"
+done
+sudo rm -f "$PI/etc/systemd/network/10-usb0.network" 2>/dev/null
+
+# ─── 15. Handshake directory ───
+echo ""
+echo "=== 15. Handshake directory ==="
+sudo mkdir -p "$PI/etc/oxigotchi/handshakes"
+echo "  /etc/oxigotchi/handshakes created"
+
+# ─── 16. Clean bloat ───
+echo ""
+echo "=== 16. Clean disk bloat ==="
+sudo rm -rf "$PI/root/.rustup" 2>/dev/null
+sudo rm -rf "$PI/root/go" 2>/dev/null
+sudo rm -f "$PI/home/pi/swapfile" 2>/dev/null
+sudo rm -rf "$PI/home/pi/.vscode-server" 2>/dev/null
+sudo rm -rf "$PI/var/log/journal/"* 2>/dev/null
+sudo rm -rf "$PI/var/cache/apt/archives/"*.deb 2>/dev/null
+sudo rm -rf "$PI/usr/share/doc/"* 2>/dev/null
+sudo rm -rf "$PI/usr/share/man/"* 2>/dev/null
+# Clear bash/shell history
+sudo rm -f "$PI/home/pi/.bash_history" 2>/dev/null
+sudo rm -f "$PI/root/.bash_history" 2>/dev/null
+echo "  Bloat cleaned"
+
+# ─── 17. Create sentinel ───
+echo ""
+echo "=== 17. Create sentinel file ==="
+echo "oxigotchi v${VERSION} release $(date -u '+%Y-%m-%dT%H:%M:%SZ')" | sudo tee "$PI/.oxigotchi-baked" > /dev/null
+echo "  Sentinel created"
+
+# Remove rootfs-expanded sentinel so resize runs on first boot
+sudo rm -f "$PI/var/lib/.rootfs-expanded" 2>/dev/null
+echo "  rootfs-expanded sentinel removed (will auto-expand on first boot)"
+
+
+# ═══════════════════════════════════════════════
+# VERIFICATION
+# ═══════════════════════════════════════════════
+echo ""
+echo "============================================="
+echo "=== VERIFICATION ==="
+echo "============================================="
+echo ""
+ERRORS=0
+
+verify() {
+    local label="$1"
+    local path="$2"
+    if [ -e "$path" ]; then
+        echo "  OK: $label"
+    else
+        echo "  MISSING: $label ($path)"
+        ERRORS=$((ERRORS+1))
+    fi
+}
+
+echo "--- Binary ---"
+verify "rusty-oxigotchi" "$PI/usr/local/bin/rusty-oxigotchi"
+file "$PI/usr/local/bin/rusty-oxigotchi" 2>/dev/null | grep -o "aarch64\|ARM"
+
+echo ""
+echo "--- Config ---"
+verify "config.toml" "$PI/etc/oxigotchi/config.toml"
+verify "plugins dir" "$PI/etc/oxigotchi/plugins"
+echo "  Plugin count: $(ls "$PI/etc/oxigotchi/plugins/"*.lua 2>/dev/null | wc -l)"
+echo "  Face count: $(ls "$PI/etc/oxigotchi/faces/"*.png 2>/dev/null | wc -l)"
+
+echo ""
+echo "--- Hostname ---"
+cat "$PI/etc/hostname"
+grep '127.0.1.1' "$PI/etc/hosts" || echo "  WARNING: no 127.0.1.1 in hosts"
+
+echo ""
+echo "--- SSH ---"
+echo "  Host keys: $(ls $PI/etc/ssh/ssh_host_*_key 2>/dev/null | wc -l)"
+cat "$PI/etc/ssh/sshd_config.d/99-oxigotchi.conf" 2>/dev/null
+if [ -f "$PI/home/pi/.ssh/authorized_keys" ]; then
+    echo "  WARNING: authorized_keys exists (should be removed for public release)"
+    ERRORS=$((ERRORS+1))
+else
+    echo "  OK: No authorized_keys (public release)"
+fi
+
+echo ""
+echo "--- User ---"
+if grep -q '^pi:' "$PI/etc/shadow"; then
+    echo "  OK: pi user exists"
+else
+    echo "  MISSING: pi user in shadow"
+    ERRORS=$((ERRORS+1))
+fi
+
+echo ""
+echo "--- Services ---"
+for svc in rusty-oxigotchi resize-rootfs emergency-ssh wifi-recovery wlan-keepalive \
+           bootlog usb0-fallback fix-ndev bt-agent wifi-watchdog; do
+    verify "$svc.service" "$PI/etc/systemd/system/${svc}.service"
+done
+
+echo ""
+echo "--- Enabled services ---"
+echo "  multi-user.target.wants:"
+ls "$PI/etc/systemd/system/multi-user.target.wants/" 2>/dev/null | sort | sed 's/^/    /'
+echo "  timers.target.wants:"
+ls "$PI/etc/systemd/system/timers.target.wants/" 2>/dev/null | sort | sed 's/^/    /'
+
+echo ""
+echo "--- Helper scripts ---"
+for f in wifi-recovery.sh bootlog.sh usb0-fallback.sh fix_ndev_on_boot.sh bt-keepalive.sh \
+         buffer-cleaner.sh pisugar-watchdog.sh safe-shutdown.sh wlan_keepalive; do
+    verify "$f" "$PI/usr/local/bin/$f"
+done
+
+echo ""
+echo "--- CRLF check ---"
+CRLF_BAD=0
+for f in "$PI"/usr/local/bin/*.sh; do
+    if [ -f "$f" ] && grep -qlP '\r' "$f" 2>/dev/null; then
+        echo "  BAD CRLF: $(basename "$f")"
+        CRLF_BAD=$((CRLF_BAD+1))
+    fi
+done
+if [ "$CRLF_BAD" -eq 0 ]; then
+    echo "  OK: No CRLF in scripts"
+else
+    ERRORS=$((ERRORS+CRLF_BAD))
+fi
+
+echo ""
+echo "--- NetworkManager ---"
+ls "$NM_DIR/"*.nmconnection 2>/dev/null | sed 's/^/  /'
+
+echo ""
+echo "--- First-boot auto-expand ---"
+verify "resize-rootfs.service" "$SVC_DIR/resize-rootfs.service"
+if [ -f "$PI/var/lib/.rootfs-expanded" ]; then
+    echo "  BAD: rootfs-expanded sentinel exists (resize won't run)"
+    ERRORS=$((ERRORS+1))
+else
+    echo "  OK: No sentinel (will auto-expand on first boot)"
+fi
+
+echo ""
+echo "--- Personal info check ---"
+# Check for personal SSIDs, emails, SSH keys
+PERSONAL=0
+if grep -rq "userind\|user@" "$PI/etc/oxigotchi/" 2>/dev/null; then
+    echo "  BAD: Personal email found in config"
+    PERSONAL=$((PERSONAL+1))
+fi
+if [ -f "$PI/home/pi/.ssh/authorized_keys" ]; then
+    echo "  BAD: authorized_keys present"
+    PERSONAL=$((PERSONAL+1))
+fi
+if [ "$PERSONAL" -eq 0 ]; then
+    echo "  OK: No personal info detected"
+else
+    ERRORS=$((ERRORS+PERSONAL))
+fi
+
+echo ""
+echo "--- Disk usage ---"
+sudo du -sh "$PI/" 2>/dev/null
+
+# ─── Unmount ───
+echo ""
+echo "=== Unmounting ==="
+# Remove trap so we don't double-unmount
+trap - EXIT
+sync
+sudo umount /mnt/piboot
+sudo umount /mnt/piroot
+sudo losetup -D
+
+echo ""
+if [ "$ERRORS" -gt 0 ]; then
+    echo "============================================="
+    echo "=== IMAGE BAKED WITH $ERRORS ERRORS       ==="
+    echo "============================================="
+    echo ""
+    echo "Fix errors and re-run. Image NOT shrunk/zipped."
+    exit 1
+fi
+
+# ─── Shrink image ───
+echo ""
+echo "=== Shrinking image with pishrink.sh ==="
+sudo pishrink.sh -s "$RELEASE_IMG" 2>&1 | tail -10
+echo "  Shrink complete"
+
+# ─── Zip ───
+echo ""
+echo "=== Zipping release image ==="
+ZIP_OUT="/mnt/d/oxigotchi-v${VERSION}-release.img.zip"
+rm -f "$ZIP_OUT"
+cd /mnt/d && zip -9 "$(basename "$ZIP_OUT")" "$(basename "$RELEASE_IMG")"
+echo ""
+echo "============================================="
+echo "=== RELEASE IMAGE READY                   ==="
+echo "============================================="
+echo ""
+echo "Image: $RELEASE_IMG"
+echo "Zip:   $ZIP_OUT"
+echo "Size:  $(du -sh "$ZIP_OUT" | cut -f1)"
+echo ""
+echo "Users burn this to SD card, boot the Pi, and connect via:"
+echo "  ssh pi@10.0.0.2  (password: raspberry)"
+echo "  ssh pi@192.168.137.2  (Windows RNDIS fallback)"
+echo ""
+echo "First boot will auto-expand the filesystem to fill the SD card."

@@ -1,7 +1,7 @@
 #!/bin/bash
 # bake_v3.sh — Bake Rusty Oxigotchi v3.0 image
 # Adds the Rust daemon on top of a v2 base image.
-# Run inside WSL: sudo bash /mnt/c/msys64/home/user/oxigotchi/tools/bake_v3.sh
+# Run inside WSL: sudo bash /path/to/oxigotchi/tools/bake_v3.sh
 set -euo pipefail
 
 echo "============================================="
@@ -11,7 +11,7 @@ echo ""
 
 # ─── Setup ───
 IMG=/mnt/d/oxigotchi-v3.0.img
-REPO=/mnt/c/msys64/home/user/oxigotchi
+REPO=/path/to/oxigotchi
 BINARY="$REPO/rust/target/aarch64-unknown-linux-gnu/release/oxigotchi"
 
 if [ ! -f "$IMG" ]; then
@@ -120,7 +120,7 @@ done
 # ─── V3.6: Install v5 firmware ───
 echo ""
 echo "=== V3.6. Install v5 firmware ==="
-FW_SRC="/mnt/c/msys64/home/user/pwnagotchi/firmware_analysis/brcmfmac43436-sdio.v5.bin"
+FW_SRC="/path/to/brcmfmac43436-sdio.v5.bin"
 FW_DST="$PI/lib/firmware/brcm/brcmfmac43436-sdio.bin"
 if [ -f "$FW_SRC" ]; then
     # Backup original

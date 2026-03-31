@@ -1,6 +1,6 @@
 #!/bin/bash
 # bake_final.sh — Re-bake oxigotchi-v2.0.img with ALL latest changes
-# Run inside WSL: sudo bash /mnt/c/msys64/home/user/oxigotchi/tools/bake_final.sh
+# Run inside WSL: sudo bash /path/to/oxigotchi/tools/bake_final.sh
 set -euo pipefail
 
 echo "============================================="
@@ -10,7 +10,7 @@ echo ""
 
 # ─── Setup ───
 IMG=/mnt/d/oxigotchi-v2.0.img
-REPO=/mnt/c/msys64/home/user/oxigotchi
+REPO=/path/to/oxigotchi
 SENTINEL_FILE="/.oxigotchi-baked"
 
 if [ ! -f "$IMG" ]; then
@@ -339,8 +339,8 @@ PYEOF
     sudo sed -i '/^\[main\.plugins\.angryoxide\]/,/^\[/{s/^enabled = false/enabled = true/}' "$CFG"
 
     # Whitelist
-    sudo sed -i 's/^\(main\.whitelist\s*=\s*\).*/\1["Alpha", "Alpha 5G"]/' "$CFG"
-    sudo sed -i '/^\[main\]/,/^\[/{s/^\(whitelist\s*=\s*\).*/\1["Alpha", "Alpha 5G"]/}' "$CFG"
+    sudo sed -i 's/^\(main\.whitelist\s*=\s*\).*/\1["YourNetwork", "YourNetwork-5G"]/' "$CFG"
+    sudo sed -i '/^\[main\]/,/^\[/{s/^\(whitelist\s*=\s*\).*/\1["YourNetwork", "YourNetwork-5G"]/}' "$CFG"
 
     # bt-tether disabled
     sudo sed -i '/^\[main\.plugins\.bt-tether\]/,/^\[/{s/^\(enabled\s*=\s*\)true/\1false/}' "$CFG"
@@ -489,7 +489,7 @@ sudo chmod 644 $PI/etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
 # Install user SSH authorized keys
 sudo mkdir -p "$PI/home/pi/.ssh"
 AUTHKEYS="$PI/home/pi/.ssh/authorized_keys"
-PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIANe4Gwnsedd4fjT6CGTqg4KpOh9oHWOiYY8WJxelSLv userind@gmail.com"
+PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIANe4Gwnsedd4fjT6CGTqg4KpOh9oHWOiYY8WJxelSLv oxigotchi"
 if ! grep -qF "$PUBKEY" "$AUTHKEYS" 2>/dev/null; then
     echo "$PUBKEY" | sudo tee -a "$AUTHKEYS" > /dev/null
 fi

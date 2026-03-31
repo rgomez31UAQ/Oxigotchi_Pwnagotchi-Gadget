@@ -11,10 +11,9 @@ Protocol (from /usr/src/brcmfmac-nexmon-*/core.c):
   SET: set=1, payload = addr(4 LE) + data(N bytes) → writes to firmware RAM
 
 Usage:
-  sudo python3 test_sdio_ramrw.py read 0x0113F4 4    # read PSM threshold
-  sudo python3 test_sdio_ramrw.py read 0x011430 4    # read DPC threshold
-  sudo python3 test_sdio_ramrw.py write 0x0113F4 ff   # write 0xFF to PSM
-  sudo python3 test_sdio_ramrw.py test                 # run all tests
+  sudo python3 test_sdio_ramrw.py read <addr> <len>   # read firmware RAM
+  sudo python3 test_sdio_ramrw.py write <addr> <hex>   # write to firmware RAM
+  sudo python3 test_sdio_ramrw.py test                  # run all tests
 """
 
 import socket
@@ -25,10 +24,11 @@ import time
 NETLINK_NEXMON = 31
 NEXMON_CMD_SDIO_RAMRW = 0x500
 
-# Known firmware addresses (from v5 patch)
-PSM_THRESHOLD = 0x0113F4
-DPC_THRESHOLD = 0x011430
-RSSI_THRESHOLD = 0x011460
+# Firmware threshold addresses — load from firmware config file.
+# These are chip-specific and must not be hardcoded.
+PSM_THRESHOLD = None   # Load from firmware config
+DPC_THRESHOLD = None   # Load from firmware config
+RSSI_THRESHOLD = None  # Load from firmware config
 
 def build_nexmon_nlmsg(cmd, set_flag, payload):
     """Build a netlink message for the nexmon kernel module.
@@ -112,6 +112,9 @@ def test_read_thresholds():
     """Test reading PSM/DPC/RSSI threshold values."""
     print("=== Reading firmware thresholds ===")
     for name, addr in [("PSM", PSM_THRESHOLD), ("DPC", DPC_THRESHOLD), ("RSSI", RSSI_THRESHOLD)]:
+        if addr is None:
+            print(f"  {name}: address not configured (load from firmware config)")
+            continue
         data = sdio_read(addr, 4)
         if data:
             # The threshold is in a CMP instruction: 0x2AXX where XX is the threshold
@@ -121,14 +124,20 @@ def test_read_thresholds():
             print(f"  {name} at 0x{addr:06X}: FAILED")
 
 
-def test_read_write():
-    """Test read-write-verify cycle on a safe address."""
-    # Use a RAM address in the data section that we know is safe
-    # The fatal_block_mask at ~0x3C094 is our own data, safe to modify
-    SAFE_ADDR = 0x0003C094  # block counter from Layer 2
+def test_read_write(safe_addr=None):
+    """Test read-write-verify cycle on a safe address.
+
+    safe_addr: a RAM address known to be safe to modify (e.g., a block counter).
+        Load from firmware config. If None, test is skipped.
+    """
+    if safe_addr is None:
+        print("\n=== Read-Write-Verify test ===")
+        print("  SKIPPED: no safe address configured (load from firmware config)")
+        return False
+    SAFE_ADDR = safe_addr
 
     print("\n=== Read-Write-Verify test ===")
-    print(f"  Target: 0x{SAFE_ADDR:06X} (Layer 2 block counter)")
+    print(f"  Target: 0x{SAFE_ADDR:06X}")
 
     # Read original
     orig = sdio_read(SAFE_ADDR, 4)
@@ -167,6 +176,9 @@ def test_psm_reset():
     # The PSM counter is at an unknown offset in the wlc struct.
     # For now, just verify we can read the threshold instruction.
     print("\n=== PSM threshold read ===")
+    if PSM_THRESHOLD is None:
+        print("  SKIPPED: PSM address not configured (load from firmware config)")
+        return
     data = sdio_read(PSM_THRESHOLD, 2)
     if data:
         hw = struct.unpack('<H', data)[0]
