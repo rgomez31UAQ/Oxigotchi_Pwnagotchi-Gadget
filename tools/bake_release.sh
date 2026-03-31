@@ -246,11 +246,27 @@ echo "  Hostname: oxigotchi"
 # ─── 10. User setup (pi:raspberry) ───
 echo ""
 echo "=== 10. User setup ==="
-# Set password for pi user
-# Generate hash for "raspberry"
-HASH=$(openssl passwd -6 raspberry)
-sudo sed -i "s|^pi:[^:]*:|pi:${HASH}:|" "$PI/etc/shadow"
-echo "  Password set to: raspberry"
+# Set password via first-boot service (chpasswd on the Pi itself is reliable;
+# cross-compiled openssl hashes can fail due to glibc/PAM differences)
+cat <<'UNIT' | sudo tee "$PI/etc/systemd/system/oxigotchi-firstboot.service" > /dev/null
+[Unit]
+Description=Oxigotchi first-boot setup
+After=multi-user.target
+ConditionPathExists=/etc/oxigotchi/.firstboot
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'echo "pi:raspberry" | chpasswd && rm /etc/oxigotchi/.firstboot && systemctl disable oxigotchi-firstboot.service'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo mkdir -p "$PI/etc/oxigotchi"
+sudo touch "$PI/etc/oxigotchi/.firstboot"
+sudo ln -sf /etc/systemd/system/oxigotchi-firstboot.service \
+    "$PI/etc/systemd/system/multi-user.target.wants/oxigotchi-firstboot.service"
+echo "  Password: raspberry (set by first-boot service)"
 
 # ─── 11. SSH configuration ───
 echo ""
