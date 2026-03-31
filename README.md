@@ -20,7 +20,7 @@ The result: 27,982 injected frames in a 5-minute stress test. Zero crashes. The 
 
 ## What It's Like
 
-You flash the SD card, plug in the Pi, and 5 seconds later a bull face appears on the e-ink display. AngryOxide is already scanning.
+You flash the SD card, plug in the Pi, and about 30 seconds later a bull face appears on the e-ink display. AngryOxide is already scanning.
 
 Walk through a busy area and the bull comes alive. He sweeps channels, spots APs, starts sending PMKID associations and deauths. His face changes — **intense** when attacking, **cool** when deauthing, **happy** when he captures a handshake, **excited** when he's on a streak. Leave him in a dead zone and he gets **bored**, then **sad**, then **lonely**. He'll mutter things like *"Even the APs left..."* or *"Tumbleweed just rolled by my antenna."*
 
@@ -38,7 +38,7 @@ He's a pet that also happens to run 12 concurrent attack types across WiFi and B
 | WiFi attack types | 2 | 6 (+ CSA, disassoc, anon reassoc, rogue M2) |
 | BT attack types | 0 | 6 (ATT fuzz, BLE ADV, KNOB, L2CAP fuzz/flood, SMP) |
 | Memory | ~80 MB | ~10 MB |
-| Boot time | 2-3 min | <5 sec |
+| Boot time | 2-3 min | ~30 sec |
 | RF awareness | None | 10 frame types, 256 frames/ms, live RF stats |
 | Binary size | 150MB+ (Python + Go + bettercap) | ~5 MB (single Rust binary) |
 | SD card lifespan | ~1-2 years | 10+ years (tmpfs capture pipeline) |
@@ -55,7 +55,7 @@ Oxigotchi replaces the entire stack with [AngryOxide](https://github.com/Ragnt/A
 
 The Rust daemon wraps AO in a full lifecycle manager: crash recovery with exponential backoff, stdout parsing for real-time AP counts, tmpfs-based capture pipeline that protects the SD card. When AO finds handshakes, the bull gets happy. When AO crashes (rare, but it happens), the bull shows his **AO Crashed** face, waits a few seconds, and restarts it automatically. You never have to intervene.
 
-The combination of patched firmware (no crashes) + AO (validated captures) + Rust daemon (10MB RAM, <5s boot) is what makes Oxigotchi actually work as a carry-everywhere tool instead of a weekend project that needs constant babysitting.
+The combination of patched firmware (no crashes) + AO (validated captures) + Rust daemon (10MB RAM, ~30s boot) is what makes Oxigotchi actually work as a carry-everywhere tool instead of a weekend project that needs constant babysitting.
 
 ---
 
@@ -129,7 +129,7 @@ The web dashboard stays accessible no matter what. You will never be locked out.
 3. **Insert the SD card** into your Pi Zero 2W.
 4. **Windows users:** install the [USB gadget driver](https://github.com/jayofelony/pwnagotchi/releases) first. Mac/Linux don't need this.
 5. **Plug in** the micro USB **data** port (center port, not the edge one).
-6. **Wait 5 seconds.** The bull appears. AngryOxide is scanning. You're live.
+6. **Wait about 30 seconds.** The bull appears. AngryOxide is scanning. You're live.
 
 > **Default credentials** (change after first boot):
 > - SSH: `ssh pi@10.0.0.2` — password `raspberry`
