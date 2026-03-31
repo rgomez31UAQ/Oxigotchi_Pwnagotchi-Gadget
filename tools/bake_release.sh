@@ -103,6 +103,9 @@ cat > /tmp/oxigotchi-config.toml <<'CFGEOF'
 
 [general]
 name = "oxigotchi"
+# WiFi aggression: 1=Chill, 2=Lurk, 3=Prowl, 4=Hunt, 5=RAGE, 6=FURY, 7=YOLO
+# Level 1 is safest for new users — scan only, no active attacks
+rage_level = 1
 
 [wifi]
 # Networks to never attack (your home network)
@@ -395,6 +398,20 @@ for svc in ModemManager systemd-networkd usb0-ip rpi-usb-gadget-ics userconfig \
     echo "  Disabled: $svc"
 done
 sudo rm -f "$PI/etc/systemd/network/10-usb0.network" 2>/dev/null
+
+# Kill pwnagotchi and bettercap — rusty-oxigotchi replaces them entirely.
+# Mask (not just disable) prevents re-enabling.
+for svc in pwnagotchi bettercap; do
+    sudo rm -f "$PI/etc/systemd/system/multi-user.target.wants/${svc}.service" 2>/dev/null
+    sudo ln -sf /dev/null "$PI/etc/systemd/system/${svc}.service" 2>/dev/null
+    echo "  Masked: $svc"
+done
+# Remove the old splash service — rusty-oxigotchi renders its own boot/shutdown faces
+sudo rm -f "$PI/etc/systemd/system/oxigotchi-splash.service" 2>/dev/null
+sudo rm -f "$PI/etc/systemd/system/sysinit.target.wants/oxigotchi-splash.service" 2>/dev/null
+sudo rm -f "$PI/etc/systemd/system/pwnagotchi.service.d/pwnagotchi-splash-delay.conf" 2>/dev/null
+sudo rmdir "$PI/etc/systemd/system/pwnagotchi.service.d" 2>/dev/null || true
+echo "  Removed: oxigotchi-splash.service (rusty-oxigotchi handles display)"
 
 # ─── 15. Handshake directory ───
 echo ""

@@ -235,6 +235,9 @@ pub struct DaemonState {
     pub rage_level: u8,
     pub pending_rage_change: Option<Option<u8>>, // Some(Some(n)) = set level n, Some(None) = disable
 
+    // -- epoch sleep --
+    pub epoch_sleep_secs: u64,
+
     // -- smart skip --
     pub pending_skip_captured: Option<bool>,
 
@@ -410,6 +413,7 @@ impl DaemonState {
             rage_enabled: false,
             rage_level: 1,
             pending_rage_change: None,
+            epoch_sleep_secs: 0,
             pending_skip_captured: None,
             pending_capture_all: None,
             wpasec_api_key: String::new(),
@@ -503,6 +507,7 @@ struct WsSnapshot {
     display_rotation: u16,
     min_rssi: i8,
     ap_ttl_secs: u64,
+    epoch_sleep_secs: u64,
     // -- bt manual attack result --
     bt_manual_result: Option<BtManualResult>,
 }
@@ -704,6 +709,7 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
         display_rotation: s.display_rotation,
         min_rssi: s.min_rssi,
         ap_ttl_secs: s.ap_ttl_secs,
+        epoch_sleep_secs: s.epoch_sleep_secs,
         bt_manual_result: s.bt_manual_result.clone(),
     }
 }
@@ -742,6 +748,7 @@ pub struct StatusResponse {
     pub display_rotation: u16,
     pub min_rssi: i8,
     pub ap_ttl_secs: u64,
+    pub epoch_sleep_secs: u64,
 }
 
 /// Attack stats returned by GET /api/attacks.
@@ -1219,6 +1226,7 @@ pub struct SettingsUpdate {
     pub display_rotation: Option<u16>,
     pub min_rssi: Option<i8>,
     pub ap_ttl_secs: Option<u64>,
+    pub epoch_sleep_secs: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,6 +1303,7 @@ pub struct StatusParams<'a> {
     pub display_rotation: u16,
     pub min_rssi: i8,
     pub ap_ttl_secs: u64,
+    pub epoch_sleep_secs: u64,
 }
 
 /// Build a [`StatusResponse`] from a [`StatusParams`] snapshot.
@@ -1316,6 +1325,7 @@ pub fn build_status(p: &StatusParams<'_>) -> StatusResponse {
         display_rotation: p.display_rotation,
         min_rssi: p.min_rssi,
         ap_ttl_secs: p.ap_ttl_secs,
+        epoch_sleep_secs: p.epoch_sleep_secs,
     }
 }
 
@@ -1413,6 +1423,7 @@ async fn status_handler(State(state): State<SharedState>) -> Json<StatusResponse
         display_rotation: s.display_rotation,
         min_rssi: s.min_rssi,
         ap_ttl_secs: s.ap_ttl_secs,
+        epoch_sleep_secs: s.epoch_sleep_secs,
     })
 }
 
@@ -2161,6 +2172,9 @@ async fn settings_handler(
     if let Some(ttl) = body.ap_ttl_secs {
         s.ap_ttl_secs = ttl.clamp(30, 600);
     }
+    if let Some(sleep) = body.epoch_sleep_secs {
+        s.epoch_sleep_secs = sleep.clamp(0, 30);
+    }
     s.pending_settings = Some(body);
     Json(ActionResponse {
         ok: true,
@@ -2760,6 +2774,7 @@ mod tests {
             display_rotation: 180,
             min_rssi: -100,
             ap_ttl_secs: 120,
+            epoch_sleep_secs: 0,
         });
         assert_eq!(status.name, "oxi");
         assert_eq!(status.epoch, 42);
@@ -2786,6 +2801,7 @@ mod tests {
             display_rotation: 180,
             min_rssi: -100,
             ap_ttl_secs: 120,
+            epoch_sleep_secs: 0,
         });
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"name\":\"oxi\""));

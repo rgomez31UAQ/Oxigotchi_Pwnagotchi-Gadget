@@ -256,6 +256,15 @@ input:checked+.slider:before{transform:translateX(22px)}
 </div>
 <div class="rage-disclaimer" id="rage-yolo">&#9888; YOLO: Only combo that crashed in stress tests. AO may die &mdash; daemon auto-recovers.</div>
 
+<div style="margin-top:10px">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="font-size:12px;color:#888">Epoch sleep:</div>
+<input type="number" id="epoch-sleep" min="0" max="30" value="0" style="width:48px;background:#0a1628;color:#e0e0e0;border:1px solid #0f3460;border-radius:4px;padding:2px 6px;font-size:12px;text-align:center" onchange="setEpochSleep(parseInt(this.value)||0)">
+<div style="font-size:12px;color:#888">sec</div>
+</div>
+<div style="font-size:10px;color:#555;margin-top:2px">Pause between epochs. Default 0. Increase to 3&ndash;5 if WiFi firmware keeps crashing.</div>
+</div>
+
 <div style="margin-top:12px;padding-top:10px;border-top:1px solid #0f3460">
 <div style="font-size:12px;color:#888;margin-bottom:4px">Attack Rate</div>
 <div class="sub">All rates stable with v6 firmware patch. Rate 3 + 500ms + all channels is the only crash combo.</div>
@@ -1361,6 +1370,14 @@ function slideRage(level) {
     });
 }
 
+function setEpochSleep(secs) {
+    secs = Math.max(0, Math.min(30, secs));
+    document.getElementById('epoch-sleep').value = secs;
+    api('POST', '/api/settings', {epoch_sleep_secs: secs}).then(function(r) {
+        if (r && r.ok) toast('Epoch sleep: ' + secs + 's');
+    });
+}
+
 function breakRage() {
     var toggle = document.getElementById('rage-toggle');
     if (toggle.checked) {
@@ -1722,6 +1739,7 @@ function saveSettings() {
     body.display_rotation = parseInt(document.getElementById('setting-rotation').value) || 0;
     body.min_rssi = parseInt(document.getElementById('setting-rssi').value) || -100;
     body.ap_ttl_secs = parseInt(document.getElementById('setting-ttl').value) || 120;
+    body.epoch_sleep_secs = parseInt(document.getElementById('epoch-sleep').value) || 0;
     api('POST', '/api/settings', body).then(function(r) {
         if (r && r.ok) toast('Settings saved');
     });
@@ -1757,6 +1775,10 @@ function syncSettingsFromData(d) {
     if (d.ap_ttl_secs != null) {
         var ttl = document.getElementById('setting-ttl');
         if (ttl && !ttl.matches(':active')) { ttl.value = d.ap_ttl_secs; document.getElementById('setting-ttl-val').textContent = d.ap_ttl_secs; }
+    }
+    if (d.epoch_sleep_secs != null) {
+        var sl = document.getElementById('epoch-sleep');
+        if (sl && !sl.matches(':focus')) sl.value = d.epoch_sleep_secs;
     }
 }
 

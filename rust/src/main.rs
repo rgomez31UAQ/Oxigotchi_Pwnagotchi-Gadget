@@ -46,8 +46,8 @@ fn ensure_tmpfs_capture_dir() -> String {
     dir.to_string_lossy().to_string()
 }
 
-/// Epoch duration in seconds.
-const EPOCH_DURATION_SECS: u64 = 30;
+/// Default epoch sleep in seconds (between active phases).
+const DEFAULT_EPOCH_SLEEP_SECS: u64 = 0;
 /// Default attack rate. All rates (1-3) stable with v6 firmware patch.
 const ATTACK_RATE: u32 = 1;
 /// Default capture directory.
@@ -147,7 +147,7 @@ impl Daemon {
         ws_tx: tokio::sync::broadcast::Sender<String>,
     ) -> Self {
         let screen = display::Screen::new(config.display.clone());
-        let epoch_loop = epoch::EpochLoop::new(Duration::from_secs(EPOCH_DURATION_SECS));
+        let epoch_loop = epoch::EpochLoop::new(Duration::from_secs(DEFAULT_EPOCH_SLEEP_SECS));
         let wifi = wifi::WifiManager::new();
         let mut attacks = attacks::AttackScheduler::new(ATTACK_RATE);
 
@@ -599,9 +599,10 @@ impl Daemon {
                     })
                     .collect();
 
+                let sleep_secs = self.shared_state.lock().unwrap().epoch_sleep_secs;
                 let rf = qpu::rf::RfEnvironment::compute(
                     &classified,
-                    EPOCH_DURATION_SECS as f32,
+                    sleep_secs as f32 + 10.0, // active phases ~10s + configurable sleep
                     &ao_bssids,
                 );
 
@@ -702,7 +703,10 @@ impl Daemon {
         // Sub-epoch loop: sleep in 5s ticks for IP rotation in SAFE mode.
         // In RAGE mode, just sleeps the full duration (no display changes).
         const IP_ROTATE_SECS: u64 = 5;
-        let total_secs = self.epoch_loop.epoch_duration.as_secs();
+        let total_secs = {
+            let s = self.shared_state.lock().unwrap();
+            s.epoch_sleep_secs
+        };
         let ticks = total_secs / IP_ROTATE_SECS;
         let remainder = total_secs % IP_ROTATE_SECS;
 
@@ -1930,6 +1934,14 @@ impl Daemon {
                 info!("web: AP TTL set to {clamped}s");
                 any_command = true;
             }
+            if let Some(sleep) = update.epoch_sleep_secs {
+                let clamped = sleep.clamp(0, 30);
+                let mut s = self.shared_state.lock().unwrap();
+                s.epoch_sleep_secs = clamped;
+                self.epoch_loop.epoch_duration = Duration::from_secs(clamped);
+                info!("web: epoch sleep set to {clamped}s");
+                any_command = true;
+            }
         }
 
         // Persist runtime state if any command was processed
@@ -2104,6 +2116,7 @@ impl Daemon {
             "display_rotation": self.screen.config.rotation,
             "min_rssi": s.min_rssi,
             "ap_ttl_secs": s.ap_ttl_secs,
+            "epoch_sleep_secs": s.epoch_sleep_secs,
             "operating_mode": self.mode.as_str(),
             "bt_scan_mode": self.config.bt_attacks.scan_mode.as_str(),
         });
@@ -2295,6 +2308,12 @@ impl Daemon {
         if let Some(ttl) = state.get("ap_ttl_secs").and_then(|v| v.as_u64()) {
             let mut s = self.shared_state.lock().unwrap();
             s.ap_ttl_secs = ttl.clamp(30, 600);
+        }
+        if let Some(sleep) = state.get("epoch_sleep_secs").and_then(|v| v.as_u64()) {
+            let clamped = sleep.clamp(0, 30);
+            let mut s = self.shared_state.lock().unwrap();
+            s.epoch_sleep_secs = clamped;
+            self.epoch_loop.epoch_duration = Duration::from_secs(clamped);
         }
 
         // Restore operating mode — boot() checks self.mode to decide
@@ -3192,6 +3211,7 @@ impl Daemon {
             display_rotation: s.display_rotation,
             min_rssi: s.min_rssi,
             ap_ttl_secs: s.ap_ttl_secs,
+            epoch_sleep_secs: s.epoch_sleep_secs,
         })
     }
 
