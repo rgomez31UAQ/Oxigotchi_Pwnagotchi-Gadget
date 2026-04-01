@@ -44,6 +44,9 @@ pi_config.toml
 # Claude Code
 .claude/
 
+# Git worktrees
+.worktrees/
+
 # Private announcements
 discord_announcement.md
 docs/superpowers/
