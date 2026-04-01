@@ -250,7 +250,7 @@ impl Mood {
 
 impl Default for Mood {
     fn default() -> Self {
-        Self::new(0.5)
+        Self::new(1.0)
     }
 }
 
@@ -267,15 +267,15 @@ pub mod mood_deltas {
     /// Mood increase on level up.
     pub const LEVEL_UP: f32 = 0.2;
     /// Mood decrease on blind epoch (no handshakes).
-    pub const BLIND_EPOCH: f32 = -0.02;
+    pub const BLIND_EPOCH: f32 = -0.01;
     /// Mood decrease on crash (fw/ao).
-    pub const CRASH: f32 = -0.1;
+    pub const CRASH: f32 = -0.05;
     /// Mood decrease per idle epoch (long stretch with nothing).
-    pub const IDLE_DECAY: f32 = -0.01;
+    pub const IDLE_DECAY: f32 = -0.005;
     /// Mood increase in busy RF environment (>100 frames/epoch).
     pub const RF_BUSY: f32 = 0.03;
     /// Mood decrease in quiet RF environment (0 frames).
-    pub const RF_QUIET: f32 = -0.01;
+    pub const RF_QUIET: f32 = -0.005;
     /// Mood increase during deauth storm (>10/sec).
     pub const RF_DEAUTH_STORM: f32 = 0.05;
     /// Mood increase during probe flood (>20/sec).
@@ -441,7 +441,7 @@ pub struct Personality {
 }
 
 impl Personality {
-    /// Create a new personality with default mood (0.5) and no overrides.
+    /// Create a new personality with default mood (1.0) and no overrides.
     pub fn new() -> Self {
         // Seed current_status from the default face's pool so the fallback
         // chain never shows a mood-based static message that disagrees
@@ -1250,8 +1250,8 @@ mod tests {
     #[test]
     fn test_mood_default() {
         let mood = Mood::default();
-        assert_eq!(mood.value(), 0.5);
-        assert_eq!(mood.face(), Face::Awake);
+        assert_eq!(mood.value(), 1.0);
+        assert_eq!(mood.face(), Face::Excited);
     }
 
     #[test]
@@ -1331,21 +1331,21 @@ mod tests {
     fn test_mood_blind_epoch_delta() {
         let mut mood = Mood::new(0.5);
         mood.adjust(mood_deltas::BLIND_EPOCH);
-        assert!((mood.value() - 0.48).abs() < 0.001);
+        assert!((mood.value() - 0.49).abs() < 0.001);
     }
 
     #[test]
     fn test_mood_crash_delta() {
         let mut mood = Mood::new(0.5);
         mood.adjust(mood_deltas::CRASH);
-        assert!((mood.value() - 0.4).abs() < 0.001);
+        assert!((mood.value() - 0.45).abs() < 0.001);
     }
 
     #[test]
     fn test_mood_idle_decay_delta() {
         let mut mood = Mood::new(0.5);
         mood.adjust(mood_deltas::IDLE_DECAY);
-        assert!((mood.value() - 0.49).abs() < 0.001);
+        assert!((mood.value() - 0.495).abs() < 0.001);
     }
 
     // ====================================================================
@@ -1355,6 +1355,7 @@ mod tests {
     #[test]
     fn test_personality_handshake() {
         let mut p = Personality::new();
+        p.mood = Mood::new(0.5); // start mid-range so handshake can increase
         let initial = p.mood.value();
         p.on_handshake();
         assert!(p.mood.value() > initial);
@@ -1396,6 +1397,7 @@ mod tests {
     #[test]
     fn test_personality_handshake_levelup_boosts_mood() {
         let mut p = Personality::new();
+        p.mood = Mood::new(0.5); // start mid-range for predictable math
         // Level 1 needs 1 XP. Handshake = 100 XP, so this should level up (multiple times).
         let leveled = p.on_handshake();
         assert!(leveled);
@@ -1408,6 +1410,7 @@ mod tests {
     #[test]
     fn test_personality_blind_epochs() {
         let mut p = Personality::new();
+        p.mood = Mood::new(0.5); // start mid-range
         p.on_blind_epoch();
         assert_eq!(p.blind_epochs, 1);
         assert!(p.mood.value() < 0.5);
@@ -1416,18 +1419,19 @@ mod tests {
     #[test]
     fn test_personality_blind_epoch_graduated_penalty() {
         let mut p = Personality::new();
+        p.mood = Mood::new(0.5); // start mid-range for predictable math
         // First 3 epochs: mild penalty (-0.02 each)
         for _ in 0..3 {
             p.on_blind_epoch();
         }
         let after_3 = p.mood.value();
-        // 0.5 - 3*0.02 = 0.44
-        assert!((after_3 - 0.44).abs() < 0.01);
+        // 0.5 - 3*0.01 = 0.47
+        assert!((after_3 - 0.47).abs() < 0.01);
 
         // Epochs 4-10: moderate penalty (-0.05 each)
         p.on_blind_epoch(); // epoch 4
         let after_4 = p.mood.value();
-        assert!(after_4 < after_3 - 0.03); // penalty > 0.02
+        assert!(after_4 < after_3 - 0.015); // penalty > 0.01 (graduated to 2.5x)
     }
 
     #[test]
@@ -1449,11 +1453,11 @@ mod tests {
     #[test]
     fn test_personality_override() {
         let mut p = Personality::new();
-        assert_eq!(p.current_face(), Face::Awake);
+        assert_eq!(p.current_face(), Face::Excited);
         p.set_override(Face::BatteryCritical);
         assert_eq!(p.current_face(), Face::BatteryCritical);
         p.clear_override();
-        assert_eq!(p.current_face(), Face::Awake);
+        assert_eq!(p.current_face(), Face::Excited);
     }
 
     #[test]
@@ -2048,9 +2052,8 @@ mod tests {
         p.reset_epoch_context();
 
         // Blind epochs: need enough to push mood below 0.5.
-        // With the new formula, on_aps_seen + handshake can drive mood to 1.0,
-        // so use 15 blind epochs (well into the -0.08/epoch tier) to reliably get below 0.5.
-        for _ in 0..15 {
+        // With halved decay rates starting from 1.0, need ~30 epochs to get below 0.5.
+        for _ in 0..30 {
             p.on_blind_epoch();
         }
         assert!(p.mood.value() < 0.5);
@@ -2226,6 +2229,7 @@ mod tests {
     #[test]
     fn test_rf_busy_mood() {
         let mut p = Personality::new();
+        p.mood = Mood::new(0.5); // start mid-range so delta is testable
         let initial = p.mood.value();
         let rf = crate::qpu::rf::RfEnvironment {
             total_frames: 200,

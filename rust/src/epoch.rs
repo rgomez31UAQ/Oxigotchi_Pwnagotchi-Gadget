@@ -280,8 +280,8 @@ mod tests {
     #[test]
     fn test_current_face() {
         let mut el = EpochLoop::new(Duration::from_secs(1));
-        // Default mood (0.5) -> Awake
-        assert_eq!(el.current_face(), Face::Awake);
+        // Default mood (1.0) -> Excited
+        assert_eq!(el.current_face(), Face::Excited);
 
         // Override takes priority
         el.personality.set_override(Face::BatteryCritical);

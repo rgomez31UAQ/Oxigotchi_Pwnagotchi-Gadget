@@ -3521,7 +3521,7 @@ mod tests {
     fn test_epoch_drives_mood_faces() {
         let mut daemon = make_daemon();
 
-        assert_eq!(daemon.epoch_loop.current_face(), personality::Face::Awake);
+        assert_eq!(daemon.epoch_loop.current_face(), personality::Face::Excited);
 
         for _ in 0..10 {
             daemon.epoch_loop.record_result(&epoch::EpochResult {
