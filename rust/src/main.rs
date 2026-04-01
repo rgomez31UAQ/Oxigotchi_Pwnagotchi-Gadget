@@ -474,16 +474,16 @@ impl Daemon {
         // ---- Scan phase ----
         self.run_scan_phase(&mut result);
 
-        // ---- Bluetooth health (SAFE mode only) ----
-        if self.mode == OperatingMode::Safe {
-            self.bluetooth.check_status();
-            if self.bluetooth.should_connect() {
-                match self.bluetooth.connect() {
-                    Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
-                    Err(e) => {
-                        log::warn!("bluetooth reconnect failed: {e}");
-                        self.bluetooth.on_error();
-                    }
+        // ---- Bluetooth health (all modes) ----
+        // check_status detects PAN disconnection; should_connect checks config.enabled internally
+        self.bluetooth.check_status();
+        if self.bluetooth.should_connect() {
+            info!("BT: auto-reconnecting...");
+            match self.bluetooth.connect() {
+                Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
+                Err(e) => {
+                    log::warn!("bluetooth reconnect failed: {e}");
+                    self.bluetooth.on_error();
                 }
             }
         }
@@ -1699,10 +1699,10 @@ impl Daemon {
         };
         if let Some(mac) = bt_pair_mac {
             any_command = true;
-            info!("web: BT pair with {mac}");
-            match self.bluetooth.pair_and_connect(&mac) {
-                Ok(()) => info!("BT paired and connected to {mac}"),
-                Err(e) => log::error!("BT pair failed: {e}"),
+            let path = format!("/org/bluez/hci0/dev_{}", mac.replace(':', "_"));
+            match self.bluetooth.pair_and_connect(&path) {
+                Ok(()) => info!("web: BT paired+connected to {mac}"),
+                Err(e) => log::warn!("web: BT pair failed: {e}"),
             }
         }
 
