@@ -2521,7 +2521,6 @@ impl Daemon {
         s.bt_internet_available = bt_inet;
         s.bt_retry_count = self.bluetooth.retry_count;
         s.bt_device_name = self.bluetooth.config.phone_name.clone();
-        s.bt_phone_mac = String::new();
 
         self.bt_feature.state.mode = bt_mode;
         self.bt_feature.state.health.stack_up = bt_enabled;

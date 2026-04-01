@@ -415,9 +415,7 @@ impl NetworkManager {
 
         if need_primary || need_ics {
             info!(
-                "IP config applied: primary={}, ics={}",
-                true,
-                true
+                "IP config applied: needed_primary={need_primary}, needed_ics={need_ics}"
             );
         }
 

@@ -658,7 +658,7 @@ impl BtTether {
         {
             let _ = run_bluetoothctl(&build_power_off_args());
         }
-        self.state = BtState::Disconnected;
+        self.state = BtState::Off;
     }
 
     /// Handle a connection failure.
