@@ -528,12 +528,19 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <div class="toggle-info"><div class="toggle-label">Discoverable</div><div class="toggle-desc">Make device visible for BT pairing</div></div>
 <label class="switch"><input type="checkbox" id="bt-visible" onchange="toggleBtVisible(this.checked)"><span class="slider"></span></label>
 </div>
-<div style="margin-top:10px;padding-top:10px;border-top:1px solid #0f3460">
-<div style="font-size:12px;color:#888;margin-bottom:8px">Phone Pairing</div>
-<div class="action-btns" style="margin-bottom:8px">
-<button class="action-btn btn-restart" id="bt-scan-btn" onclick="btScan()">Scan for Devices</button>
+<div class="card-section" style="border-top:1px solid #0f3460;padding-top:10px;margin-top:10px">
+<div style="font-size:13px;font-weight:600;color:#e0e0e0;margin-bottom:8px">Phone Tethering</div>
+<button class="action-btn" onclick="btScan()" id="bt-scan-btn" style="font-size:11px;padding:4px 10px">Scan for Devices</button>
+<button class="action-btn" id="bt-disconnect-btn" onclick="btDisconnect()" style="display:none;font-size:10px;padding:2px 8px;background:#5c1a1a;margin-left:6px">Disconnect</button>
+<div id="bt-device-list" style="margin-top:8px"></div>
+<div id="bt-passkey-area" style="display:none;margin-top:10px;padding:10px;background:#0a1628;border-radius:8px">
+<div style="color:#e0e0e0;font-size:12px">Confirm passkey matches your phone:</div>
+<div id="bt-passkey-code" style="font-size:24px;font-weight:bold;color:#00d4ff;text-align:center;padding:10px">------</div>
+<div style="display:flex;gap:8px;justify-content:center">
+<button class="action-btn" onclick="btConfirmPasskey(true)" style="background:#1a5c1a;font-size:11px;padding:4px 12px">Confirm</button>
+<button class="action-btn" onclick="btConfirmPasskey(false)" style="background:#5c1a1a;font-size:11px;padding:4px 12px">Reject</button>
 </div>
-<div id="bt-scan-results"></div>
+</div>
 </div>
 </div>
 
@@ -1437,7 +1444,7 @@ function btScan() {
     var btn = document.getElementById('bt-scan-btn');
     btn.textContent = 'Scanning...';
     btn.disabled = true;
-    document.getElementById('bt-scan-results').innerHTML = '<div style="color:#888;font-size:12px">Scanning for nearby devices (~10s)...</div>';
+    document.getElementById('bt-device-list').innerHTML = '<div style="color:#888;font-size:12px">Scanning for nearby devices (~10s)...</div>';
     api('POST', '/api/bluetooth/scan', {}).then(function() {
         // Poll for results every 2s
         var poll = setInterval(function() {
@@ -1447,14 +1454,7 @@ function btScan() {
                     clearInterval(poll);
                     btn.textContent = 'Scan for Devices';
                     btn.disabled = false;
-                    var html = '<div style="font-size:11px;color:#888;margin-bottom:4px">Found ' + devices.length + ' device(s). Tap to pair:</div>';
-                    devices.forEach(function(d) {
-                        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #0f3460">' +
-                            '<div><div style="font-size:13px;font-weight:bold">' + esc(d.name) + '</div>' +
-                            '<div style="font-size:10px;color:#888">' + esc(d.mac) + '</div></div>' +
-                            '<button class="wl-btn wl-btn-add" style="padding:6px 12px" onclick="btPair(\'' + esc(d.mac) + '\')">Pair</button></div>';
-                    });
-                    document.getElementById('bt-scan-results').innerHTML = html;
+                    renderBtDeviceList(devices);
                 }
             });
         }, 2000);
@@ -1463,21 +1463,54 @@ function btScan() {
             clearInterval(poll);
             btn.textContent = 'Scan for Devices';
             btn.disabled = false;
-            if (document.getElementById('bt-scan-results').innerHTML.indexOf('Scanning') !== -1) {
-                document.getElementById('bt-scan-results').innerHTML = '<div style="color:#888;font-size:12px">No devices found. Make sure your phone\'s Bluetooth is on.</div>';
+            if (document.getElementById('bt-device-list').innerHTML.indexOf('Scanning') !== -1) {
+                document.getElementById('bt-device-list').innerHTML = '<div style="color:#888;font-size:12px">No devices found. Make sure your phone\'s Bluetooth is on.</div>';
             }
         }, 20000);
     });
 }
 
-function btPair(mac) {
-    toast('Pairing with ' + mac + '...');
+function btPair(mac, name) {
+    var label = name || mac;
+    toast('Pairing with ' + label + '...');
     api('POST', '/api/bluetooth/pair', {mac: mac}).then(function(r) {
         if (r && r.ok) {
             toast(r.message);
-            document.getElementById('bt-scan-results').innerHTML = '<div style="color:#00d4aa;font-size:12px">Pairing in progress...</div>';
+            document.getElementById('bt-device-list').innerHTML = '<div style="color:#00d4aa;font-size:12px">Pairing in progress...</div>';
         }
     });
+}
+
+function btForget(m) {
+    if (confirm('Remove ' + m + ' from paired devices?')) {
+        api('POST', '/api/bluetooth/forget', {mac: m}).then(function(r) {
+            if (r && r.ok) toast('Device removed');
+        });
+    }
+}
+
+function btDisconnect() {
+    api('POST', '/api/bluetooth/disconnect').then(function(r) {
+        if (r && r.ok) toast('BT disconnected');
+    });
+}
+
+function btConfirmPasskey(c) {
+    api('POST', '/api/bluetooth/confirm-passkey', {confirmed: c});
+    document.getElementById('bt-passkey-area').style.display = 'none';
+}
+
+function renderBtDeviceList(devices) {
+    var dl = document.getElementById('bt-device-list');
+    if (!dl || !devices || devices.length === 0) return;
+    var html = '<div style="font-size:11px;color:#888;margin-bottom:4px">Found ' + devices.length + ' device(s). Tap to pair:</div>';
+    devices.forEach(function(v) {
+        var ms = v.mac ? v.mac.slice(-5) : '';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #0a1628">' +
+            '<span style="color:#e0e0e0;font-size:12px">' + esc(v.name || 'Unknown') + ' <span style="color:#666;font-size:10px">(' + ms + ')</span></span>' +
+            '<button class="action-btn" onclick="btPair(\'' + esc(v.mac) + '\',\'' + esc(v.name || '') + '\')" style="font-size:10px;padding:2px 8px">Pair</button></div>';
+    });
+    dl.innerHTML = html;
 }
 
 // --- BT Offensive functions ---
@@ -1810,6 +1843,17 @@ function updateBluetoothFromWs(d) {
     document.getElementById('bt-feature-mode').textContent = d.feature_mode || '-';
     document.getElementById('bt-nearby').textContent = d.nearby_devices != null ? d.nearby_devices : '-';
     document.getElementById('bt-contention').textContent = d.contention_score != null ? d.contention_score : '-';
+    // disconnect button visibility
+    var dBtn = document.getElementById('bt-disconnect-btn');
+    if (dBtn) { dBtn.style.display = d.connected ? 'inline-block' : 'none'; }
+    // passkey display
+    if (d.passkey != null && d.passkey > 0) {
+        document.getElementById('bt-passkey-code').textContent = String(d.passkey).padStart(6, '0');
+        document.getElementById('bt-passkey-area').style.display = 'block';
+    } else {
+        var pa = document.getElementById('bt-passkey-area');
+        if (pa) pa.style.display = 'none';
+    }
 }
 
 function updateWifiFromWs(d) {
@@ -2191,6 +2235,7 @@ function updateAllCards(state) {
     if (state.bt_attacks) updateBtRageFromWs(state.bt_attacks);
     if (state.bt_attacks) updateBtAttacksFromWs(state.bt_attacks);
     if (state.bt_captures) updateBtCapturesFromWs(state.bt_captures);
+    if (state.bt_scan_results && state.bt_scan_results.length > 0) renderBtDeviceList(state.bt_scan_results);
 }
 
 function startPolling() {
