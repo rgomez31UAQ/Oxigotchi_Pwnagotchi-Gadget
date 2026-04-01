@@ -614,6 +614,23 @@ impl BtTether {
         self.state = BtState::Disconnected;
     }
 
+    /// Reconnect tether if configured and not already connected.
+    /// Delegates to `connect()` to reuse its error handling and retry state.
+    /// No-op if disabled, MAC not set, or bnep0 already exists.
+    pub fn ensure_connected(&mut self) {
+        if !self.config.enabled {
+            return;
+        }
+        if self.config.phone_mac.is_empty() {
+            return;
+        }
+        if bnep0_exists() {
+            return;
+        }
+        let _ = self.connect();
+        self.check_status();
+    }
+
     /// Handle a connection failure.
     pub fn on_error(&mut self) {
         self.state = BtState::Error;
@@ -1450,5 +1467,29 @@ mod tests {
     fn test_connection_name_generation() {
         let name = generate_connection_name("AA:BB:CC:DD:EE:FF");
         assert_eq!(name, "bt-pan-AABBCCDDEEFF");
+    }
+
+    #[test]
+    fn test_ensure_connected_no_op_when_disabled() {
+        let mut bt = BtTether::new(BtConfig {
+            enabled: false,
+            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
+            ..Default::default()
+        });
+        bt.state = BtState::Disconnected;
+        bt.ensure_connected(); // must not panic or change state
+        assert_eq!(bt.state, BtState::Disconnected);
+    }
+
+    #[test]
+    fn test_ensure_connected_no_op_when_no_mac() {
+        let mut bt = BtTether::new(BtConfig {
+            enabled: true,
+            phone_mac: "".into(),
+            ..Default::default()
+        });
+        bt.state = BtState::Disconnected;
+        bt.ensure_connected();
+        assert_eq!(bt.state, BtState::Disconnected);
     }
 }
