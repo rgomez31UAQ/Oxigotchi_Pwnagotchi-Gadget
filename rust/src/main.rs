@@ -1669,6 +1669,29 @@ impl Daemon {
                 });
         }
 
+        // Process BT forget
+        let bt_forget = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_bt_forget.take()
+        };
+        if let Some(path) = bt_forget {
+            any_command = true;
+            info!("web: forgetting BT device {path}");
+            let _ = self.bluetooth.forget_device(&path);
+        }
+
+        // Process BT disconnect (user-initiated, suppresses auto-reconnect)
+        let bt_disconnect = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.pending_bt_disconnect.take()
+        };
+        if let Some(true) = bt_disconnect {
+            any_command = true;
+            info!("web: user-initiated BT disconnect");
+            self.bluetooth.user_disconnected = true;
+            self.bluetooth.disconnect();
+        }
+
         // Process BT pair request
         let bt_pair_mac = {
             let mut s = self.shared_state.lock().unwrap();

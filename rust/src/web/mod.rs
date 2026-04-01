@@ -136,6 +136,13 @@ pub struct DaemonState {
     /// Broadcasts remaining before clearing bt_manual_result.
     pub bt_manual_result_ttl: u8,
 
+    // BT tether v2 pairing flow
+    pub pending_bt_forget: Option<String>,        // D-Bus device path to forget
+    pub bt_passkey: Option<u32>,                  // Current passkey for confirmation
+    pub bt_passkey_device: String,                // Device name being paired
+    pub bt_passkey_confirmed: Option<bool>,       // User's confirmation response
+    pub pending_bt_disconnect: Option<bool>,      // Disconnect request (suppresses auto-reconnect)
+
     // -- gpu --
     pub gpu_mode: String,
     pub gpu_signal: String,
@@ -345,6 +352,11 @@ impl DaemonState {
             pending_bt_manual_attack: None,
             bt_manual_result: None,
             bt_manual_result_ttl: 0,
+            pending_bt_forget: None,
+            bt_passkey: None,
+            bt_passkey_device: String::new(),
+            bt_passkey_confirmed: None,
+            pending_bt_disconnect: None,
             gpu_mode: "Off".into(),
             gpu_signal: "None".into(),
             gpu_submit_seen: false,
@@ -584,6 +596,8 @@ fn build_ws_snapshot(s: &DaemonState) -> WsSnapshot {
             feature_mode: s.bt_feature_mode.clone(),
             nearby_devices: s.bt_feature_devices_now,
             contention_score: s.bt_feature_contention_score,
+            passkey: s.bt_passkey,
+            passkey_device: s.bt_passkey_device.clone(),
         },
         bt_attacks: BtAttackResponse {
             enabled: s.bt_attack_enabled,
@@ -1014,6 +1028,8 @@ pub struct BluetoothInfo {
     pub feature_mode: String,
     pub nearby_devices: u32,
     pub contention_score: u32,
+    pub passkey: Option<u32>,
+    pub passkey_device: String,
 }
 
 /// GPU info surfaced through the shared state/web snapshot.
@@ -1281,6 +1297,9 @@ pub const API_BT_DEVICES: &str = "/api/bt/devices";
 pub const API_BT_CAPTURES: &str = "/api/bt/captures";
 pub const API_BT_PATCHRAM: &str = "/api/bt/patchram";
 pub const API_BT_SCAN_MODE: &str = "/api/bt/scan-mode";
+pub const API_BT_FORGET: &str = "/api/bluetooth/forget";
+pub const API_BT_DISCONNECT: &str = "/api/bluetooth/disconnect";
+pub const API_BT_CONFIRM_PASSKEY: &str = "/api/bluetooth/confirm-passkey";
 
 // ---------------------------------------------------------------------------
 // StatusParams helper (used by main.rs to build StatusResponse)
@@ -1563,6 +1582,8 @@ async fn bluetooth_handler(State(state): State<SharedState>) -> Json<BluetoothIn
         feature_mode: s.bt_feature_mode.clone(),
         nearby_devices: s.bt_feature_devices_now,
         contention_score: s.bt_feature_contention_score,
+        passkey: s.bt_passkey,
+        passkey_device: s.bt_passkey_device.clone(),
     })
 }
 
@@ -2141,6 +2162,41 @@ async fn bt_pair_handler(
     })
 }
 
+/// POST /api/bluetooth/forget -> remove a paired device
+async fn bt_forget_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<BtPairRequest>,
+) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    // Convert MAC to D-Bus path: AA:BB:CC:DD:EE:FF -> /org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF
+    let path = format!(
+        "/org/bluez/hci0/dev_{}",
+        body.mac.replace(':', "_")
+    );
+    s.pending_bt_forget = Some(path);
+    Json(serde_json::json!({"ok": true}))
+}
+
+/// POST /api/bluetooth/disconnect -> disconnect PAN (suppresses auto-reconnect)
+async fn bt_disconnect_handler(
+    State(state): State<SharedState>,
+) -> impl IntoResponse {
+    let mut s = state.lock().unwrap();
+    s.pending_bt_disconnect = Some(true);
+    Json(serde_json::json!({"ok": true}))
+}
+
+/// POST /api/bluetooth/confirm-passkey -> user confirms or rejects passkey
+async fn bt_confirm_passkey_handler(
+    State(state): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let confirmed = body.get("confirmed").and_then(|v| v.as_bool()).unwrap_or(false);
+    let mut s = state.lock().unwrap();
+    s.bt_passkey_confirmed = Some(confirmed);
+    Json(serde_json::json!({"ok": true}))
+}
+
 /// POST /api/settings -> update device settings (name, etc.)
 async fn settings_handler(
     State(state): State<SharedState>,
@@ -2654,6 +2710,9 @@ pub fn build_router(state: SharedState, ws_tx: broadcast::Sender<String>) -> Rou
             get(bt_scan_results_handler).post(bt_scan_handler),
         )
         .route(API_BT_PAIR, post(bt_pair_handler))
+        .route(API_BT_FORGET, post(bt_forget_handler))
+        .route(API_BT_DISCONNECT, post(bt_disconnect_handler))
+        .route(API_BT_CONFIRM_PASSKEY, post(bt_confirm_passkey_handler))
         .route(API_RADIO, get(radio_get_handler).post(radio_post_handler))
         .route(API_CAPTURE_ALL, post(capture_all_handler))
         .route(API_DELETE_CAPTURE, delete(delete_capture_handler))
@@ -2889,6 +2948,8 @@ mod tests {
             feature_mode: "tether".into(),
             nearby_devices: 0,
             contention_score: 0,
+            passkey: None,
+            passkey_device: String::new(),
         };
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("\"connected\":true"));
