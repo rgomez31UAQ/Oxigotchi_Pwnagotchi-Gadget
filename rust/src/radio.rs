@@ -501,15 +501,9 @@ impl RadioManager {
     /// Rollback helper: restart BT after a failed WiFi transition.
     fn rollback_to_bt(&mut self, bt: &mut bluetooth::BtTether) {
         warn!("radio: rolling back to BT");
-        bluetooth::reset_hci_uart();
-        #[cfg(unix)]
-        {
-            let _ = std::process::Command::new("bluetoothctl")
-                .args(["power", "on"])
-                .output();
-        }
-        // Don't try full setup — just get BT adapter powered
-        bt.state = bluetooth::BtState::Disconnected;
+        // hci_uart was never unloaded — BT adapter is still up.
+        // Just restore tether connection and re-acquire lock.
+        bt.ensure_connected();
         let _ = self.acquire_lock(RadioMode::Bt);
     }
 
