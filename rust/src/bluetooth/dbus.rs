@@ -51,7 +51,9 @@ mod inner {
     use super::*;
     use dbus::arg::{RefArg, Variant};
     use dbus::blocking::Connection;
-    use log::{info, warn};
+    use dbus::channel::MatchingReceiver;
+    use dbus_crossroads::Crossroads;
+    use log::info;
     use std::collections::HashMap;
     use std::sync::mpsc::Sender;
     use std::time::Duration;
@@ -315,6 +317,144 @@ mod inner {
             info!("[dbus] Scan stopped on {ADAPTER_PATH}");
             Ok(())
         }
+
+        /// List ALL devices visible to BlueZ (paired or discovered).
+        pub fn list_all_devices(&self) -> Result<Vec<BlueZDevice>, String> {
+            let proxy = self.conn.with_proxy("org.bluez", "/", Duration::from_secs(5));
+            use dbus::blocking::stdintf::org_freedesktop_dbus::ObjectManager;
+            let objects = proxy
+                .get_managed_objects()
+                .map_err(|e| format!("GetManagedObjects: {e}"))?;
+
+            let mut devices = Vec::new();
+            for (path, ifaces) in &objects {
+                if let Some(props) = ifaces.get("org.bluez.Device1") {
+                    let mac = prop_str(props, "Address").unwrap_or_default();
+                    let name = prop_str(props, "Alias").unwrap_or_else(|| mac.clone());
+                    let paired = prop_bool(props, "Paired").unwrap_or(false);
+                    let trusted = prop_bool(props, "Trusted").unwrap_or(false);
+                    let connected = prop_bool(props, "Connected").unwrap_or(false);
+                    devices.push(BlueZDevice {
+                        path: path.to_string(),
+                        mac,
+                        name,
+                        paired,
+                        trusted,
+                        connected,
+                    });
+                }
+            }
+            info!("[dbus] Found {} total devices", devices.len());
+            Ok(devices)
+        }
+
+        /// Set up the Agent1 crossroads handler for pairing events.
+        ///
+        /// BlueZ calls our agent when pairing requires user interaction (passkey
+        /// confirmation, authorization, etc.).  We auto-accept all requests
+        /// (headless mode) and forward the events through `event_tx` so the web
+        /// UI can display the passkey.
+        pub fn setup_agent_handler(
+            &self,
+            event_tx: Sender<PairingEvent>,
+        ) -> Result<(), String> {
+            let mut cr = Crossroads::new();
+
+            // Synchronous mode (no async runtime needed — blocking D-Bus connection)
+            cr.set_async_support(None);
+
+            let token = cr.register("org.bluez.Agent1", |b| {
+                b.method(
+                    "Release",
+                    (),
+                    (),
+                    |_, tx: &mut Sender<PairingEvent>, (): ()| {
+                        info!("[agent] Released — pairing flow ended");
+                        let _ = tx.send(PairingEvent::PairingComplete {
+                            device: String::new(),
+                            success: true,
+                        });
+                        Ok(())
+                    },
+                );
+                b.method(
+                    "Cancel",
+                    (),
+                    (),
+                    |_, tx: &mut Sender<PairingEvent>, (): ()| {
+                        info!("[agent] Cancelled — pairing aborted");
+                        let _ = tx.send(PairingEvent::PairingComplete {
+                            device: String::new(),
+                            success: false,
+                        });
+                        Ok(())
+                    },
+                );
+                b.method(
+                    "RequestConfirmation",
+                    ("device", "passkey"),
+                    (),
+                    |_, tx: &mut Sender<PairingEvent>, (device, passkey): (dbus::Path<'static>, u32)| {
+                        info!("[agent] RequestConfirmation: passkey={passkey}");
+                        let _ = tx.send(PairingEvent::ConfirmPasskey {
+                            device: device.to_string(),
+                            passkey,
+                        });
+                        // Auto-accept in headless mode
+                        Ok(())
+                    },
+                );
+                b.method(
+                    "DisplayPasskey",
+                    ("device", "passkey", "entered"),
+                    (),
+                    |_, tx: &mut Sender<PairingEvent>, (device, passkey, _entered): (dbus::Path<'static>, u32, u16)| {
+                        info!("[agent] DisplayPasskey: passkey={passkey}");
+                        let _ = tx.send(PairingEvent::DisplayPasskey {
+                            device: device.to_string(),
+                            passkey,
+                        });
+                        Ok(())
+                    },
+                );
+                b.method(
+                    "RequestAuthorization",
+                    ("device",),
+                    (),
+                    |_, _tx: &mut Sender<PairingEvent>, (_device,): (dbus::Path<'static>,)| {
+                        info!("[agent] RequestAuthorization: auto-accepting");
+                        Ok(())
+                    },
+                );
+                b.method(
+                    "AuthorizeService",
+                    ("device", "uuid"),
+                    (),
+                    |_, _tx: &mut Sender<PairingEvent>, (_device, _uuid): (dbus::Path<'static>, String)| {
+                        info!("[agent] AuthorizeService: auto-accepting");
+                        Ok(())
+                    },
+                );
+            });
+
+            cr.insert(AGENT_PATH, &[token], event_tx);
+
+            self.conn.start_receive(
+                dbus::message::MatchRule::new_method_call(),
+                Box::new(move |msg, conn| {
+                    let _ = cr.handle_message(msg, conn);
+                    true
+                }),
+            );
+
+            info!("[dbus] Agent1 crossroads handler registered at {AGENT_PATH}");
+            Ok(())
+        }
+
+        /// Process pending D-Bus messages (dispatches to crossroads handlers).
+        pub fn process_messages(&self, timeout: Duration) {
+            let _ = self.conn.process(timeout);
+        }
     }
 }
 
@@ -386,6 +526,19 @@ mod inner {
         pub fn stop_scan(&self) -> Result<(), String> {
             Ok(())
         }
+
+        pub fn list_all_devices(&self) -> Result<Vec<BlueZDevice>, String> {
+            Ok(vec![])
+        }
+
+        pub fn setup_agent_handler(
+            &self,
+            _event_tx: Sender<PairingEvent>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        pub fn process_messages(&self, _timeout: std::time::Duration) {}
     }
 }
 

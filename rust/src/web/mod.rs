@@ -2189,6 +2189,9 @@ async fn bt_confirm_passkey_handler(
     let confirmed = body.get("confirmed").and_then(|v| v.as_bool()).unwrap_or(false);
     let mut s = state.lock().unwrap();
     s.bt_passkey_confirmed = Some(confirmed);
+    // Clear passkey display — Agent1 auto-accepts, this is informational acknowledgement
+    s.bt_passkey = None;
+    s.bt_passkey_device.clear();
     Json(serde_json::json!({"ok": true}))
 }
 

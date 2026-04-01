@@ -455,6 +455,45 @@ impl Daemon {
         // ---- Web commands ----
         self.process_web_commands();
 
+        // ---- Bluetooth D-Bus message processing (all modes — Agent1 pairing events) ----
+        self.bluetooth.process_dbus();
+        if let Some(ref rx) = self.bluetooth.pairing_rx {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    bluetooth::dbus::PairingEvent::ConfirmPasskey { device, passkey }
+                    | bluetooth::dbus::PairingEvent::DisplayPasskey { device, passkey } => {
+                        let mut s = self.shared_state.lock().unwrap();
+                        s.bt_passkey = Some(passkey);
+                        s.bt_passkey_device = device;
+                        info!("BT: pairing passkey {passkey} forwarded to web UI");
+                    }
+                    bluetooth::dbus::PairingEvent::PairingComplete { device, success } => {
+                        info!("BT: pairing complete for {device}: success={success}");
+                        let mut s = self.shared_state.lock().unwrap();
+                        s.bt_passkey = None;
+                        s.bt_passkey_device.clear();
+                    }
+                    bluetooth::dbus::PairingEvent::RequestConfirmation { device } => {
+                        info!("BT: pairing request from {device} (auto-accepted)");
+                    }
+                }
+            }
+        }
+
+        // ---- Bluetooth health (all modes) ----
+        // check_status detects PAN disconnection; should_connect returns false when Off (BT attack mode)
+        self.bluetooth.check_status();
+        if self.bluetooth.should_connect() {
+            info!("BT: auto-reconnecting...");
+            match self.bluetooth.connect() {
+                Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
+                Err(e) => {
+                    log::warn!("bluetooth reconnect failed: {e}");
+                    self.bluetooth.on_error();
+                }
+            }
+        }
+
         // ---- BT mode: run BT epoch instead of WiFi phases ----
         if self.mode == OperatingMode::Bt {
             self.run_bt_epoch();
@@ -473,20 +512,6 @@ impl Daemon {
 
         // ---- Scan phase ----
         self.run_scan_phase(&mut result);
-
-        // ---- Bluetooth health (all modes) ----
-        // check_status detects PAN disconnection; should_connect checks config.enabled internally
-        self.bluetooth.check_status();
-        if self.bluetooth.should_connect() {
-            info!("BT: auto-reconnecting...");
-            match self.bluetooth.connect() {
-                Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
-                Err(e) => {
-                    log::warn!("bluetooth reconnect failed: {e}");
-                    self.bluetooth.on_error();
-                }
-            }
-        }
 
         // ---- Network health ----
         self.network.health_check();

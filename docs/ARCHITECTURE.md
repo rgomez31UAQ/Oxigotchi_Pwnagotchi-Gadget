@@ -218,7 +218,8 @@ rust/src/
   main.rs           # Daemon entry point, boot sequence, epoch loop
   ao.rs             # AngryOxide subprocess management, stdout parsing
   attacks/mod.rs    # Attack scheduling, whitelist, per-type toggles
-  bluetooth/mod.rs  # BT PAN tethering, hci_uart reset, phone pairing
+  bluetooth/mod.rs  # BT PAN tethering (D-Bus), HCI scanning, GATT discovery, phone pairing
+  bluetooth/dbus.rs # D-Bus BlueZ wrapper: Network1 PAN, Agent1, ObjectManager
   capture/mod.rs    # Capture file management, hcxpcapngtool, WPA-SEC upload
   config/mod.rs     # TOML config parsing
   display/          # E-ink display driver (SPI), framebuffer, face sprites, fonts

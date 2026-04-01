@@ -79,34 +79,34 @@ The `RadioManager` uses a lock file to prevent concurrent mode transitions and e
 
 ## Bluetooth Tethering (Always-On)
 
-BT tethering is set up at boot and stays connected in RAGE and SAFE modes:
+BT tethering uses D-Bus BlueZ directly (`Network1.Connect("nap")`) and stays connected in RAGE and SAFE modes:
 
-1. At boot, powers on Bluetooth and connects to phone **before** starting WiFi monitor mode
-2. Each epoch, checks BT connection health and auto-reconnects if dropped
+1. At boot, powers on Bluetooth and connects to paired phone via D-Bus PAN **before** starting WiFi monitor mode
+2. Each epoch, checks BT connection health and auto-reconnects with exponential backoff (30s → 60s → 120s → 300s cap)
 3. Only BT attack mode disconnects phone tethering (web dashboard shows a warning)
 4. When returning from BT attack mode, tether auto-reconnects
+5. iOS/Android MAC randomization is handled transparently via BlueZ bonding (IRK exchange)
 
 ## Configuration
 
-Configure your phone's Bluetooth MAC address in `/etc/oxigotchi/config.toml`:
+In `/etc/oxigotchi/config.toml`:
 
 ```toml
 [bluetooth]
 enabled = true
-phone_mac = "AA:BB:CC:DD:EE:FF"
+phone_name = "My Phone"       # Optional display name
+auto_connect = true           # Auto-connect at boot
+hide_after_connect = true     # Hide adapter after connecting
 ```
 
-Replace `AA:BB:CC:DD:EE:FF` with your phone's Bluetooth MAC address. To find it:
-- **Android:** Settings → About Phone → Status → Bluetooth address
-- **iPhone:** Settings → General → About → Bluetooth
-
-Your phone must be paired with the Pi beforehand. See [docs/BT_TETHERING.md](https://github.com/CoderFX/oxigotchi/blob/main/docs/BT_TETHERING.md) for full pairing and setup instructions.
+No MAC address is needed — the daemon auto-discovers paired devices via D-Bus `ObjectManager`. Pair your phone from the web dashboard or via `bluetoothctl`. See [docs/BT_TETHERING.md](https://github.com/CoderFX/oxigotchi/blob/main/docs/BT_TETHERING.md) for full setup instructions.
 
 ### Dashboard Controls
 
 The web dashboard's Bluetooth card shows:
 - Current BT state (off/scanning/attacking/tethered)
+- **Phone Tethering** section: scan, pair, disconnect, forget devices
+- Passkey confirmation during pairing
 - Discovered devices with vendor identification
 - BT aggression level selector (BT:1/BT:2/BT:3)
 - Mode toggle buttons (RAGE/BT/SAFE)
-- BT visibility toggle (for initial pairing)

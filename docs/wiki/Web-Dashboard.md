@@ -21,6 +21,7 @@ The dashboard has 23 live cards organized by user journey:
 | **Live E-ink Preview** | Real-time rendering of what the e-ink display shows |
 | **Battery** | PiSugar 3 charge level, charging state, estimated runtime |
 | **Bluetooth** | BT state, discovered devices, BT aggression level, mode toggle (RAGE/BT/SAFE) |
+| **Phone Tethering** | Scan for phones, pair via D-Bus, disconnect, forget devices, passkey display |
 | **WiFi** | Monitor mode status, current channel, interface state |
 | **Attack Toggles** | Per-attack-type enable/disable (deauth, PMKID, CSA, disassoc, anon reassoc, rogue M2) |
 | **RAGE Slider** | 3-level aggression preset (Chill/Hunt/RAGE) — one slider controls rate, dwell, and channels |

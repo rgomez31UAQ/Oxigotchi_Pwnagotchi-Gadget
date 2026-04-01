@@ -21,7 +21,7 @@ REPO=/mnt/c/msys64/home/user/oxigotchi
 BASE_IMG="${1:-/mnt/d/oxigotchi-v3.0.img}"
 RELEASE_IMG="/mnt/d/oxigotchi-release.img"
 BINARY="$REPO/rust/target/aarch64-unknown-linux-gnu/release/oxigotchi"
-VERSION="3.1"
+VERSION="3.2"
 
 if [ ! -f "$BASE_IMG" ]; then
     echo "ERROR: Base image not found at $BASE_IMG"
@@ -112,9 +112,9 @@ rage_level = 1
 whitelist = ["YourNetwork", "YourNetwork-5G"]
 
 [bluetooth]
-# Set your phone's BT MAC to enable tethering
-phone_mac = ""
+enabled = true
 phone_name = ""
+auto_connect = true
 
 [wpa_sec]
 # Get your API key from https://wpa-sec.stanev.org

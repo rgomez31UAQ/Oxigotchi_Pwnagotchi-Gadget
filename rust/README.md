@@ -55,7 +55,9 @@ src/
   capture/mod.rs    Capture file management, WPA-SEC upload queue, auto-backup
   wifi/mod.rs       WiFi monitor mode, channel hopping, AP tracker, whitelist
   pisugar/mod.rs    PiSugar 3 battery I2C, button debouncer, action mapping
-  bluetooth/mod.rs  Bluetooth PAN tethering manager
+  bluetooth/mod.rs  Bluetooth PAN tethering, HCI scanning, GATT discovery
+  bluetooth/dbus.rs D-Bus BlueZ wrapper: PAN connect/disconnect, Agent1, device enumeration
+  bluetooth/attacks/ BT attack implementations: ATT fuzz, KNOB, L2CAP, SMP
   recovery/mod.rs   WiFi SDIO recovery, GPIO power cycle, watchdog
   qpu/
     mod.rs          QPU feature config (TOML serde)

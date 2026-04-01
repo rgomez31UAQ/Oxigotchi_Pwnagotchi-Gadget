@@ -277,6 +277,8 @@ pub struct BtTether {
     dbus: Option<dbus::DbusBluez>,
     /// Whether the user explicitly disconnected (suppresses auto-reconnect).
     pub user_disconnected: bool,
+    /// Receiver for Agent1 pairing events (passkey display/confirmation).
+    pub pairing_rx: Option<std::sync::mpsc::Receiver<dbus::PairingEvent>>,
 }
 
 impl BtTether {
@@ -292,6 +294,7 @@ impl BtTether {
             pan_interface: None,
             dbus: None,
             user_disconnected: false,
+            pairing_rx: None,
         }
     }
 
@@ -314,10 +317,16 @@ impl BtTether {
             }
         }
 
-        // Register Agent1 for pairing
+        // Register Agent1 for pairing + set up crossroads handler
         if let Some(ref dbus) = self.dbus {
             if let Err(e) = dbus.register_agent() {
                 warn!("BT: Agent1 registration failed: {e}");
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            if let Err(e) = dbus.setup_agent_handler(tx) {
+                warn!("BT: Agent1 crossroads setup failed: {e}");
+            } else {
+                self.pairing_rx = Some(rx);
             }
         }
 
@@ -611,22 +620,72 @@ impl BtTether {
     }
 
     /// Static scan — can be called from a background thread without &self.
+    /// Uses D-Bus on Linux (creates a temporary connection), falls back to bluetoothctl.
     pub fn scan_devices_static() -> Vec<(String, String)> {
+        #[cfg(target_os = "linux")]
+        {
+            log::info!("BT: scanning for devices via D-Bus (10s)...");
+            match dbus::DbusBluez::new() {
+                Ok(scan_dbus) => {
+                    if let Err(e) = scan_dbus.start_scan() {
+                        log::warn!("BT D-Bus scan start failed: {e}, falling back to bluetoothctl");
+                        return Self::scan_devices_bluetoothctl();
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    let _ = scan_dbus.stop_scan();
+                    match scan_dbus.list_all_devices() {
+                        Ok(devices) => {
+                            let results: Vec<(String, String)> = devices
+                                .into_iter()
+                                .filter(|d| !d.name.is_empty() && d.name != d.mac && !is_mac_like(&d.name))
+                                .map(|d| (d.mac, d.name))
+                                .collect();
+                            log::info!("BT D-Bus scan found {} named devices", results.len());
+                            return results;
+                        }
+                        Err(e) => {
+                            log::warn!("BT D-Bus list devices failed: {e}, falling back to bluetoothctl");
+                            return Self::scan_devices_bluetoothctl();
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("BT D-Bus connection failed for scan: {e}, falling back to bluetoothctl");
+                    return Self::scan_devices_bluetoothctl();
+                }
+            }
+        }
+        #[cfg(all(unix, not(target_os = "linux")))]
+        {
+            return Self::scan_devices_bluetoothctl();
+        }
+        #[cfg(not(unix))]
+        Vec::new()
+    }
+
+    /// Fallback scan via bluetoothctl CLI.
+    fn scan_devices_bluetoothctl() -> Vec<(String, String)> {
         #[cfg(unix)]
         {
-            log::info!("BT: scanning for devices (10s)...");
             let _ = run_bluetoothctl(&build_power_on_args());
             let _ = run_bluetoothctl(&build_agent_on_args());
             match run_bluetoothctl(&build_scan_on_args()) {
-                Ok(output) => return parse_scan_all_devices(&output),
+                Ok(output) => parse_scan_all_devices(&output),
                 Err(e) => {
-                    log::error!("BT scan failed: {e}");
-                    return Vec::new();
+                    log::error!("BT bluetoothctl scan failed: {e}");
+                    Vec::new()
                 }
             }
         }
         #[cfg(not(unix))]
         Vec::new()
+    }
+
+    /// Process pending D-Bus messages (dispatches Agent1 crossroads handlers).
+    pub fn process_dbus(&self) {
+        if let Some(ref dbus) = self.dbus {
+            dbus.process_messages(std::time::Duration::from_millis(0));
+        }
     }
 
     /// Make BT adapter discoverable (visible to other devices).
