@@ -485,8 +485,8 @@ impl Daemon {
         // ---- Scan phase ----
         self.run_scan_phase(&mut result);
 
-        // ---- Bluetooth health (SAFE mode only) ----
-        if self.mode == OperatingMode::Safe {
+        // ---- Bluetooth health (SAFE and RAGE modes) ----
+        if self.mode == OperatingMode::Safe || self.mode == OperatingMode::Rage {
             self.bluetooth.check_status();
             if self.bluetooth.should_connect() {
                 match self.bluetooth.connect() {
@@ -3048,6 +3048,8 @@ impl Daemon {
             ) {
                 Ok(()) => {
                     info!("radio: BT -> WIFI transition complete (via patchram unload)");
+                    // Reconnect tether immediately — don't wait for next epoch health check.
+                    self.bluetooth.ensure_connected();
                 }
                 Err(e) => {
                     log::error!("radio transition BT->WIFI failed: {e}");
