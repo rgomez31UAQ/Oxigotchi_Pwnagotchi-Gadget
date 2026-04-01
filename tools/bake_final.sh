@@ -486,17 +486,7 @@ fi
 sudo chmod 600 $PI/etc/ssh/ssh_host_*_key 2>/dev/null || true
 sudo chmod 644 $PI/etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
 
-# Install user SSH authorized keys
-sudo mkdir -p "$PI/home/pi/.ssh"
-AUTHKEYS="$PI/home/pi/.ssh/authorized_keys"
-PUBKEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIANe4Gwnsedd4fjT6CGTqg4KpOh9oHWOiYY8WJxelSLv oxigotchi"
-if ! grep -qF "$PUBKEY" "$AUTHKEYS" 2>/dev/null; then
-    echo "$PUBKEY" | sudo tee -a "$AUTHKEYS" > /dev/null
-fi
-sudo chmod 700 "$PI/home/pi/.ssh" 2>/dev/null || true
-sudo chmod 600 "$AUTHKEYS" 2>/dev/null || true
-sudo chown -R 1000:1000 "$PI/home/pi/.ssh" 2>/dev/null || true
-echo "  SSH configured (password auth, host keys, authorized_keys)"
+echo "  SSH configured (password auth, host keys)"
 
 # ─── 16. Disable cloud-init ───
 echo ""
