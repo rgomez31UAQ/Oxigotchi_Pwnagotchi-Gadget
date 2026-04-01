@@ -11,6 +11,7 @@ pub mod attacks;
 pub mod capture;
 pub mod coex;
 pub mod controller;
+pub mod dbus;
 pub mod discovery;
 pub mod model;
 pub mod patchram;
