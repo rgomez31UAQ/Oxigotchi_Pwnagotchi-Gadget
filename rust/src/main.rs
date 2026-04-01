@@ -1060,12 +1060,14 @@ impl Daemon {
         } else {
             std::collections::HashSet::new()
         };
+        let mut skipped = 0u32;
         for ap in &attackable {
             if self.attacks.is_whitelisted(&ap.bssid) {
                 continue;
             }
             // Smart Skip: skip APs with existing handshakes
             if self.skip_captured && captured_bssids.contains(&ap.bssid) {
+                skipped += 1;
                 continue;
             }
             if let Some(attack_type) = self.attacks.next_attack(&ap.bssid, &enabled_types) {
@@ -1083,6 +1085,8 @@ impl Daemon {
                 }
             }
         }
+        // "I already got that one" — small mood boost per skipped AP
+        self.epoch_loop.personality.on_smart_skip(skipped);
     }
 
     /// Capture phase: validate and index captures from AO output.

@@ -282,6 +282,8 @@ pub mod mood_deltas {
     pub const RF_PROBE_FLOOD: f32 = 0.02;
     /// Mood boost when bull tells a joke (slows decay during idle).
     pub const JOKE: f32 = 0.02;
+    /// Small mood boost when smart-skipping an AP we already pwned.
+    pub const SMART_SKIP: f32 = 0.01;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +581,13 @@ impl Personality {
     /// Called when a crash occurs (firmware or AO).
     pub fn on_crash(&mut self) {
         self.mood.adjust(mood_deltas::CRASH);
+    }
+
+    /// Called when smart skip skips an AP we already pwned ("I already got that one").
+    pub fn on_smart_skip(&mut self, count: u32) {
+        if count > 0 {
+            self.mood.adjust(mood_deltas::SMART_SKIP);
+        }
     }
 
     /// Set an override face (e.g., for hardware warnings).
