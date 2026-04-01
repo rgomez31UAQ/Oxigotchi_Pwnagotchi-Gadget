@@ -124,50 +124,26 @@ pub struct BluetoothConfig {
     /// Enable Bluetooth tethering.
     #[serde(default)]
     pub enabled: bool,
-    /// MAC address of the phone to connect to (empty = auto-detect).
-    #[serde(default)]
-    pub phone_mac: String,
-    /// Display name of the phone (empty = use MAC only).
+    /// Display name of the phone (used for scan matching).
     #[serde(default)]
     pub phone_name: String,
     /// Automatically connect when the device is seen.
     #[serde(default = "default_true")]
     pub auto_connect: bool,
-    /// Automatically pair with unknown devices.
-    #[serde(default = "default_true")]
-    pub auto_pair: bool,
     /// Hide the Bluetooth interface after a successful connection.
     #[serde(default = "default_true")]
     pub hide_after_connect: bool,
-    /// Seconds between reconnection attempts.
-    #[serde(default = "default_retry_interval_secs", alias = "retry_interval")]
-    pub retry_interval_secs: u64,
-    /// Maximum number of reconnection attempts (0 = unlimited).
-    #[serde(default)]
-    pub max_retries: u32,
-    /// Name for the network connection (empty = auto-generated).
-    #[serde(default)]
-    pub connection_name: String,
 }
 
 impl Default for BluetoothConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            phone_mac: String::new(),
             phone_name: String::new(),
             auto_connect: true,
-            auto_pair: true,
             hide_after_connect: true,
-            retry_interval_secs: 30,
-            max_retries: 0,
-            connection_name: String::new(),
         }
     }
-}
-
-fn default_retry_interval_secs() -> u64 {
-    30
 }
 
 fn default_main() -> MainConfig {
@@ -406,14 +382,9 @@ some_future_option = true
     fn test_bluetooth_config_defaults() {
         let bt = BluetoothConfig::default();
         assert!(!bt.enabled);
-        assert_eq!(bt.phone_mac, "");
         assert_eq!(bt.phone_name, "");
         assert!(bt.auto_connect);
-        assert!(bt.auto_pair);
         assert!(bt.hide_after_connect);
-        assert_eq!(bt.retry_interval_secs, 30);
-        assert_eq!(bt.max_retries, 0);
-        assert_eq!(bt.connection_name, "");
     }
 
     #[test]
@@ -421,38 +392,16 @@ some_future_option = true
         let toml = r#"
 [bluetooth]
 enabled = true
-phone_mac = "AA:BB:CC:DD:EE:FF"
 phone_name = "My Phone"
 auto_connect = false
-auto_pair = false
 hide_after_connect = false
-retry_interval_secs = 60
-max_retries = 5
-connection_name = "bt-tether"
 "#;
         let cfg = Config::from_toml(toml).unwrap();
         let bt = &cfg.bluetooth;
         assert!(bt.enabled);
-        assert_eq!(bt.phone_mac, "AA:BB:CC:DD:EE:FF");
         assert_eq!(bt.phone_name, "My Phone");
         assert!(!bt.auto_connect);
-        assert!(!bt.auto_pair);
         assert!(!bt.hide_after_connect);
-        assert_eq!(bt.retry_interval_secs, 60);
-        assert_eq!(bt.max_retries, 5);
-        assert_eq!(bt.connection_name, "bt-tether");
-    }
-
-    #[test]
-    fn test_bluetooth_config_retry_interval_alias() {
-        // The field also accepts the alias "retry_interval"
-        let toml = r#"
-[bluetooth]
-enabled = true
-retry_interval = 45
-"#;
-        let cfg = Config::from_toml(toml).unwrap();
-        assert_eq!(cfg.bluetooth.retry_interval_secs, 45);
     }
 
     #[test]
@@ -464,14 +413,43 @@ name = "test"
         let cfg = Config::from_toml(toml).unwrap();
         // [bluetooth] missing → all defaults apply
         assert!(!cfg.bluetooth.enabled);
-        assert_eq!(cfg.bluetooth.phone_mac, "");
         assert_eq!(cfg.bluetooth.phone_name, "");
         assert!(cfg.bluetooth.auto_connect);
-        assert!(cfg.bluetooth.auto_pair);
         assert!(cfg.bluetooth.hide_after_connect);
-        assert_eq!(cfg.bluetooth.retry_interval_secs, 30);
-        assert_eq!(cfg.bluetooth.max_retries, 0);
-        assert_eq!(cfg.bluetooth.connection_name, "");
+    }
+
+    #[test]
+    fn test_bluetooth_config_v2_defaults() {
+        let toml_str = r#"
+            [bluetooth]
+            enabled = true
+            phone_name = "iPhone"
+        "#;
+        let config: BluetoothConfig = toml::from_str(
+            &toml_str.replace("[bluetooth]\n", ""),
+        ).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.phone_name, "iPhone");
+        assert!(config.auto_connect);
+        assert!(config.hide_after_connect);
+    }
+
+    #[test]
+    fn test_bluetooth_config_v2_ignores_old_fields() {
+        // Old config files have phone_mac etc. — must not break
+        let toml_str = r#"
+            enabled = true
+            phone_mac = "AA:BB:CC:DD:EE:FF"
+            phone_name = "Pixel"
+            auto_pair = true
+            connection_name = "bt-pan-AABB"
+            retry_interval_secs = 60
+            max_retries = 5
+        "#;
+        let config: BluetoothConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.phone_name, "Pixel");
+        assert!(config.auto_connect); // default
     }
 
     #[test]

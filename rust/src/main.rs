@@ -160,14 +160,9 @@ impl Daemon {
         let captures = capture::CaptureManager::new(CAPTURE_DIR);
         let bt_config = bluetooth::BtConfig {
             enabled: config.bluetooth.enabled,
-            phone_mac: config.bluetooth.phone_mac.clone(),
             phone_name: config.bluetooth.phone_name.clone(),
-            connection_name: config.bluetooth.connection_name.clone(),
             auto_connect: config.bluetooth.auto_connect,
-            auto_pair: config.bluetooth.auto_pair,
             hide_after_connect: config.bluetooth.hide_after_connect,
-            retry_interval_secs: config.bluetooth.retry_interval_secs,
-            max_retries: config.bluetooth.max_retries,
         };
         let bluetooth = bluetooth::BtTether::new(bt_config);
         let bt_feature = bluetooth::supervisor::BtSupervisor::new(config.bt_feature.clone());
@@ -2507,7 +2502,7 @@ impl Daemon {
         s.bt_internet_available = bt_inet;
         s.bt_retry_count = self.bluetooth.retry_count;
         s.bt_device_name = self.bluetooth.config.phone_name.clone();
-        s.bt_phone_mac = self.bluetooth.config.phone_mac.clone();
+        s.bt_phone_mac = String::new();
 
         self.bt_feature.state.mode = bt_mode;
         self.bt_feature.state.health.stack_up = bt_enabled;

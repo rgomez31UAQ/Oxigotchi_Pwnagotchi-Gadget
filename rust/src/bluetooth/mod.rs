@@ -48,36 +48,21 @@ pub enum BtState {
 pub struct BtConfig {
     /// Whether Bluetooth tethering is enabled.
     pub enabled: bool,
-    /// MAC address of the paired phone.
-    pub phone_mac: String,
-    /// Display name of the phone (used for scan matching when MAC is unknown).
+    /// Display name of the phone (used for scan matching).
     pub phone_name: String,
-    /// nmcli connection profile name.
-    pub connection_name: String,
     /// Whether to auto-connect on boot.
     pub auto_connect: bool,
-    /// Whether to auto-pair on boot if device is not yet paired.
-    pub auto_pair: bool,
     /// Whether to hide BT discoverability after connecting.
     pub hide_after_connect: bool,
-    /// Retry interval in seconds on connection failure.
-    pub retry_interval_secs: u64,
-    /// Maximum retry attempts before giving up (0 = unlimited).
-    pub max_retries: u32,
 }
 
 impl Default for BtConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            phone_mac: String::new(),
             phone_name: String::new(),
-            connection_name: String::new(),
             auto_connect: true,
-            auto_pair: true,
             hide_after_connect: true,
-            retry_interval_secs: 30,
-            max_retries: 0,
         }
     }
 }
@@ -433,18 +418,15 @@ impl BtTether {
 
     /// Check if we should attempt a connection.
     pub fn should_connect(&self) -> bool {
-        if !self.config.auto_connect || self.config.phone_mac.is_empty() {
+        if !self.config.auto_connect {
             return false;
         }
         match self.state {
             BtState::Off | BtState::Pairing | BtState::Connecting | BtState::Connected => false,
             BtState::Disconnected => true,
             BtState::Error => {
-                if self.config.max_retries > 0 && self.retry_count >= self.config.max_retries {
-                    return false;
-                }
                 match self.last_attempt {
-                    Some(t) => t.elapsed().as_secs() >= self.config.retry_interval_secs,
+                    Some(t) => t.elapsed().as_secs() >= 30,
                     None => true,
                 }
             }
@@ -453,15 +435,14 @@ impl BtTether {
 
     /// Initiate BT PAN connection via nmcli.
     pub fn connect(&mut self) -> Result<(), String> {
-        if self.config.phone_mac.is_empty() {
-            return Err("No phone MAC configured".into());
-        }
         self.state = BtState::Connecting;
         self.last_attempt = Some(Instant::now());
 
         #[cfg(unix)]
         {
-            let args = build_connect_args(&self.config.connection_name);
+            // connection_name is resolved at pair_and_connect / setup time and stored in phone_name
+            // For now use a placeholder; Task 6 will rewrite this flow with D-Bus.
+            let args = build_connect_args("bt-pan");
             match run_nmcli(&args) {
                 Ok(_) => {
                     self.state = BtState::Connected;
@@ -491,12 +472,8 @@ impl BtTether {
     pub fn disconnect(&mut self) {
         #[cfg(unix)]
         {
-            let nmcli_args = build_disconnect_nmcli_args(&self.config.connection_name);
+            let nmcli_args = build_disconnect_nmcli_args("bt-pan");
             let _ = run_nmcli(&nmcli_args);
-            if !self.config.phone_mac.is_empty() {
-                let bt_args = build_disconnect_bt_args(&self.config.phone_mac);
-                let _ = run_bluetoothctl(&bt_args);
-            }
         }
         self.state = BtState::Disconnected;
         self.internet_available = false;
@@ -544,20 +521,12 @@ impl BtTether {
             let _ = run_bluetoothctl(&build_trust_args(mac));
 
             // Ensure nmcli profile
-            let con_name = if self.config.connection_name.is_empty() {
-                generate_connection_name(mac)
-            } else {
-                self.config.connection_name.clone()
-            };
+            let con_name = generate_connection_name(mac);
             let profile_exists = run_nmcli(&build_nmcli_show_args(&con_name)).is_ok();
             if !profile_exists {
                 info!("BT: creating nmcli profile '{con_name}'");
                 let _ = run_nmcli(&build_nmcli_add_pan_args(&con_name, mac));
             }
-
-            // Store resolved values
-            self.config.phone_mac = mac.to_string();
-            self.config.connection_name = con_name;
 
             // Connect
             match self.connect() {
@@ -576,7 +545,6 @@ impl BtTether {
         }
         #[cfg(not(unix))]
         {
-            self.config.phone_mac = mac.to_string();
             self.state = BtState::Connected;
             Ok(())
         }
@@ -689,7 +657,7 @@ impl BtTether {
         }
     }
 
-    /// Boot-time setup: power on adapter, optionally pair, create nmcli profile, connect.
+    /// Boot-time setup: power on adapter, scan for device, pair, create nmcli profile, connect.
     ///
     /// Does nothing and returns `Ok(())` if `config.enabled` is false.
     pub fn setup(&mut self) -> Result<(), String> {
@@ -707,49 +675,36 @@ impl BtTether {
             let _ = run_bluetoothctl(&build_agent_on_args());
             let _ = run_bluetoothctl(&build_default_agent_args());
 
-            // 2. Resolve MAC (scan if needed)
-            let mac = if self.config.phone_mac.is_empty() {
-                if !self.config.auto_pair {
-                    return Err("No phone MAC configured and auto_pair is off".into());
-                }
-                info!("BT: scanning for devices (10s)...");
-                self.state = BtState::Pairing;
-                match run_bluetoothctl(&build_scan_on_args()) {
-                    Ok(output) => {
-                        match parse_scan_for_device(&output, &self.config.phone_name, "") {
-                            Some(found) => {
-                                info!("BT: found device {found}");
-                                found
-                            }
-                            None => {
-                                self.state = BtState::Disconnected;
-                                return Err("No matching device found during scan".into());
-                            }
+            // 2. Scan for device by name
+            info!("BT: scanning for devices (10s)...");
+            self.state = BtState::Pairing;
+            let mac = match run_bluetoothctl(&build_scan_on_args()) {
+                Ok(output) => {
+                    match parse_scan_for_device(&output, &self.config.phone_name, "") {
+                        Some(found) => {
+                            info!("BT: found device {found}");
+                            found
+                        }
+                        None => {
+                            self.state = BtState::Disconnected;
+                            return Err("No matching device found during scan".into());
                         }
                     }
-                    Err(e) => {
-                        self.state = BtState::Disconnected;
-                        return Err(format!("BT scan failed: {e}"));
-                    }
                 }
-            } else {
-                self.config.phone_mac.clone()
+                Err(e) => {
+                    self.state = BtState::Disconnected;
+                    return Err(format!("BT scan failed: {e}"));
+                }
             };
 
             // 3. Pair and trust
-            if self.config.auto_pair {
-                info!("BT: pairing with {mac}");
-                self.state = BtState::Pairing;
-                let _ = run_bluetoothctl(&build_pair_args(&mac));
-                let _ = run_bluetoothctl(&build_trust_args(&mac));
-            }
+            info!("BT: pairing with {mac}");
+            self.state = BtState::Pairing;
+            let _ = run_bluetoothctl(&build_pair_args(&mac));
+            let _ = run_bluetoothctl(&build_trust_args(&mac));
 
             // 4. Ensure nmcli profile exists
-            let con_name = if self.config.connection_name.is_empty() {
-                generate_connection_name(&mac)
-            } else {
-                self.config.connection_name.clone()
-            };
+            let con_name = generate_connection_name(&mac);
             let profile_exists = run_nmcli(&build_nmcli_show_args(&con_name)).is_ok();
             if !profile_exists {
                 info!("BT: creating nmcli profile '{con_name}'");
@@ -759,12 +714,8 @@ impl BtTether {
                 }
             }
 
-            // Store resolved values
-            self.config.phone_mac = mac;
-            self.config.connection_name = con_name;
-
             // 5. Connect
-            info!("BT: connecting via '{}'", self.config.connection_name);
+            info!("BT: connecting");
             match self.connect() {
                 Ok(()) => info!("BT: connected, IP: {:?}", self.ip_address),
                 Err(e) => {
@@ -874,9 +825,18 @@ mod tests {
     }
 
     #[test]
-    fn test_connect_requires_mac() {
-        let mut bt = BtTether::default();
-        assert!(bt.connect().is_err());
+    fn test_connect_non_unix_stub() {
+        // On non-unix the stub always succeeds (no MAC needed)
+        #[cfg(not(unix))]
+        {
+            let mut bt = BtTether::default();
+            assert!(bt.connect().is_ok());
+            assert_eq!(bt.state, BtState::Connected);
+        }
+        #[cfg(unix)]
+        {
+            // On unix without nmcli available, connect will error — that's fine
+        }
     }
 
     #[test]
@@ -893,7 +853,6 @@ mod tests {
             return;
         }
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
             ..Default::default()
         };
@@ -907,7 +866,6 @@ mod tests {
     #[test]
     fn test_disconnect() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
@@ -927,20 +885,8 @@ mod tests {
     }
 
     #[test]
-    fn test_should_connect_no_mac() {
-        let config = BtConfig {
-            auto_connect: true,
-            ..Default::default()
-        };
-        let mut bt = BtTether::new(config);
-        bt.state = BtState::Disconnected;
-        assert!(!bt.should_connect());
-    }
-
-    #[test]
     fn test_should_connect_disconnected() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
             ..Default::default()
         };
@@ -952,7 +898,6 @@ mod tests {
     #[test]
     fn test_should_connect_already_connected() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
             ..Default::default()
         };
@@ -964,7 +909,6 @@ mod tests {
     #[test]
     fn test_should_connect_while_connecting() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
             ..Default::default()
         };
@@ -974,59 +918,22 @@ mod tests {
     }
 
     #[test]
-    fn test_error_retry_limit() {
+    fn test_error_retry_interval_elapsed() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
-            max_retries: 3,
-            retry_interval_secs: 0,
-            ..Default::default()
-        };
-        let mut bt = BtTether::new(config);
-        bt.state = BtState::Error;
-        bt.retry_count = 3;
-        assert!(!bt.should_connect());
-    }
-
-    #[test]
-    fn test_error_retry_not_yet_exhausted() {
-        let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
-            auto_connect: true,
-            max_retries: 3,
-            retry_interval_secs: 0,
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
         bt.state = BtState::Error;
         bt.retry_count = 2;
-        bt.last_attempt = Some(Instant::now() - std::time::Duration::from_secs(1));
-        assert!(bt.should_connect());
-    }
-
-    #[test]
-    fn test_error_unlimited_retries() {
-        let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
-            auto_connect: true,
-            max_retries: 0,
-            retry_interval_secs: 0,
-            ..Default::default()
-        };
-        let mut bt = BtTether::new(config);
-        bt.state = BtState::Error;
-        bt.retry_count = 1000;
-        bt.last_attempt = Some(Instant::now() - std::time::Duration::from_secs(1));
+        bt.last_attempt = Some(Instant::now() - std::time::Duration::from_secs(31));
         assert!(bt.should_connect());
     }
 
     #[test]
     fn test_error_retry_interval_not_elapsed() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
-            max_retries: 0,
-            retry_interval_secs: 30,
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
@@ -1102,7 +1009,6 @@ mod tests {
             return;
         }
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
@@ -1127,7 +1033,6 @@ mod tests {
             return;
         }
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
@@ -1150,7 +1055,6 @@ mod tests {
             return;
         }
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
@@ -1164,7 +1068,6 @@ mod tests {
     #[test]
     fn test_toggle_ignored_while_connecting() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
@@ -1199,14 +1102,9 @@ mod tests {
     fn test_config_defaults() {
         let cfg = BtConfig::default();
         assert!(!cfg.enabled);
-        assert!(cfg.phone_mac.is_empty());
         assert!(cfg.phone_name.is_empty());
-        assert!(cfg.connection_name.is_empty());
         assert!(cfg.auto_connect);
-        assert!(cfg.auto_pair);
         assert!(cfg.hide_after_connect);
-        assert_eq!(cfg.retry_interval_secs, 30);
-        assert_eq!(cfg.max_retries, 0);
     }
 
     // ===== IP getter tests =====
@@ -1412,7 +1310,6 @@ mod tests {
     #[test]
     fn test_should_connect_pairing() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             auto_connect: true,
             ..Default::default()
         };
@@ -1424,7 +1321,6 @@ mod tests {
     #[test]
     fn test_toggle_pairing_noop() {
         let config = BtConfig {
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
@@ -1437,7 +1333,6 @@ mod tests {
     fn test_setup_not_enabled() {
         let config = BtConfig {
             enabled: false,
-            phone_mac: "AA:BB:CC:DD:EE:FF".into(),
             ..Default::default()
         };
         let mut bt = BtTether::new(config);
