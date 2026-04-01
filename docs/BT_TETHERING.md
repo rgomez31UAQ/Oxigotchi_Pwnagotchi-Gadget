@@ -1,21 +1,18 @@
 # Bluetooth Tethering on Pi Zero 2W
 
-> **Note:** In Rusty Oxigotchi v3.0, BT and WiFi monitor mode never run simultaneously. The daemon uses RAGE/SAFE mode cycling — BT is only active in SAFE mode, WiFi monitor is only active in RAGE mode. The PiSugar3 button toggles between them. See [RUSTY_V3.md](RUSTY_V3.md) for details.
+> **Note (v3.1):** BT tethering now stays connected in all modes — RAGE, BT attack, and SAFE. The BCM43436B0 uses independent buses for WiFi (SDIO) and BT (UART), so both can operate simultaneously. BT tethering is set up at boot before AngryOxide starts, and the daemon auto-reconnects if the connection drops during any mode.
 
-## Hardware Limitation: BCM43436B0 Shared UART
+## Hardware: BCM43436B0 Dual-Bus Architecture
 
-The Pi Zero 2W uses a BCM43436B0 combo WiFi/BT chip. WiFi and Bluetooth share a single UART bus. This creates a critical constraint:
+The Pi Zero 2W's BCM43436B0 combo chip uses **two independent buses**:
+- **WiFi** — SDIO bus (parallel, high-bandwidth)
+- **Bluetooth** — UART bus (serial, HCI protocol)
 
-**Once WiFi enters monitor mode, the BT UART cannot be initialized.**
+Because the buses are independent, BT tethering can stay alive while WiFi is in monitor mode (RAGE). The only exception is **BT attack mode**, which requires exclusive UART access to load a custom patchram — this disconnects phone tethering.
 
-Symptoms:
-- `hciconfig hci0 up` returns "Connection timed out (110)"
-- `bluetoothctl power on` fails with "org.bluez.Error.Failed"
-- The adapter shows as `DOWN` and cannot be recovered without a reboot or chip reset
+## Boot Sequence
 
-## Boot Sequence (Correct Order)
-
-The daemon MUST set up BT **before** starting WiFi monitor mode:
+The daemon sets up BT tethering **before** starting WiFi monitor mode at boot:
 
 ```
 1. Power on BT adapter (hciconfig hci0 up / bluetoothctl power on)
@@ -25,9 +22,9 @@ The daemon MUST set up BT **before** starting WiFi monitor mode:
 5. THEN start AngryOxide
 ```
 
-The current Rust daemon does this in `boot()` — see `rust/src/main.rs`.
+This order is important — starting WiFi monitor mode first can sometimes interfere with BT initialization. The daemon handles this automatically in `boot()` (see `rust/src/main.rs`).
 
-> **Note (v3.0):** This boot sequence only applies to the initial SAFE mode transition, not boot. RAGE is the default boot mode — no BT is started at boot. BT is only powered on when the user switches to SAFE mode via the PiSugar3 button.
+> **Default boot mode (v3.1):** The daemon boots into SAFE mode by default. Users can override this by setting `default_mode = "RAGE"` in `/etc/oxigotchi/config.toml` under `[main]`.
 
 ## Config
 
@@ -78,36 +75,24 @@ When someone flashes a new SD card with the oxigotchi image:
 
 Alternatively, the web dashboard has a **BT Scan** feature (on the Bluetooth card) that performs a 10-second scan and shows discovered devices. You can pair directly from the dashboard without SSH.
 
-## RAGE to SAFE Transition (hci_uart Reset)
+## Mode Transitions and BT Tethering
 
-When the user switches from RAGE to SAFE mode, the daemon performs these steps in order:
+### RAGE Mode (BT tether stays connected)
+BT tethering remains active during RAGE mode. The daemon auto-reconnects each epoch if the connection drops. WiFi monitor mode and BT PAN coexist on independent buses.
 
-1. Stop AngryOxide
-2. Exit WiFi monitor mode (`ip link set wlan0mon down`, `iw dev wlan0mon del`)
-3. Reload hci_uart kernel module:
-   - `rmmod hci_uart` (removes the BT UART driver)
-   - Wait 1 second
-   - `modprobe hci_uart` (reloads with clean state)
-   - Wait 3 seconds (hci0 re-registers with the kernel)
-4. Power on BT adapter via bluetoothctl
-5. Pair/connect to configured phone via nmcli
+### BT Attack Mode (BT tether disconnects)
+Switching to BT attack mode disconnects phone tethering — the UART is reclaimed for the attack patchram. A warning appears in the web dashboard: "BT mode disconnects phone tethering. You will lose remote access until switching back to RAGE or SAFE."
 
-This hci_uart reset is critical because WiFi monitor mode leaves the shared BCM43436B0 UART in a state where BT HCI commands time out. Without the reload, `bluetoothctl power on` fails with error 110.
+When returning from BT attack mode to RAGE or SAFE, the daemon automatically reconnects BT tethering via `ensure_connected()`.
 
-## SAFE to RAGE Transition
-
-1. Disconnect BT from phone (nmcli + bluetoothctl)
-2. Power off BT adapter (`bluetoothctl power off`)
-3. Wait 2 seconds (UART settle delay)
-4. Enter WiFi monitor mode
-5. Start AngryOxide
+### SAFE Mode (BT tether active)
+BT tethering is fully active. WiFi is in managed mode (no monitor, no attacks).
 
 ## Known Issues
 
-- **WiFi + BT coexistence**: In v3, WiFi and BT never run simultaneously. RAGE mode powers off BT entirely, SAFE mode stops WiFi monitor. This is by design — the shared UART cannot reliably handle both.
-- **nmcli error**: "No suitable device found (device wlan0 not available)" — this means the BT UART is down, not a WiFi issue. The error message is misleading. Switch to SAFE mode to fix.
+- **BT attack mode**: Switching to BT attack mode drops your phone tether — you lose SSH/web access over BT until switching back.
 - **10-second scan timeout**: If the phone isn't discoverable during the scan window, pairing fails. Using `phone_mac` bypasses this entirely.
-- **BT health monitoring**: In SAFE mode, the daemon checks BT connection status each epoch and auto-reconnects if the connection drops.
+- **BT health monitoring**: In RAGE and SAFE modes, the daemon checks BT connection status each epoch and auto-reconnects if the connection drops.
 
 ## Python Pwnagotchi Comparison
 

@@ -4,19 +4,19 @@
 
 ---
 
-The Pi Zero 2W's BCM43436B0 chip shares a single UART between WiFi and Bluetooth — they cannot run simultaneously. Oxigotchi cleanly separates them into three operating modes.
+The Pi Zero 2W's BCM43436B0 chip uses **two independent buses** — SDIO for WiFi and UART for Bluetooth. BT phone tethering stays connected in RAGE and SAFE modes. Only BT attack mode requires exclusive UART access.
 
 ## Three Operating Modes
 
-- **RAGE** (default) — WiFi monitor mode, AngryOxide attacking, BT off. The wardriving mode.
-- **BT** — Bluetooth offensive: HCI scanning, GATT resolution, BT attacks. WiFi off.
-- **SAFE** — WiFi managed mode, BT tethered to phone for internet, no attacks.
+- **RAGE** — WiFi monitor mode, AngryOxide attacking, BT tether stays connected. The wardriving mode.
+- **BT** — Bluetooth offensive: HCI scanning, GATT resolution, BT attacks. WiFi off, phone tether disconnected.
+- **SAFE** (default) — WiFi managed mode, BT tethered to phone for internet, no attacks.
 
 Switch via the **PiSugar3 button** (single tap) or the **web dashboard** mode buttons. Transitions happen at the next epoch boundary (~30 seconds) and are managed atomically by `RadioManager` — the lock file prevents partial states.
 
 ### RAGE Mode
 
-The bull is hunting. All WiFi attack types active, monitor mode on wlan0mon, BT radio off. This is what you use for wardriving and handshake capture.
+The bull is hunting. All WiFi attack types active, monitor mode on wlan0mon. BT phone tethering stays connected — you keep SSH and web dashboard access over BT while wardriving.
 
 ### BT Mode
 
@@ -58,34 +58,33 @@ The bull is resting. WiFi switches to managed mode, BT tethers to your phone for
 
 ## Mode Transitions
 
-When switching modes, the daemon handles full radio teardown and bringup:
+When switching modes, the daemon handles radio teardown and bringup:
 
-**RAGE → BT:**
-1. Stop AngryOxide, release wlan0mon
-2. `rmmod brcmfmac` (release WiFi SDIO driver)
-3. Load BT patchram via `hciattach /dev/ttyAMA0`
-4. Power on BT, begin HCI scanning
+**Any → RAGE:**
+1. Release previous mode's radio (BT patchram or managed WiFi)
+2. Enter WiFi monitor mode, start AngryOxide
+3. Reconnect BT tether (auto via `ensure_connected()`)
 
-**BT → RAGE:**
-1. Power off BT, detach HCI
-2. `modprobe brcmfmac` (reload WiFi driver)
-3. Wait for wlan0, create wlan0mon
-4. Start AngryOxide
+**Any → BT Attack:**
+1. Stop AngryOxide/release WiFi (if in RAGE)
+2. Load BT attack patchram — **disconnects phone tethering**
+3. Begin HCI scanning and BT attacks
 
 **Any → SAFE:**
-1. Release current radio mode
-2. Load managed WiFi + BT tethering
-3. Connect to configured phone
+1. Release previous mode's radio
+2. Switch WiFi to managed mode
+3. Ensure BT tether is connected
 
 The `RadioManager` uses a lock file to prevent concurrent mode transitions and ensure clean handoff.
 
-## Bluetooth Tethering (SAFE Mode)
+## Bluetooth Tethering (Always-On)
 
-BT tethering activates automatically in SAFE mode:
+BT tethering is set up at boot and stays connected in RAGE and SAFE modes:
 
-1. Powers on Bluetooth via `bluetoothctl`
-2. Connects to your configured phone via BT PAN
-3. Acquires an IP address via DHCP over the BT network interface
+1. At boot, powers on Bluetooth and connects to phone **before** starting WiFi monitor mode
+2. Each epoch, checks BT connection health and auto-reconnects if dropped
+3. Only BT attack mode disconnects phone tethering (web dashboard shows a warning)
+4. When returning from BT attack mode, tether auto-reconnects
 
 ## Configuration
 

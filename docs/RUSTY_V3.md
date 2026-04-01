@@ -25,7 +25,7 @@ No Python interpreter, no venv, no pip, no Go runtime, no garbage collector. You
 2. Insert the card into your Pi Zero 2W.
 3. Connect the micro USB **data** port (center port, not the edge one).
 4. Power on. Wait ~5 seconds.
-5. The bull face appears on the e-ink display and scanning starts automatically in RAGE mode.
+5. The bull face appears on the e-ink display. The daemon starts in SAFE mode by default — switch to RAGE via the web dashboard or PiSugar3 button to begin scanning.
 
 **Connect to your Oxigotchi:**
 
@@ -66,7 +66,7 @@ The dashboard has 23 live cards:
 | 12 | **System Info** | CPU temp, CPU usage, memory, disk, system uptime, GPS status | 15s |
 | 13 | **Cracked Passwords** | Passwords cracked from captured handshakes (SSID, BSSID, password) | 60s |
 | 14 | **Download Captures** | "Download All (ZIP)" button plus individual file download links | 30s |
-| 15 | **Mode Switch** | RAGE / SAFE toggle buttons | via status |
+| 15 | **Mode Switch** | RAGE / BT / SAFE toggle buttons | via status |
 | 16 | **Actions** | Restart AO, Shutdown Pi, Restart Pwnagotchi, Restart Pi, Restart SSH | on-demand |
 | 17 | **Plugins** | Toggle plugins on/off, edit x/y positions, shows version/author/tag | 15s |
 | 18 | **Nearby Networks** | AP list sorted by signal strength — SSID, BSSID, RSSI, channel, client count, handshake status | 10s |
@@ -98,7 +98,7 @@ Touching any individual control (rate buttons, channel toggles, dwell slider, au
 
 **Attack rate:** Rate 1 is the safe default. Rates 2 and 3 are stable with the v6 firmware patch. Use the RAGE Slider for validated rate/dwell/channel combos, or set rates manually.
 
-**Mode switch:** Tap RAGE or SAFE. The switch happens at the next epoch boundary (up to ~30 seconds). The face and indicators will update when the switch completes.
+**Mode switch:** Tap RAGE, BT, or SAFE. The switch happens at the next epoch boundary (up to ~30 seconds). The face and indicators will update when the switch completes. Switching to BT attack mode shows a warning that phone tethering will disconnect.
 
 **Whitelist:** Add a MAC address or SSID to exclude it from attacks. Changes take effect at the next epoch. Useful for protecting your own networks.
 
@@ -112,22 +112,33 @@ Touching any individual control (rate buttons, channel toggles, dwell slider, au
 
 ---
 
-## RAGE / SAFE Mode
+## Operating Modes
 
-Oxigotchi v3 has two operating modes that cycle based on what the BCM43436B0 hardware can do. The chip shares a single UART between WiFi and Bluetooth — they cannot run simultaneously.
+Oxigotchi has three operating modes. The BCM43436B0 chip uses independent buses for WiFi (SDIO) and BT (UART), so BT phone tethering stays connected in RAGE and SAFE modes. Only BT attack mode requires exclusive UART access.
 
 ### Mode Summary
 
-| | RAGE (default) | SAFE |
-|---|---|---|
-| WiFi | Monitor mode, AngryOxide attacking | Managed mode, no attacks |
-| Bluetooth | Off (powered down) | On, tethered to phone |
-| Face pool | angry, intense, excited, upload, motivated, raging | debug, grateful, grazing |
-| Use case | Capturing handshakes | Phone internet, SSH over BT, dashboard access |
+| | RAGE | BT | SAFE (default) |
+|---|---|---|---|
+| WiFi | Monitor mode, AngryOxide attacking | Off | Managed mode, no attacks |
+| Bluetooth | Tethered to phone (always-on) | Attack mode (patchram loaded) | Tethered to phone |
+| Face pool | angry, intense, excited, upload, motivated, raging | intense, raging | debug, grateful, grazing |
+| Use case | Capturing handshakes | BT pentesting | Phone internet, maintenance |
 
-### Why Two Modes?
+> **v3.1:** BT tethering now stays connected in RAGE mode. WiFi (SDIO) and BT (UART) use independent buses on the BCM43436B0, so both work simultaneously. Only BT attack mode requires exclusive UART access and disconnects phone tethering.
 
-The BCM43436B0 WiFi/BT combo chip on the Pi Zero 2W uses a shared UART bus. When WiFi is in monitor mode injecting frames, the BT side of the UART is unusable. Attempting to run both causes bus contention, firmware hangs, and SDIO timeouts. Rather than fight the hardware, Oxigotchi cleanly separates the two into dedicated modes.
+### Why Three Modes?
+
+The BCM43436B0 WiFi/BT combo chip on the Pi Zero 2W uses **two independent buses** — SDIO for WiFi and UART for BT. WiFi monitor mode and BT PAN tethering can coexist (RAGE mode). However, BT attack mode requires loading a custom patchram via `hciattach` which takes exclusive UART control, so it cannot run alongside phone tethering.
+
+### Default Boot Mode
+
+The daemon boots into **SAFE** mode by default. This is the safest option for new users — no WiFi attacks run until you explicitly switch to RAGE. To change the default, set `default_mode` in `/etc/oxigotchi/config.toml`:
+
+```toml
+[main]
+default_mode = "SAFE"   # Options: "SAFE", "RAGE", "BT"
+```
 
 ### Switching Modes
 
@@ -140,19 +151,20 @@ The mode switch happens at the next epoch boundary, which can take up to ~30 sec
 
 ### Transition Details
 
-**RAGE to SAFE:**
-1. Stop AngryOxide
-2. Exit WiFi monitor mode
-3. Reload hci_uart kernel module (resets shared UART for clean BT)
-4. Power on BT adapter
-5. Pair/connect to configured phone
+**Any → RAGE:**
+1. Stop previous mode's radio (BT attack patchram or managed WiFi)
+2. Enter WiFi monitor mode, start AngryOxide
+3. Reconnect BT tether (if returning from BT attack mode)
 
-**SAFE to RAGE:**
-1. Disconnect BT from phone
-2. Power off BT adapter
-3. Wait 2 seconds (UART settle delay — required for BCM43436B0)
-4. Enter WiFi monitor mode
-5. Start AngryOxide
+**Any → BT Attack:**
+1. Stop AngryOxide and WiFi monitor (if in RAGE)
+2. Load BT attack patchram via `hciattach` (disconnects phone tether)
+3. Begin HCI scanning and BT attacks
+
+**Any → SAFE:**
+1. Stop previous mode's radio
+2. Switch WiFi to managed mode
+3. Ensure BT tether connected
 
 ### Face Pools
 
