@@ -539,33 +539,7 @@ fn verify_process_dead(_pid: u32) -> bool {
     true // stub: process is "dead" on non-unix
 }
 
-/// Check if the BT adapter is powered on via hciconfig.
-#[cfg(unix)]
-fn verify_bt_powered() -> bool {
-    match std::process::Command::new("hciconfig").arg("hci0").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout.contains("UP") && stdout.contains("RUNNING")
-        }
-        Err(_) => false,
-    }
-}
 
-#[cfg(not(unix))]
-fn verify_bt_powered() -> bool {
-    true // stub: BT always "powered" on non-unix
-}
-
-/// Check if the BT adapter (hci0) exists in sysfs.
-#[cfg(unix)]
-fn verify_bt_adapter_exists() -> bool {
-    Path::new("/sys/class/bluetooth/hci0").exists()
-}
-
-#[cfg(not(unix))]
-fn verify_bt_adapter_exists() -> bool {
-    true // stub: adapter always "exists" on non-unix
-}
 
 /// Get current process PID.
 fn current_pid() -> u32 {
