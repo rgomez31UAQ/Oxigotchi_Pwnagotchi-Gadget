@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Oxigotchi
 
-Oxigotchi ("Rusty Oxigotchi") is a Rust rewrite of the Python-based Pwnagotchi WiFi capture tool, targeting the Pi Zero 2W with a Waveshare e-ink display and PiSugar battery. It captures WPA handshakes via AngryOxide (AO), performs Bluetooth attacks, and renders a personality-driven face on e-ink. It is a single `rusty-oxigotchi` binary (v3.2.0, Rust edition 2024) that runs as a systemd service on the Pi.
+Oxigotchi ("Rusty Oxigotchi") is a Rust rewrite of the Python-based Pwnagotchi WiFi capture tool, targeting the Pi Zero 2W with a Waveshare e-ink display and PiSugar battery. It captures WPA handshakes via AngryOxide (AO), performs Bluetooth attacks, and renders a personality-driven face on e-ink. It is a single `rusty-oxigotchi` binary (v3.3.0, Rust edition 2024) that runs as a systemd service on the Pi.
 
 ## Build & Test Commands
 

@@ -21,7 +21,7 @@ REPO=/mnt/c/msys64/home/user/oxigotchi
 BASE_IMG="${1:-/mnt/d/oxigotchi-v3.0.img}"
 RELEASE_IMG="/mnt/d/oxigotchi-release.img"
 BINARY="$REPO/rust/target/aarch64-unknown-linux-gnu/release/oxigotchi"
-VERSION="3.2"
+VERSION="3.3"
 
 if [ ! -f "$BASE_IMG" ]; then
     echo "ERROR: Base image not found at $BASE_IMG"
