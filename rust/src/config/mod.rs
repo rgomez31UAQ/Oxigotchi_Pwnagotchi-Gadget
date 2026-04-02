@@ -55,6 +55,9 @@ pub struct MainConfig {
     /// Language code (e.g. "en").
     #[serde(default = "default_lang")]
     pub lang: String,
+    /// Default operating mode at boot: "RAGE", "SAFE", or "BT". Defaults to "SAFE".
+    #[serde(default = "default_mode")]
+    pub default_mode: String,
 }
 
 /// The `[ui]` TOML section.
@@ -151,11 +154,16 @@ fn default_main() -> MainConfig {
         name: default_name(),
         whitelist: Vec::new(),
         lang: default_lang(),
+        default_mode: default_mode(),
     }
 }
 
 fn default_lang() -> String {
     "en".into()
+}
+
+fn default_mode() -> String {
+    "SAFE".into()
 }
 
 fn deserialize_fps<'de, D>(deserializer: D) -> Result<u32, D::Error>

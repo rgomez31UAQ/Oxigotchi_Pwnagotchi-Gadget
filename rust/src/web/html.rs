@@ -166,6 +166,7 @@ input:checked+.slider:before{transform:translateX(22px)}
 <button class="mode-btn" id="mode-bt" onclick="switchMode('BT')">BT</button>
 <button class="mode-btn" id="mode-safe" onclick="switchMode('SAFE')">SAFE</button>
 </div>
+<div class="rage-disclaimer" id="bt-tether-warn">&#9888; BT mode disconnects phone tethering. You will lose remote access until switching back to RAGE or SAFE.</div>
 </div>
 
 <!-- 3. Core stats -->
@@ -805,6 +806,7 @@ function syncModeUi(rawMode) {
     }
     document.getElementById('mode-rage').classList.toggle('active', rawMode === 'RAGE' || rawMode === 'AO');
     document.getElementById('mode-bt').classList.toggle('active', rawMode === 'BT');
+    document.getElementById('bt-tether-warn').style.display = rawMode === 'BT' ? 'block' : 'none';
     document.getElementById('mode-safe').classList.toggle('active', rawMode === 'SAFE' || rawMode === 'PWN');
     applyModeVisibility(rawMode);
 }
@@ -916,6 +918,9 @@ function refreshAttacks() {
 }
 
 function updateRfFromWs(d) {
+    var rfCard = document.getElementById('card-rf');
+    if (rfCard) rfCard.style.display = (d.enabled && d.available) ? 'block' : 'none';
+    if (!d.enabled || !d.available) return;
     var speed = (d.last_batch_size > 0 && d.last_batch_duration_us > 0)
         ? (d.last_batch_size / (d.last_batch_duration_us / 1000)).toFixed(0)
         : '-';
@@ -1408,6 +1413,7 @@ function setRate(r) {
     });
 }
 function switchMode(mode) {
+    document.getElementById('bt-tether-warn').style.display = mode === 'BT' ? 'block' : 'none';
     toast('Switching to ' + mode + '...');
     api('POST', '/api/mode', {mode: mode}).then(function(r) {
         if (r && r.ok) toast(r.message);

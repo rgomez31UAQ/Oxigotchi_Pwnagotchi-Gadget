@@ -182,6 +182,11 @@ impl Daemon {
         );
         let bt_attack_scheduler = bluetooth::attacks::BtAttackScheduler::new(config.bt_attacks.clone());
         let bt_capture_manager = bluetooth::capture::BtCaptureManager::new(&config.bt_attacks.capture_dir);
+        let boot_mode = match config.main.default_mode.to_uppercase().as_str() {
+            "RAGE" => OperatingMode::Rage,
+            "BT" => OperatingMode::Bt,
+            _ => OperatingMode::Safe,
+        };
 
         Self {
             config,
@@ -213,7 +218,7 @@ impl Daemon {
             gpu_runtime_ingestor: gpu::runtime::ingest::GpuRuntimeIngestor::new(),
             gpu_optimizer: gpu::optimize::snapshot::SnapshotOptimizer::new(),
             qpu_engine: None, // initialized in boot()
-            mode: OperatingMode::Rage,
+            mode: boot_mode,
             boot_target_mode: None,
             shared_state,
             ws_tx,
@@ -304,15 +309,6 @@ impl Daemon {
         // Load persisted runtime state early — mode must be known before
         // deciding whether to start WiFi or BT.
         self.load_runtime_state();
-
-        // Fresh install (no state.json) defaults to SAFE mode since v3.2.
-        #[cfg(unix)]
-        if self.boot_target_mode.is_none()
-            && !std::path::Path::new("/var/lib/oxigotchi/state.json").exists()
-        {
-            self.boot_target_mode = Some("SAFE".to_string());
-            info!("fresh install — defaulting to SAFE mode");
-        }
 
         // Start WiFi monitor mode — but only if booting into a WiFi mode.
         // If the persisted mode is BT/SAFE, skip WiFi and queue a mode switch
@@ -414,6 +410,13 @@ impl Daemon {
         // enter_bt_mode()/enter_safe_mode() handles the radio transition
         // in the first epoch.
         if self.boot_target_mode.is_none() {
+            // Set up BT tether so it's available in RAGE mode alongside WiFi.
+            // Non-fatal: if the phone isn't paired yet, we proceed and retry each epoch.
+            match self.bluetooth.setup() {
+                Ok(()) => info!("BT tether ready at boot: {}", self.bluetooth.status_str()),
+                Err(e) => log::warn!("BT tether setup at boot failed (non-fatal): {e}"),
+            }
+
             // Start AngryOxide subprocess
             match self.ao.start() {
                 Ok(()) => info!("AO started: PID {}", self.ao.pid),
@@ -521,6 +524,20 @@ impl Daemon {
 
         // ---- Scan phase ----
         self.run_scan_phase(&mut result);
+
+        // ---- Bluetooth health (SAFE and RAGE modes) ----
+        if self.mode == OperatingMode::Safe || self.mode == OperatingMode::Rage {
+            self.bluetooth.check_status();
+            if self.bluetooth.should_connect() {
+                match self.bluetooth.connect() {
+                    Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
+                    Err(e) => {
+                        log::warn!("bluetooth reconnect failed: {e}");
+                        self.bluetooth.on_error();
+                    }
+                }
+            }
+        }
 
         // ---- Network health ----
         self.network.health_check();
@@ -3113,6 +3130,8 @@ impl Daemon {
             ) {
                 Ok(()) => {
                     info!("radio: BT -> WIFI transition complete (via patchram unload)");
+                    // Reconnect tether immediately — don't wait for next epoch health check.
+                    self.bluetooth.ensure_connected();
                 }
                 Err(e) => {
                     log::error!("radio transition BT->WIFI failed: {e}");
@@ -3814,9 +3833,9 @@ mod tests {
     }
 
     #[test]
-    fn test_daemon_starts_in_rage_mode() {
+    fn test_daemon_starts_in_safe_mode_by_default() {
         let daemon = make_daemon();
-        assert_eq!(daemon.mode, OperatingMode::Rage);
+        assert_eq!(daemon.mode, OperatingMode::Safe);
     }
 
     #[test]

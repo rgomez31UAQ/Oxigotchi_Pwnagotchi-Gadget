@@ -208,42 +208,6 @@ fn run_bluetoothctl(args: &[String]) -> Result<String, String> {
     }
 }
 
-/// Reload the hci_uart kernel module to reset the shared UART.
-///
-/// On BCM43436B0, WiFi monitor mode leaves the UART in a state where BT HCI
-/// commands time out. Reloading hci_uart gives BT a clean UART connection.
-#[cfg(unix)]
-pub fn reset_hci_uart() {
-    use log::{info, warn};
-    info!("BT: reloading hci_uart to reset shared UART");
-    let rmmod = std::process::Command::new("rmmod").arg("hci_uart").output();
-    match rmmod {
-        Ok(o) if o.status.success() => {}
-        Ok(o) => warn!(
-            "rmmod hci_uart: {}",
-            String::from_utf8_lossy(&o.stderr).trim()
-        ),
-        Err(e) => warn!("rmmod hci_uart failed: {e}"),
-    }
-    std::thread::sleep(std::time::Duration::from_secs(1));
-    let modprobe = std::process::Command::new("modprobe")
-        .arg("hci_uart")
-        .output();
-    match modprobe {
-        Ok(o) if o.status.success() => info!("BT: hci_uart reloaded"),
-        Ok(o) => warn!(
-            "modprobe hci_uart: {}",
-            String::from_utf8_lossy(&o.stderr).trim()
-        ),
-        Err(e) => warn!("modprobe hci_uart failed: {e}"),
-    }
-    // Wait for hci0 to re-register with the kernel
-    std::thread::sleep(std::time::Duration::from_secs(4));
-}
-
-/// Stub for non-unix platforms.
-#[cfg(not(unix))]
-pub fn reset_hci_uart() {}
 
 /// Run `ip` with the given arguments. Returns Ok(stdout) or Err(stderr).
 #[cfg(unix)]
@@ -718,6 +682,23 @@ impl BtTether {
             let _ = run_bluetoothctl(&build_power_off_args());
         }
         self.state = BtState::Off;
+    }
+
+    /// Reconnect tether if configured and not already connected.
+    /// Delegates to `connect()` to reuse its error handling and retry state.
+    /// No-op if disabled, no paired device, or already connected.
+    pub fn ensure_connected(&mut self) {
+        if !self.config.enabled {
+            return;
+        }
+        if self.pan_interface.is_some() {
+            return;
+        }
+        if self.user_disconnected {
+            return;
+        }
+        let _ = self.connect();
+        self.check_status();
     }
 
     /// Handle a connection failure.
@@ -1275,5 +1256,29 @@ mod tests {
         let mut bt = BtTether::new(config);
         bt.state = BtState::Disconnected;
         assert!(!bt.should_connect());
+    }
+
+    #[test]
+    fn test_ensure_connected_no_op_when_disabled() {
+        let mut bt = BtTether::new(BtConfig {
+            enabled: false,
+            phone_name: "iPhone".into(),
+            ..Default::default()
+        });
+        bt.state = BtState::Disconnected;
+        bt.ensure_connected(); // must not panic or change state
+        assert_eq!(bt.state, BtState::Disconnected);
+    }
+
+    #[test]
+    fn test_ensure_connected_no_op_when_already_connected() {
+        let mut bt = BtTether::new(BtConfig {
+            enabled: true,
+            phone_name: "iPhone".into(),
+            ..Default::default()
+        });
+        bt.pan_interface = Some("bnep0".into());
+        bt.ensure_connected();
+        // Should be no-op since already connected
     }
 }

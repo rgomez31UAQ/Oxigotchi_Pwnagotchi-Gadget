@@ -134,16 +134,17 @@ impl RadioManager {
     ///
     /// Steps:
     /// 1. Write TRANSITIONING to lock
-    /// 2. Power off BT
-    /// 3. Verify BT powered off
-    /// 4. Wait 2s for UART to settle
-    /// 5. Start WiFi monitor mode
-    /// 6. Verify wlan0mon exists
-    /// 7. Start AO
-    /// 8. Verify AO running
-    /// 9. Write WIFI to lock
+    /// 2. Start WiFi monitor mode
+    /// 3. Verify wlan0mon exists
+    /// 4. Start AO
+    /// 5. Verify AO running
+    /// 6. Write WIFI to lock
     ///
-    /// On failure: rollback — stop WiFi, restart BT, write BT to lock.
+    /// BT tether is left running throughout (hci_uart stays up — WiFi is SDIO,
+    /// BT is UART, different buses). After AO is verified, `bt.ensure_connected()`
+    /// restores the tether connection if it dropped.
+    ///
+    /// On failure: rollback — stop WiFi, reconnect BT tether, write BT to lock.
     pub fn transition_to_wifi(
         &mut self,
         ao: &mut ao::AoManager,
@@ -155,41 +156,25 @@ impl RadioManager {
         // Step 1: Mark transitioning
         self.acquire_lock(RadioMode::Transitioning)?;
 
-        // Step 2: Power off BT
-        info!("radio: step 2 — powering off BT");
-        bt.power_off();
-
-        // Step 3: Verify BT powered off
-        #[cfg(unix)]
-        {
-            if verify_bt_powered() {
-                warn!("radio: BT still shows powered after power_off, continuing anyway");
-            }
-        }
-
-        // Step 4: Wait for UART to settle
-        info!("radio: step 4 — waiting 2s for UART settle");
-        std::thread::sleep(Duration::from_secs(2));
-
-        // Step 5: Start WiFi monitor mode
-        info!("radio: step 5 — starting WiFi monitor mode");
+        // Step 2: Start WiFi monitor mode
+        info!("radio: step 2 — starting WiFi monitor mode");
         if let Err(e) = wifi.start_monitor() {
             error!("radio: WiFi monitor start failed: {e}, rolling back to BT");
             self.rollback_to_bt(bt);
             return Err(format!("WiFi monitor start failed: {e}"));
         }
 
-        // Step 6: Verify wlan0mon exists
+        // Step 3: Verify wlan0mon exists
         if !verify_interface_exists("wlan0mon") {
             error!("radio: wlan0mon not found after start_monitor, rolling back to BT");
             let _ = wifi.stop_monitor();
             self.rollback_to_bt(bt);
             return Err("wlan0mon interface not created".into());
         }
-        info!("radio: step 6 — wlan0mon verified");
+        info!("radio: step 3 — wlan0mon verified");
 
-        // Step 7: Start AO
-        info!("radio: step 7 — starting AO");
+        // Step 4: Start AO
+        info!("radio: step 4 — starting AO");
         if let Err(e) = ao.start() {
             error!("radio: AO start failed: {e}, rolling back to BT");
             let _ = wifi.stop_monitor();
@@ -197,7 +182,7 @@ impl RadioManager {
             return Err(format!("AO start failed: {e}"));
         }
 
-        // Step 8: Verify AO running
+        // Step 5: Verify AO running
         if ao.state != ao::AoState::Running {
             error!("radio: AO not in Running state after start, rolling back to BT");
             ao.stop();
@@ -205,9 +190,12 @@ impl RadioManager {
             self.rollback_to_bt(bt);
             return Err("AO failed to reach Running state".into());
         }
-        info!("radio: step 8 — AO verified (PID {})", ao.pid);
+        info!("radio: step 5 — AO verified (PID {})", ao.pid);
 
-        // Step 9: Write WIFI lock
+        // Reconnect BT tether (hci_uart stayed up during transition)
+        bt.ensure_connected();
+
+        // Step 6: Write WIFI lock
         self.acquire_lock(RadioMode::Wifi)?;
         info!("radio: transition to WIFI complete");
         Ok(())
@@ -222,18 +210,17 @@ impl RadioManager {
     /// 4. Delete wlan0mon
     /// 5. Verify wlan0mon gone
     /// 6. Bring wlan0 down
-    /// 7. Reload hci_uart
-    /// 8. Verify /sys/class/bluetooth/hci0 exists
-    /// 9. Power on BT
-    /// 10. Verify BT powered
-    /// 11. Write BT to lock
+    /// 7. Write BT to lock
     ///
-    /// On failure: rollback — tear down BT, restart WiFi, write WIFI to lock.
+    /// hci_uart is never unloaded, so the BT adapter stays up throughout.
+    /// `bt.ensure_connected()` reconnects the tether after WiFi stops.
+    ///
+    /// On failure: rollback — restart WiFi, write WIFI to lock.
     pub fn transition_to_bt(
         &mut self,
         ao: &mut ao::AoManager,
         wifi: &mut wifi::WifiManager,
-        _bt: &mut bluetooth::BtTether,
+        bt: &mut bluetooth::BtTether,
     ) -> Result<(), String> {
         info!("radio: beginning transition to BT");
 
@@ -301,37 +288,10 @@ impl RadioManager {
                 .output();
         }
 
-        // Step 7: Reload hci_uart
-        info!("radio: step 7 — reloading hci_uart");
-        bluetooth::reset_hci_uart();
+        // Reconnect BT tether (hci_uart was never unloaded, adapter is still up)
+        bt.ensure_connected();
 
-        // Step 8: Verify /sys/class/bluetooth/hci0 exists
-        if !verify_bt_adapter_exists() {
-            error!("radio: hci0 not found after hci_uart reload, rolling back to WIFI");
-            if !self.rollback_to_wifi(ao, wifi) {
-                error!("radio: rollback_to_wifi failed after hci0 not-found check");
-            }
-            return Err("BT adapter hci0 not found after hci_uart reload".into());
-        }
-        info!("radio: step 8 — hci0 adapter verified");
-
-        // Step 9: Power on BT
-        info!("radio: step 9 — powering on BT");
-        #[cfg(unix)]
-        {
-            let _ = std::process::Command::new("bluetoothctl")
-                .args(["power", "on"])
-                .output();
-        }
-
-        // Step 10: Verify BT powered
-        if !verify_bt_powered() {
-            warn!("radio: BT does not show powered after power on");
-            // Non-fatal on non-Pi, continue
-        }
-        info!("radio: step 10 — BT power verified");
-
-        // Step 11: Write BT lock
+        // Step 7: Write BT lock
         self.acquire_lock(RadioMode::Bt)?;
         info!("radio: transition to BT complete");
         Ok(())
@@ -501,15 +461,9 @@ impl RadioManager {
     /// Rollback helper: restart BT after a failed WiFi transition.
     fn rollback_to_bt(&mut self, bt: &mut bluetooth::BtTether) {
         warn!("radio: rolling back to BT");
-        bluetooth::reset_hci_uart();
-        #[cfg(unix)]
-        {
-            let _ = std::process::Command::new("bluetoothctl")
-                .args(["power", "on"])
-                .output();
-        }
-        // Don't try full setup — just get BT adapter powered
-        bt.state = bluetooth::BtState::Disconnected;
+        // hci_uart was never unloaded — BT adapter is still up.
+        // Just restore tether connection and re-acquire lock.
+        bt.ensure_connected();
         let _ = self.acquire_lock(RadioMode::Bt);
     }
 
@@ -585,33 +539,7 @@ fn verify_process_dead(_pid: u32) -> bool {
     true // stub: process is "dead" on non-unix
 }
 
-/// Check if the BT adapter is powered on via hciconfig.
-#[cfg(unix)]
-fn verify_bt_powered() -> bool {
-    match std::process::Command::new("hciconfig").arg("hci0").output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout.contains("UP") && stdout.contains("RUNNING")
-        }
-        Err(_) => false,
-    }
-}
 
-#[cfg(not(unix))]
-fn verify_bt_powered() -> bool {
-    true // stub: BT always "powered" on non-unix
-}
-
-/// Check if the BT adapter (hci0) exists in sysfs.
-#[cfg(unix)]
-fn verify_bt_adapter_exists() -> bool {
-    Path::new("/sys/class/bluetooth/hci0").exists()
-}
-
-#[cfg(not(unix))]
-fn verify_bt_adapter_exists() -> bool {
-    true // stub: adapter always "exists" on non-unix
-}
 
 /// Get current process PID.
 fn current_pid() -> u32 {

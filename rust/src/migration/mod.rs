@@ -315,6 +315,7 @@ pub fn extract_rusty_config(pwn: &PwnagotchiConfig) -> crate::config::Config {
             name: pwn.main.name.clone(),
             whitelist: pwn.main.whitelist.clone(),
             lang: pwn.main.lang.clone(),
+            default_mode: "SAFE".into(),
         },
         ui: crate::config::UiConfig {
             invert: pwn.ui.invert,
