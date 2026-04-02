@@ -262,6 +262,11 @@ impl BtTether {
         }
     }
 
+    /// Whether the D-Bus connection has been initialized.
+    pub fn dbus_ready(&self) -> bool {
+        self.dbus.is_some()
+    }
+
     /// Initialize D-Bus connection and attempt PAN tethering.
     pub fn setup(&mut self) -> Result<(), String> {
         if !self.config.enabled {

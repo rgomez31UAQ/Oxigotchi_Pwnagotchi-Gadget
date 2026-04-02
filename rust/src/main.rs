@@ -410,12 +410,8 @@ impl Daemon {
         // enter_bt_mode()/enter_safe_mode() handles the radio transition
         // in the first epoch.
         if self.boot_target_mode.is_none() {
-            // Set up BT tether so it's available in RAGE mode alongside WiFi.
-            // Non-fatal: if the phone isn't paired yet, we proceed and retry each epoch.
-            match self.bluetooth.setup() {
-                Ok(()) => info!("BT tether ready at boot: {}", self.bluetooth.status_str()),
-                Err(e) => log::warn!("BT tether setup at boot failed (non-fatal): {e}"),
-            }
+            // BT tether setup is deferred to the first epoch — hardware may
+            // not be ready during early boot (hciattach, UART settle).
 
             // Start AngryOxide subprocess
             match self.ao.start() {
@@ -526,15 +522,23 @@ impl Daemon {
         self.run_scan_phase(&mut result);
 
         // ---- Bluetooth health (SAFE and RAGE modes) ----
+        // Deferred setup: first epoch initializes BT (hardware not ready at boot).
         if self.mode == OperatingMode::Safe || self.mode == OperatingMode::Rage {
-            self.bluetooth.check_status();
-            if self.bluetooth.should_connect() {
-                match self.bluetooth.connect() {
-                    Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
-                    Err(e) => {
-                        log::warn!("bluetooth reconnect failed: {e}");
-                        self.bluetooth.on_error();
+            if self.bluetooth.dbus_ready() {
+                self.bluetooth.check_status();
+                if self.bluetooth.should_connect() {
+                    match self.bluetooth.connect() {
+                        Ok(()) => info!("bluetooth reconnected: {}", self.bluetooth.status_str()),
+                        Err(e) => {
+                            log::warn!("bluetooth reconnect failed: {e}");
+                            self.bluetooth.on_error();
+                        }
                     }
+                }
+            } else {
+                match self.bluetooth.setup() {
+                    Ok(()) => info!("BT tether initialized: {}", self.bluetooth.status_str()),
+                    Err(e) => log::warn!("BT tether setup deferred (not ready): {e}"),
                 }
             }
         }
