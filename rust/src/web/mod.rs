@@ -4689,4 +4689,106 @@ mod tests {
         let resp = bt_manual_attack_handler(State(state), Json(body)).await;
         assert!(resp.ok);
     }
+
+    #[test]
+    fn test_interact_cooldown_fields_default() {
+        let ds = DaemonState::new("testbot");
+        assert!(ds.interact_cooldowns.is_empty());
+        assert!(ds.pending_mood_boost.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_interact_pet_boosts_mood() {
+        let state = Arc::new(Mutex::new(DaemonState::new("testbot")));
+        {
+            let mut s = state.lock().unwrap();
+            s.mood = 0.0;
+        }
+        let body = InteractRequest { action: "pet".into() };
+        let resp = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(body),
+        ).await;
+        assert!(resp.0.ok);
+        assert_eq!(resp.0.cooldown_secs, 300);
+        let s = state.lock().unwrap();
+        assert!(s.mood > 0.0, "mood should have increased");
+        assert!(s.pending_mood_boost.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_interact_cooldown_rejects() {
+        let state = Arc::new(Mutex::new(DaemonState::new("testbot")));
+        // First press: succeeds
+        let body = InteractRequest { action: "treat".into() };
+        let resp = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(body),
+        ).await;
+        assert!(resp.0.ok);
+
+        // Immediate second press: rejected
+        let body2 = InteractRequest { action: "treat".into() };
+        let resp2 = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(body2),
+        ).await;
+        assert!(!resp2.0.ok);
+        assert!(resp2.0.cooldown_secs > 0);
+    }
+
+    #[tokio::test]
+    async fn test_interact_unknown_action() {
+        let state = Arc::new(Mutex::new(DaemonState::new("testbot")));
+        let body = InteractRequest { action: "kick".into() };
+        let resp = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(body),
+        ).await;
+        assert!(!resp.0.ok);
+        assert_eq!(resp.0.message, "Unknown action");
+    }
+
+    #[tokio::test]
+    async fn test_interact_soft_cap_at_high_mood() {
+        let state = Arc::new(Mutex::new(DaemonState::new("testbot")));
+        {
+            let mut s = state.lock().unwrap();
+            s.mood = 0.85; // above soft cap
+        }
+        let body = InteractRequest { action: "treat".into() };
+        let resp = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(body),
+        ).await;
+        assert!(resp.0.ok);
+        // Mood should barely change (above 0.8 cap)
+        let s = state.lock().unwrap();
+        assert!((s.mood - 0.85).abs() < 0.01, "mood {} should not increase much above cap", s.mood);
+    }
+
+    #[tokio::test]
+    async fn test_interact_independent_cooldowns() {
+        let state = Arc::new(Mutex::new(DaemonState::new("testbot")));
+        // Pet succeeds
+        let resp1 = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(InteractRequest { action: "pet".into() }),
+        ).await;
+        assert!(resp1.0.ok);
+
+        // Treat also succeeds (independent cooldown)
+        let resp2 = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(InteractRequest { action: "treat".into() }),
+        ).await;
+        assert!(resp2.0.ok);
+
+        // Pet again: rejected (on cooldown)
+        let resp3 = interact_handler(
+            axum::extract::State(state.clone()),
+            axum::Json(InteractRequest { action: "pet".into() }),
+        ).await;
+        assert!(!resp3.0.ok);
+    }
 }
