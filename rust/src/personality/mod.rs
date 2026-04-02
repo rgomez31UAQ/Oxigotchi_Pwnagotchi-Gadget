@@ -222,7 +222,18 @@ impl Mood {
     pub fn adjust(&mut self, delta: f32) {
         self.value = (self.value + delta).clamp(0.0, 1.0);
     }
+}
 
+/// Compute effective mood boost from an interaction button press.
+/// Soft-capped at 0.8 — the closer to 0.8, the less effect buttons have.
+/// Only real XP from handshakes pushes mood past 0.8.
+pub fn interact_boost(base_boost: f32, current_mood: f32) -> f32 {
+    const SOFT_CAP: f32 = 0.8;
+    let multiplier = (1.0 - current_mood / SOFT_CAP).max(0.0);
+    base_boost * multiplier
+}
+
+impl Mood {
     /// Choose the best face for the current mood and context.
     pub fn face(&self) -> Face {
         match self.value {
@@ -2549,5 +2560,41 @@ mod tests {
         let rf = crate::qpu::rf::RfEnvironment::default();
         p.apply_rf_environment(&rf);
         assert_eq!(p.override_face, None, "non-transition Raging should be cleared");
+    }
+
+    #[test]
+    fn test_interact_boost_at_zero_mood() {
+        // At mood 0.0, full boost applies
+        let result = interact_boost(0.05, 0.0);
+        assert!((result - 0.05).abs() < 0.001, "got {result}");
+    }
+
+    #[test]
+    fn test_interact_boost_at_half_cap() {
+        // At mood 0.4 (half of 0.8 cap), ~50% boost
+        let result = interact_boost(0.05, 0.4);
+        assert!((result - 0.025).abs() < 0.001, "got {result}");
+    }
+
+    #[test]
+    fn test_interact_boost_at_cap() {
+        // At mood 0.8+, zero boost
+        let result = interact_boost(0.05, 0.8);
+        assert!(result < 0.001, "got {result}");
+    }
+
+    #[test]
+    fn test_interact_boost_above_cap() {
+        // At mood 1.0, still zero
+        let result = interact_boost(0.05, 1.0);
+        assert!(result < 0.001, "got {result}");
+    }
+
+    #[test]
+    fn test_interact_boost_near_cap() {
+        // At mood 0.7, only 12.5% boost
+        let result = interact_boost(0.05, 0.7);
+        let expected = 0.05 * (1.0 - 0.7 / 0.8);
+        assert!((result - expected).abs() < 0.001, "got {result}, expected {expected}");
     }
 }
