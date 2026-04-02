@@ -17,8 +17,8 @@ echo "============================================="
 echo ""
 
 # ─── Configuration ───
-REPO=/mnt/c/msys64/home/user/oxigotchi
-BASE_IMG="${1:-/mnt/d/oxigotchi-v3.0.img}"
+REPO=/mnt/c/msys64/home/gelum/oxigotchi
+BASE_IMG="${1:-/mnt/d/oxigotchi-release.img}"
 RELEASE_IMG="/mnt/d/oxigotchi-release.img"
 BINARY="$REPO/rust/target/aarch64-unknown-linux-gnu/release/oxigotchi"
 VERSION="3.3"
@@ -50,8 +50,12 @@ echo "  Done"
 # ─── 0b. Copy base image ───
 echo ""
 echo "=== 0b. Copy base image ==="
-cp "$BASE_IMG" "$RELEASE_IMG"
-echo "  Copied to $RELEASE_IMG"
+if [ "$(realpath "$BASE_IMG")" != "$(realpath "$RELEASE_IMG")" ]; then
+    cp "$BASE_IMG" "$RELEASE_IMG"
+    echo "  Copied to $RELEASE_IMG"
+else
+    echo "  Base IS release image — working in-place"
+fi
 
 # ─── 0c. Cleanup previous mounts ───
 echo ""
