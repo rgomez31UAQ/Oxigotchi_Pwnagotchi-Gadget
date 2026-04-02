@@ -150,6 +150,11 @@ input:checked+.slider:before{transform:translateX(22px)}
 <div class="card" id="card-eink" style="text-align:center">
 <div class="card-title">Live Display</div>
 <div style="padding:8px;background:#fff;display:inline-block;border-radius:4px"><img id="eink-img" src="/api/display.png" alt="e-ink" style="width:250px;height:122px;image-rendering:pixelated"></div>
+<div id="interact-btns" style="margin-top:8px;display:flex;gap:6px;justify-content:center">
+<button class="btn" id="btn-pet" onclick="interact('pet')" style="font-size:12px;padding:4px 10px">Pet</button>
+<button class="btn" id="btn-treat" onclick="interact('treat')" style="font-size:12px;padding:4px 10px">Treat</button>
+<button class="btn" id="btn-praise" onclick="interact('praise')" style="font-size:12px;padding:4px 10px">Praise</button>
+</div>
 </div>
 
 <!-- 2. Mode switch -->
@@ -2341,6 +2346,37 @@ connectWebSocket();
 refreshStatus();
 // Display image stays on its own interval (binary, not suitable for WS)
 setInterval(function(){ document.getElementById('eink-img').src='/api/display.png?t='+Date.now(); }, 5000);
+function interact(action) {
+  var btn = document.getElementById('btn-' + action);
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  api('POST', '/api/interact', { action: action }).then(function(d) {
+    if (!d) { btn.disabled = false; btn.style.opacity = '1'; return; }
+    if (d.ok) refreshPersonality();
+    startCooldown(btn, action, d.cooldown_secs);
+  });
+}
+function startCooldown(btn, action, secs) {
+  var label = action.charAt(0).toUpperCase() + action.slice(1);
+  if (secs <= 0) { btn.textContent = label; btn.disabled = false; btn.style.opacity = '1'; return; }
+  var end = Date.now() + secs * 1000;
+  var iv = setInterval(function() {
+    var left = Math.max(0, Math.round((end - Date.now()) / 1000));
+    if (left <= 0) { clearInterval(iv); btn.textContent = label; btn.disabled = false; btn.style.opacity = '1'; return; }
+    var m = Math.floor(left / 60), s = left % 60;
+    btn.textContent = label + ' ' + m + ':' + (s < 10 ? '0' : '') + s;
+  }, 1000);
+}
+function loadInteractCooldowns() {
+  api('GET', '/api/interact').then(function(d) {
+    if (!d) return;
+    ['pet', 'treat', 'praise'].forEach(function(action) {
+      var secs = d[action] || 0;
+      if (secs > 0) startCooldown(document.getElementById('btn-' + action), action, secs);
+    });
+  });
+}
+loadInteractCooldowns();
 </script>
 </body>
 </html>"##;
