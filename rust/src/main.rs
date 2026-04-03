@@ -21,6 +21,7 @@ mod qpu;
 mod radio;
 mod rage;
 mod recovery;
+mod timer;
 mod web;
 mod wifi;
 
@@ -1747,17 +1748,85 @@ impl Daemon {
             self.bluetooth.disconnect();
         }
 
-        // Process BT pair request
+        // Process BT pair request — spawn in background thread so the main
+        // epoch loop can keep processing D-Bus Agent1 passkey events.
         let bt_pair_mac = {
             let mut s = self.shared_state.lock().unwrap();
-            s.pending_bt_pair.take()
+            if s.bt_pair_in_progress {
+                None // Already pairing, ignore duplicate requests
+            } else {
+                s.pending_bt_pair.take()
+            }
         };
         if let Some(mac) = bt_pair_mac {
             any_command = true;
+            // Ensure main D-Bus + Agent1 are ready (for passkey callbacks)
+            if let Err(e) = self.bluetooth.ensure_dbus() {
+                log::warn!("web: BT D-Bus init failed before pair: {e}");
+            }
             let path = format!("/org/bluez/hci0/dev_{}", mac.replace(':', "_"));
-            match self.bluetooth.pair_and_connect(&path) {
-                Ok(()) => info!("web: BT paired+connected to {mac}"),
-                Err(e) => log::warn!("web: BT pair failed: {e}"),
+            let shared = Arc::clone(&self.shared_state);
+            {
+                let mut s = shared.lock().unwrap();
+                s.bt_pair_in_progress = true;
+                s.bt_pair_result = None;
+            }
+            info!("web: BT pair+trust spawning background thread for {mac}");
+            let path_clone = path.clone();
+            let _ = std::thread::Builder::new()
+                .name("bt-pair".into())
+                .spawn(move || {
+                    // Create a separate D-Bus connection just for the blocking Pair call.
+                    // Agent1 callbacks still arrive on the main connection.
+                    let result = (|| -> Result<String, String> {
+                        #[cfg(target_os = "linux")]
+                        {
+                            let pair_dbus = bluetooth::dbus::DbusBluez::new()
+                                .map_err(|e| format!("pair thread D-Bus init: {e}"))?;
+                            log::info!("BT pair thread: calling Pair on {path_clone}");
+                            match pair_dbus.pair_device(&path_clone) {
+                                Ok(()) => {}
+                                Err(e) if e.contains("Already Exists") => {
+                                    log::info!("BT pair thread: already paired, skipping to trust");
+                                }
+                                Err(e) => return Err(e),
+                            }
+                            pair_dbus.trust_device(&path_clone)?;
+                            log::info!("BT pair thread: pair+trust complete for {path_clone}");
+                            Ok(path_clone)
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        {
+                            // Stub for non-Linux
+                            Ok(path_clone)
+                        }
+                    })();
+                    let mut s = shared.lock().unwrap();
+                    s.bt_pair_in_progress = false;
+                    s.bt_pair_result = Some(result);
+                });
+        }
+
+        // Check for completed background pair+trust and run connect_pan on main thread
+        let pair_result = {
+            let mut s = self.shared_state.lock().unwrap();
+            s.bt_pair_result.take()
+        };
+        if let Some(result) = pair_result {
+            any_command = true;
+            match result {
+                Ok(device_path) => {
+                    info!("web: BT pair+trust completed, connecting PAN to {device_path}");
+                    self.bluetooth.state = bluetooth::BtState::Connecting;
+                    match self.bluetooth.connect_after_pair(&device_path) {
+                        Ok(()) => info!("web: BT paired+connected to {device_path}"),
+                        Err(e) => log::warn!("web: BT PAN connect failed: {e}"),
+                    }
+                }
+                Err(e) => {
+                    log::warn!("web: BT pair failed: {e}");
+                    self.bluetooth.state = bluetooth::BtState::Error;
+                }
             }
         }
 
@@ -2021,6 +2090,14 @@ impl Daemon {
                 info!("web: epoch sleep set to {clamped}s");
                 any_command = true;
             }
+            if let Some(interval) = update.display_refresh_interval {
+                let clamped = interval.clamp(10, 500);
+                self.screen.config.full_refresh_interval = clamped;
+                let mut s = self.shared_state.lock().unwrap();
+                s.display_refresh_interval = clamped;
+                info!("web: display refresh interval set to {clamped} partials (also gated by 180s minimum)");
+                any_command = true;
+            }
         }
 
         // Process pending mood boost from interact buttons
@@ -2205,6 +2282,7 @@ impl Daemon {
             "lifetime_aps": self.lifetime_aps_base + self.ao.ap_count() as u64,
             "display_invert": self.screen.config.invert,
             "display_rotation": self.screen.config.rotation,
+            "display_refresh_interval": self.screen.config.full_refresh_interval,
             "min_rssi": s.min_rssi,
             "ap_ttl_secs": s.ap_ttl_secs,
             "epoch_sleep_secs": s.epoch_sleep_secs,
@@ -2391,6 +2469,12 @@ impl Daemon {
             self.screen.config.rotation = r;
             let mut s = self.shared_state.lock().unwrap();
             s.display_rotation = r;
+        }
+        if let Some(interval) = state.get("display_refresh_interval").and_then(|v| v.as_u64()) {
+            let i = (interval as u32).clamp(3, 100);
+            self.screen.config.full_refresh_interval = i;
+            let mut s = self.shared_state.lock().unwrap();
+            s.display_refresh_interval = i;
         }
         // Apply wifi tuning settings
         if let Some(rssi) = state.get("min_rssi").and_then(|v| v.as_i64()) {
@@ -2723,6 +2807,7 @@ impl Daemon {
         s.screen_width = self.screen.fb.width;
         s.screen_height = self.screen.fb.height;
         s.screen_bytes = self.screen.fb.as_bytes().to_vec();
+        s.display_refresh_interval = self.screen.config.full_refresh_interval;
 
         // Sync AP list for web dashboard — merge WiFi tracker + AO stdout data
         let mut ap_entries: Vec<web::ApEntry> = self
@@ -2863,6 +2948,7 @@ impl Daemon {
                 // Sync display config from shared state
                 self.screen.config.invert = s.display_invert;
                 self.screen.config.rotation = s.display_rotation;
+                self.screen.config.full_refresh_interval = s.display_refresh_interval;
             }
             reinit
         };
@@ -3308,6 +3394,7 @@ impl Daemon {
             mode: "AO",
             display_invert: s.display_invert,
             display_rotation: s.display_rotation,
+            display_refresh_interval: s.display_refresh_interval,
             min_rssi: s.min_rssi,
             ap_ttl_secs: s.ap_ttl_secs,
             epoch_sleep_secs: s.epoch_sleep_secs,
