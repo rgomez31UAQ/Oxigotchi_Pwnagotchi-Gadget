@@ -13,6 +13,7 @@
 //! Default: awake
 
 use rand::Rng;
+use std::time::{Duration, Instant};
 
 /// Milestone capture counts → (count, face, status_text).
 /// Each milestone has its own face — matches Python exactly.
@@ -35,8 +36,8 @@ const RARE_FACES: &[&str] = &["cool", "intense", "smart", "grateful", "motivated
 #[derive(Debug)]
 pub struct FaceVariety {
     // -- Milestone state --
-    /// Epochs remaining to show a milestone face.
-    pub milestone_epochs_left: u32,
+    /// Wall-clock deadline for milestone face display.
+    pub milestone_until: Option<Instant>,
     /// Face to show during milestone.
     pub milestone_face: Option<&'static str>,
     /// Status to show during milestone.
@@ -51,14 +52,14 @@ pub struct FaceVariety {
     // -- Debug on boot --
     /// Whether debug face was shown at boot.
     pub debug_shown: bool,
-    /// Epochs remaining for debug face.
-    pub debug_epochs_left: u32,
+    /// Wall-clock deadline for debug face display.
+    pub debug_until: Option<Instant>,
 
     // -- Friend/Upload countdowns --
-    /// Friend detection countdown epochs.
-    pub friend_epochs_left: u32,
-    /// Upload face countdown epochs.
-    pub upload_epochs_left: u32,
+    /// Wall-clock deadline for friend detection face.
+    pub friend_until: Option<Instant>,
+    /// Wall-clock deadline for upload face.
+    pub upload_until: Option<Instant>,
 
     // -- Capture variety --
     /// Whether a capture happened this epoch (set externally).
@@ -80,15 +81,15 @@ pub struct FaceVariety {
 impl FaceVariety {
     pub fn new() -> Self {
         Self {
-            milestone_epochs_left: 0,
+            milestone_until: None,
             milestone_face: None,
             milestone_status: None,
             last_milestone: 0,
             idle_epochs: 0,
             debug_shown: false,
-            debug_epochs_left: 0,
-            friend_epochs_left: 0,
-            upload_epochs_left: 0,
+            debug_until: None,
+            friend_until: None,
+            upload_until: None,
             captures_this_epoch: 0,
             capture_face: None,
             current_hour: 12,
@@ -112,7 +113,7 @@ impl FaceVariety {
         for &(count, face, status) in MILESTONES {
             if total_captures == count && self.last_milestone < count {
                 self.last_milestone = count;
-                self.milestone_epochs_left = 2;
+                self.milestone_until = Some(Instant::now() + Duration::from_secs(90));
                 self.milestone_face = Some(face);
                 self.milestone_status = Some(status);
                 return Some((face, status));
@@ -128,7 +129,7 @@ impl FaceVariety {
         };
         if level > prev_level && !matches!(total_captures, 10 | 25 | 50 | 100) {
             self.last_milestone = total_captures;
-            self.milestone_epochs_left = 2;
+            self.milestone_until = Some(Instant::now() + Duration::from_secs(90));
             self.milestone_face = Some("motivated");
             self.milestone_status = Some("Level up! The bull grows stronger!");
             return Some(("motivated", "Level up! The bull grows stronger!"));
@@ -165,7 +166,7 @@ impl FaceVariety {
     pub fn boot_face(&mut self) -> &'static str {
         if !self.debug_shown {
             self.debug_shown = true;
-            self.debug_epochs_left = 1;
+            self.debug_until = Some(Instant::now() + Duration::from_secs(60));
             return "debug";
         }
         "awake"
@@ -185,6 +186,8 @@ impl FaceVariety {
     /// Tick down all active countdowns. Call once per epoch.
     /// Also rolls for rare face and resets per-epoch state.
     pub fn tick_countdowns(&mut self) {
+        let now = Instant::now();
+
         // Roll for rare face this epoch
         self.rare_face = self.rare_face_roll();
 
@@ -192,43 +195,42 @@ impl FaceVariety {
         self.captures_this_epoch = 0;
         self.capture_face = None;
 
-        if self.milestone_epochs_left > 0 {
-            self.milestone_epochs_left -= 1;
-            if self.milestone_epochs_left == 0 {
-                self.milestone_face = None;
-                self.milestone_status = None;
-            }
+        if self.milestone_until.map_or(false, |t| now >= t) {
+            self.milestone_face = None;
+            self.milestone_status = None;
+            self.milestone_until = None;
         }
-        if self.debug_epochs_left > 0 {
-            self.debug_epochs_left -= 1;
+        if self.debug_until.map_or(false, |t| now >= t) {
+            self.debug_until = None;
         }
-        if self.friend_epochs_left > 0 {
-            self.friend_epochs_left -= 1;
+        if self.friend_until.map_or(false, |t| now >= t) {
+            self.friend_until = None;
         }
-        if self.upload_epochs_left > 0 {
-            self.upload_epochs_left -= 1;
+        if self.upload_until.map_or(false, |t| now >= t) {
+            self.upload_until = None;
         }
     }
 
-    /// Trigger friend face for N epochs.
-    pub fn on_friend_detected(&mut self, epochs: u32) {
-        self.friend_epochs_left = epochs;
+    /// Trigger friend face for a duration in seconds.
+    pub fn on_friend_detected(&mut self, duration_secs: u64) {
+        self.friend_until = Some(Instant::now() + Duration::from_secs(duration_secs));
     }
 
-    /// Trigger upload face for N epochs.
-    pub fn on_upload(&mut self, epochs: u32) {
-        self.upload_epochs_left = epochs;
+    /// Trigger upload face for a duration in seconds.
+    pub fn on_upload(&mut self, duration_secs: u64) {
+        self.upload_until = Some(Instant::now() + Duration::from_secs(duration_secs));
     }
 
     /// Get the current face override from the variety engine.
     /// Matches Python priority order exactly (first match wins).
     pub fn current_override(&self) -> Option<&'static str> {
+        let now = Instant::now();
         // 7. Debug on boot
-        if self.debug_epochs_left > 0 {
+        if self.debug_until.map_or(false, |t| now < t) {
             return Some("debug");
         }
         // 1a. Active milestone display
-        if self.milestone_epochs_left > 0 {
+        if self.milestone_until.map_or(false, |t| now < t) {
             return self.milestone_face;
         }
         // 2. Capture variety (new capture this epoch)
@@ -236,11 +238,11 @@ impl FaceVariety {
             return self.capture_face;
         }
         // 5. Friend detected
-        if self.friend_epochs_left > 0 {
+        if self.friend_until.map_or(false, |t| now < t) {
             return Some("friend");
         }
         // 6. Upload in progress
-        if self.upload_epochs_left > 0 {
+        if self.upload_until.map_or(false, |t| now < t) {
             return Some("upload");
         }
         // 3. Time-of-day faces
@@ -435,6 +437,7 @@ mod tests {
         let face = fv.boot_face();
         assert_eq!(face, "debug");
         assert!(fv.debug_shown);
+        assert!(fv.debug_until.is_some(), "debug_until should be set");
         assert_eq!(fv.boot_face(), "awake"); // second call
     }
 
@@ -450,6 +453,7 @@ mod tests {
     #[test]
     fn test_current_override_priority() {
         let mut fv = FaceVariety::new();
+        let future = Instant::now() + Duration::from_secs(300);
 
         // Default: no override
         assert_eq!(fv.current_override(), None);
@@ -459,7 +463,7 @@ mod tests {
         assert_eq!(fv.current_override(), Some("bored"));
 
         // Friend overrides idle
-        fv.friend_epochs_left = 2;
+        fv.friend_until = Some(future);
         assert_eq!(fv.current_override(), Some("friend"));
 
         // Capture overrides friend
@@ -471,23 +475,24 @@ mod tests {
         );
 
         // Milestone overrides capture
-        fv.milestone_epochs_left = 1;
+        fv.milestone_until = Some(future);
         fv.milestone_face = Some("cool");
         assert_eq!(fv.current_override(), Some("cool"));
 
         // Debug overrides milestone
-        fv.debug_epochs_left = 1;
+        fv.debug_until = Some(future);
         assert_eq!(fv.current_override(), Some("debug"));
     }
 
     #[test]
     fn test_tick_countdowns_clears_milestone() {
         let mut fv = FaceVariety::new();
-        fv.milestone_epochs_left = 1;
+        // Set milestone to already-expired time
+        fv.milestone_until = Some(Instant::now() - Duration::from_secs(1));
         fv.milestone_face = Some("excited");
         fv.milestone_status = Some("test");
         fv.tick_countdowns();
-        assert_eq!(fv.milestone_epochs_left, 0);
+        assert!(fv.milestone_until.is_none());
         assert!(fv.milestone_face.is_none());
     }
 

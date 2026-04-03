@@ -1610,7 +1610,7 @@ impl Daemon {
                     // Set face override for manual attack
                     self.epoch_loop.personality.set_transition_override(
                         crate::personality::Face::Raging,
-                        3,
+                        90,
                     );
 
                     // Mark device active in scheduler to prevent auto-targeting collision
@@ -3160,7 +3160,7 @@ impl Daemon {
         }
 
         self.mode = OperatingMode::Safe;
-        self.epoch_loop.personality.set_transition_override(face, 2);
+        self.epoch_loop.personality.set_transition_override(face, 60);
         // Radio transition disrupts SPI bus — force display reinit so next flush doesn't BUSY-timeout
         display::driver::request_reinit();
     }
@@ -3182,7 +3182,7 @@ impl Daemon {
                 info!("radio: transition to BT attack complete");
                 self.mode = OperatingMode::Bt;
                 self.bt_feature.set_mode(bluetooth::model::config::BtMode::Attack);
-                self.epoch_loop.personality.set_transition_override(face, 2);
+                self.epoch_loop.personality.set_transition_override(face, 60);
                 // Open raw HCI socket for attack dispatch
                 match bluetooth::attacks::hci::HciSocket::open(0) {
                     Ok(sock) => {

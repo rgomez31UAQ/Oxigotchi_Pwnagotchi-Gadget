@@ -6,6 +6,7 @@ use log::warn;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 /// Default save path for XP stats on Pi.
 pub const DEFAULT_XP_SAVE_PATH: &str = "/home/pi/exp_stats.json";
@@ -408,8 +409,8 @@ pub struct Personality {
     pub override_face: Option<Face>,
     /// Face set by a transition override (e.g., BT attack start).
     pub transition_face: Option<Face>,
-    /// Epochs remaining for the current transition override countdown.
-    pub transition_epochs_left: u8,
+    /// Wall-clock deadline for the current transition override.
+    pub transition_until: Option<Instant>,
     /// Number of consecutive epochs with no handshakes.
     pub blind_epochs: u32,
     /// Total handshakes captured this session.
@@ -424,8 +425,8 @@ pub struct Personality {
     pub variety: variety::FaceVariety,
     /// Joke phase state: 0 = question, 1 = punchline.
     joke_phase: u8,
-    /// Epochs remaining in current joke phase.
-    joke_epochs_left: u32,
+    /// Wall-clock deadline for current joke phase display.
+    joke_display_until: Option<Instant>,
     /// Index into face joke list (-1 equivalent = None).
     joke_index: Option<usize>,
     /// Which face's joke pool is active.
@@ -433,8 +434,8 @@ pub struct Personality {
     /// Locked face during joke display — prevents face churn from
     /// rare-face rolls and capture variety from killing jokes mid-display.
     joke_face_lock: Option<Face>,
-    /// Status text cycling: epochs the current status has been shown.
-    status_display_epochs: u32,
+    /// Wall-clock deadline for the current status message display.
+    status_display_until: Option<Instant>,
     /// The currently displayed status text.
     pub(crate) current_status: String,
     /// Set true when mood_tick()'s joke self-healing fires (for callers to query).
@@ -461,7 +462,7 @@ impl Personality {
             mood: Mood::default(),
             override_face: None,
             transition_face: None,
-            transition_epochs_left: 0,
+            transition_until: None,
             blind_epochs: 0,
             total_handshakes: 0,
             total_aps_seen: 0,
@@ -469,11 +470,11 @@ impl Personality {
             context: SystemContext::default(),
             variety: variety::FaceVariety::new(),
             joke_phase: 0,
-            joke_epochs_left: 0,
+            joke_display_until: None,
             joke_index: None,
             joke_face: boot_key.to_string(),
             joke_face_lock: None,
-            status_display_epochs: 1,
+            status_display_until: Some(Instant::now() + Duration::from_secs(45)),
             current_status: boot_status,
             joke_triggered_by_mood: false,
         }
@@ -612,28 +613,28 @@ impl Personality {
     pub fn clear_override(&mut self) {
         self.override_face = None;
         self.transition_face = None;
-        self.transition_epochs_left = 0;
+        self.transition_until = None;
     }
 
-    /// Set a transition override face for a fixed number of epochs.
+    /// Set a transition override face for a fixed duration in seconds.
     ///
-    /// Used for events like manual BT attack launch (Face::Raging for 3 epochs).
-    /// The transition is protected from RF environment clearing until the countdown
-    /// reaches zero.
-    pub fn set_transition_override(&mut self, face: Face, epochs: u8) {
+    /// Used for events like manual BT attack launch (Face::Raging for 90s).
+    /// The transition is protected from RF environment clearing until the deadline
+    /// passes.
+    pub fn set_transition_override(&mut self, face: Face, duration_secs: u64) {
         self.override_face = Some(face);
         self.transition_face = Some(face);
-        self.transition_epochs_left = epochs;
+        self.transition_until = Some(Instant::now() + Duration::from_secs(duration_secs));
     }
 
-    /// Decrement the transition countdown. When it reaches zero, clear both the
-    /// transition face and the override face so the temporary face expires.
+    /// Check whether the transition override has expired. When it has, clear both
+    /// the transition face and the override face so the temporary face expires.
     pub fn tick_transition_override(&mut self) {
-        if self.transition_epochs_left > 0 {
-            self.transition_epochs_left -= 1;
-            if self.transition_epochs_left == 0 {
+        if let Some(until) = self.transition_until {
+            if Instant::now() >= until {
                 self.transition_face = None;
                 self.override_face = None;
+                self.transition_until = None;
             }
         }
     }
@@ -649,8 +650,10 @@ impl Personality {
     /// Generate and cache a bull-themed status message for the current state.
     ///
     /// Call this once per epoch (requires &mut self for joke state tracking).
-    /// Uses slow cycling (3 epochs per message) and mood-dependent chance for two-part jokes.
+    /// Uses slow cycling (~45s per message) and mood-dependent chance for two-part jokes.
     pub fn generate_status(&mut self) {
+        let now = Instant::now();
+
         // If milestone is active, show milestone status
         if let Some(status) = self.variety.milestone_status {
             self.current_status = status.to_string();
@@ -672,11 +675,11 @@ impl Personality {
         // stale from the previous face, triggering the static mood fallback.
         if self.joke_face != face_name {
             self.joke_phase = 0;
-            self.joke_epochs_left = 0;
+            self.joke_display_until = None;
             self.joke_index = None;
             self.joke_face_lock = None; // release stale lock
             self.joke_face = face_name.clone();
-            self.status_display_epochs = 3; // force new message pick below
+            self.status_display_until = None; // force new message pick below
             let msgs = messages::messages_for_face(&face_name);
             if !msgs.is_empty() {
                 let mut rng = rand::thread_rng();
@@ -685,8 +688,8 @@ impl Personality {
         }
 
         // If a joke is actively being displayed, continue it
-        if self.joke_epochs_left > 0 {
-            self.joke_epochs_left -= 1;
+        let joke_active = self.joke_display_until.map_or(false, |t| now < t);
+        if joke_active {
             if let Some(idx) = self.joke_index {
                 let joke_list = jokes::jokes_for_face(&self.joke_face);
                 if idx < joke_list.len() {
@@ -701,11 +704,13 @@ impl Personality {
             }
         }
 
+        let joke_expired = self.joke_display_until.map_or(true, |t| now >= t);
+
         // Question phase just ended — switch to punchline
-        if self.joke_phase == 0 && self.joke_index.is_some() && self.joke_epochs_left == 0 {
+        if self.joke_phase == 0 && self.joke_index.is_some() && joke_expired {
             self.joke_phase = 1;
-            self.joke_epochs_left = 2; // punchline displays for 2 more epochs
-            self.status_display_epochs = 0; // reset so slow-cycling doesn't interfere
+            self.joke_display_until = Some(now + Duration::from_secs(60)); // punchline displays for ~60s
+            self.status_display_until = Some(now + Duration::from_secs(60)); // reset so slow-cycling doesn't interfere
             if let Some(idx) = self.joke_index {
                 let joke_list = jokes::jokes_for_face(&self.joke_face);
                 if idx < joke_list.len() {
@@ -716,16 +721,16 @@ impl Personality {
         }
 
         // Punchline done — clear joke state and force new message pick
-        if self.joke_phase == 1 && self.joke_epochs_left == 0 {
+        if self.joke_phase == 1 && joke_expired {
             self.joke_index = None;
             self.joke_phase = 0;
             self.joke_face_lock = None; // release face lock
-            self.status_display_epochs = 3; // prevent slow cycling from holding stale punchline
+            self.status_display_until = None; // force new pick
         }
 
-        // Slow cycling: keep current status for 3 epochs
-        if self.status_display_epochs < 3 && !self.current_status.is_empty() {
-            self.status_display_epochs += 1;
+        // Slow cycling: keep current status until display deadline
+        let status_still_fresh = self.status_display_until.map_or(false, |t| now < t);
+        if status_still_fresh && !self.current_status.is_empty() {
             return;
         }
 
@@ -740,11 +745,11 @@ impl Personality {
                 let question = joke_list[idx].0.to_string();
                 self.joke_index = Some(idx);
                 self.joke_phase = 0;
-                self.joke_epochs_left = 2; // question held by countdown for 2 more epochs (3 total)
+                self.joke_display_until = Some(now + Duration::from_secs(30)); // question displays for ~30s
                 self.joke_face_lock = Some(face); // lock face for joke duration
                 self.joke_face = face_name;
                 self.current_status = question;
-                self.status_display_epochs = 1;
+                self.status_display_until = Some(now + Duration::from_secs(45));
                 self.mood.adjust(mood_deltas::JOKE);
                 return;
             }
@@ -754,7 +759,7 @@ impl Personality {
         let msgs = messages::messages_for_face(&face_name);
         if msgs.is_empty() {
             self.current_status = "AO scanning...".to_string();
-            self.status_display_epochs = 1;
+            self.status_display_until = Some(now + Duration::from_secs(45));
             return;
         }
         let idx = rng.gen_range(0..msgs.len());
@@ -768,7 +773,7 @@ impl Personality {
             }
         }
         self.current_status = msg;
-        self.status_display_epochs = 1;
+        self.status_display_until = Some(now + Duration::from_secs(45));
     }
 
     /// Whether a joke is actively being displayed (question or punchline phase).
@@ -812,13 +817,14 @@ impl Personality {
 
         // Clear a stale RF override from a previous epoch when:
         //   (a) the RF condition that caused it no longer holds, AND
-        //   (b) it is not a protected transition override (transition_epochs_left > 0).
+        //   (b) it is not a protected transition override (transition_until still active).
         let deauth_storm = rf.deauth_rate > rf::DEAUTH_STORM_RATE;
+        let transition_active = self.transition_until.map_or(false, |t| Instant::now() < t);
         match self.override_face {
-            Some(Face::Raging) if !deauth_storm && self.transition_epochs_left == 0 => {
+            Some(Face::Raging) if !deauth_storm && !transition_active => {
                 self.override_face = None;
             }
-            Some(Face::Lonely) if !lonely_condition && self.transition_epochs_left == 0 => {
+            Some(Face::Lonely) if !lonely_condition && !transition_active => {
                 self.override_face = None;
             }
             _ => {}
@@ -2310,7 +2316,7 @@ mod tests {
             let mut p = Personality::new();
             p.mood = Mood { value: 0.15 }; // below 0.3
             p.joke_face = "sad".to_string();
-            p.status_display_epochs = 3; // force new pick
+            p.status_display_until = None; // force new pick
             p.generate_status();
             if p.joke_index.is_some() {
                 low_mood_jokes += 1;
@@ -2320,7 +2326,7 @@ mod tests {
             let mut p = Personality::new();
             p.mood = Mood { value: 0.6 }; // above 0.3
             p.joke_face = "awake".to_string();
-            p.status_display_epochs = 3;
+            p.status_display_until = None; // force new pick
             p.generate_status();
             if p.joke_index.is_some() {
                 high_mood_jokes += 1;
@@ -2342,7 +2348,7 @@ mod tests {
             let mut p = Personality::new();
             p.mood = Mood { value: 0.15 };
             p.joke_face = "sad".to_string();
-            p.status_display_epochs = 3;
+            p.status_display_until = None; // force new pick
             let before = p.mood.value();
             p.generate_status();
             if p.joke_index.is_some() {
@@ -2369,14 +2375,14 @@ mod tests {
         let mut p = Personality::new();
         p.mood = Mood { value: 0.35 }; // bored face
         p.joke_face = "bored".to_string();
-        p.status_display_epochs = 3; // force new pick
+        p.status_display_until = None; // force new pick
 
         // Try until we get a joke
         for _ in 0..200 {
             p.joke_index = None;
             p.joke_face_lock = None;
             p.joke_face = "bored".to_string();
-            p.status_display_epochs = 3;
+            p.status_display_until = None; // force new pick
             p.generate_status();
             if p.joke_index.is_some() {
                 break;
@@ -2393,7 +2399,7 @@ mod tests {
 
         // After joke ends, lock releases (unless a new joke starts immediately)
         p.joke_phase = 1;
-        p.joke_epochs_left = 0;
+        p.joke_display_until = None; // joke expired
         p.generate_status(); // punchline-done path clears lock
         // If no new joke started, lock should be cleared
         if p.joke_index.is_none() {
@@ -2406,23 +2412,35 @@ mod tests {
     #[test]
     fn test_mode_transition_override_expires() {
         let mut p = Personality::new();
-        p.set_transition_override(Face::Grateful, 2);
+        // Use a very short duration so it expires immediately
+        p.set_transition_override(Face::Grateful, 0);
         assert_eq!(p.override_face, Some(Face::Grateful));
-        assert_eq!(p.transition_epochs_left, 2);
+        assert!(p.transition_until.is_some());
 
-        p.tick_transition_override();
-        assert_eq!(p.override_face, Some(Face::Grateful));
-        assert_eq!(p.transition_epochs_left, 1);
-
+        // Should expire immediately (0 seconds)
+        std::thread::sleep(std::time::Duration::from_millis(5));
         p.tick_transition_override();
         assert_eq!(p.override_face, None);
-        assert_eq!(p.transition_epochs_left, 0);
+        assert!(p.transition_until.is_none());
+    }
+
+    #[test]
+    fn test_mode_transition_override_active() {
+        let mut p = Personality::new();
+        p.set_transition_override(Face::Grateful, 300);
+        assert_eq!(p.override_face, Some(Face::Grateful));
+        assert!(p.transition_until.is_some());
+
+        // Should still be active (300 seconds)
+        p.tick_transition_override();
+        assert_eq!(p.override_face, Some(Face::Grateful));
+        assert!(p.transition_until.is_some());
     }
 
     #[test]
     fn test_transition_override_not_cleared_if_overwritten() {
         let mut p = Personality::new();
-        p.set_transition_override(Face::Grateful, 2);
+        p.set_transition_override(Face::Grateful, 300);
         p.set_override(Face::BatteryCritical);
 
         p.tick_transition_override();
@@ -2474,8 +2492,8 @@ mod tests {
     fn test_transition_override_lifecycle() {
         let mut p = Personality::new();
 
-        // Set transition override
-        p.set_transition_override(Face::Intense, 2);
+        // Set transition override with long duration
+        p.set_transition_override(Face::Intense, 300);
         assert_eq!(p.override_face, Some(Face::Intense));
 
         // RF should NOT clear transition faces (Intense is not Raging/Excited/Lonely)
@@ -2487,25 +2505,25 @@ mod tests {
             "transition override should survive RF clearing"
         );
 
-        // Tick countdown to expiry
+        // Manually expire the transition
+        p.transition_until = Some(Instant::now() - Duration::from_secs(1));
         p.tick_transition_override();
-        p.tick_transition_override();
-        assert_eq!(p.override_face, None, "transition override should expire after countdown");
+        assert_eq!(p.override_face, None, "transition override should expire after deadline");
     }
 
     #[test]
     fn test_rf_clearing_preserves_transition_raging() {
         let mut p = Personality::new();
         // Set a transition override (simulates manual BT attack)
-        p.set_transition_override(Face::Raging, 3);
+        p.set_transition_override(Face::Raging, 90);
         assert_eq!(p.override_face, Some(Face::Raging));
-        assert_eq!(p.transition_epochs_left, 3);
+        assert!(p.transition_until.is_some());
 
         // Apply RF environment — should NOT clear the transition Raging override
         let rf = crate::qpu::rf::RfEnvironment::default();
         p.apply_rf_environment(&rf);
         assert_eq!(p.override_face, Some(Face::Raging), "transition Raging should survive RF clearing");
-        assert_eq!(p.transition_epochs_left, 3);
+        assert!(p.transition_until.is_some());
     }
 
     #[test]
@@ -2513,7 +2531,7 @@ mod tests {
         let mut p = Personality::new();
         // Set a non-transition Raging override (from deauth storm etc.)
         p.override_face = Some(Face::Raging);
-        assert_eq!(p.transition_epochs_left, 0);
+        assert!(p.transition_until.is_none());
 
         let rf = crate::qpu::rf::RfEnvironment::default();
         p.apply_rf_environment(&rf);
