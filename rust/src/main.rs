@@ -164,7 +164,7 @@ impl Daemon {
         ws_tx: tokio::sync::broadcast::Sender<String>,
     ) -> Self {
         let screen = display::Screen::new(config.display.clone());
-        let epoch_loop = epoch::EpochLoop::new(Duration::ZERO);
+        let epoch_loop = epoch::EpochLoop::new();
         let wifi = wifi::WifiManager::new();
         let mut attacks = attacks::AttackScheduler::new(ATTACK_RATE);
 
@@ -2430,7 +2430,7 @@ impl Daemon {
             s.display_rotation = r;
         }
         if let Some(interval) = state.get("display_refresh_interval").and_then(|v| v.as_u64()) {
-            let i = (interval as u32).clamp(3, 100);
+            let i = (interval as u32).clamp(10, 500);
             self.screen.config.full_refresh_interval = i;
             let mut s = self.shared_state.lock().unwrap();
             s.display_refresh_interval = i;
@@ -3694,7 +3694,6 @@ mod tests {
         }
         let mut daemon = make_daemon();
 
-        daemon.epoch_loop.epoch_duration = Duration::from_secs(0);
         daemon.boot();
 
         let mut pixel_counts: Vec<u32> = Vec::new();

@@ -736,6 +736,26 @@ impl Personality {
 
         let mut rng = rand::thread_rng();
 
+        // Mood-triggered joke: mood_tick() flagged this when low mood rolled a joke boost.
+        // Consume the flag and force a joke immediately, bypassing the random chance check.
+        if self.joke_triggered_by_mood {
+            self.joke_triggered_by_mood = false;
+            let joke_list = jokes::jokes_for_face(&face_name);
+            if !joke_list.is_empty() {
+                let idx = rng.gen_range(0..joke_list.len());
+                let question = joke_list[idx].0.to_string();
+                self.joke_index = Some(idx);
+                self.joke_phase = 0;
+                self.joke_display_until = Some(now + Duration::from_secs(30));
+                self.joke_face_lock = Some(face);
+                self.joke_face = face_name;
+                self.current_status = question;
+                self.status_display_until = Some(now + Duration::from_secs(45));
+                self.mood.adjust(mood_deltas::JOKE);
+                return;
+            }
+        }
+
         // Higher joke rate when mood is low — bored bull cracks more jokes
         let joke_chance = if self.mood.value() < 0.3 { 0.45 } else { 0.30 };
         if rng.r#gen::<f32>() < joke_chance {
@@ -873,9 +893,6 @@ pub struct XpTracker {
     /// Save file path.
     #[serde(skip)]
     pub save_path: PathBuf,
-    /// Epoch counter for periodic saves.
-    #[serde(skip)]
-    pub epoch_counter: u64,
 }
 
 impl XpTracker {
@@ -885,9 +902,6 @@ impl XpTracker {
     pub const XP_ASSOCIATION: u64 = 1;
     pub const XP_NEW_AP: u64 = 2;
 
-    /// How many epochs between periodic saves.
-    pub const SAVE_INTERVAL: u64 = 5;
-
     /// Create a new XP tracker at level 1 with zero XP.
     pub fn new() -> Self {
         Self {
@@ -895,7 +909,6 @@ impl XpTracker {
             level: 1,
             xp_total: 0,
             save_path: PathBuf::from(DEFAULT_XP_SAVE_PATH),
-            epoch_counter: 0,
         }
     }
 
@@ -963,18 +976,6 @@ impl XpTracker {
         let empty = bar_width - filled;
         let bar: String = "\u{2588}".repeat(filled as usize) + &"\u{2591}".repeat(empty as usize);
         format!("Lv {}  Exp|{}", self.level, bar)
-    }
-
-    /// Should we save this epoch? (every SAVE_INTERVAL epochs)
-    pub fn should_save(&self) -> bool {
-        self.epoch_counter > 0 && self.epoch_counter % Self::SAVE_INTERVAL == 0
-    }
-
-    /// Increment epoch counter and award passive XP. Call once per epoch.
-    /// The bull gains XP just by being active — +1 per epoch base.
-    pub fn tick_epoch(&mut self) {
-        self.epoch_counter += 1;
-        self.award(1); // passive XP for scanning
     }
 
     /// Award XP for seeing APs this epoch. +1 per AP, capped at 5.
@@ -1625,30 +1626,6 @@ mod tests {
         }
         assert!(xp.level > 1);
         assert_eq!(xp.xp_total, 2000);
-    }
-
-    #[test]
-    fn test_xp_should_save_interval() {
-        let mut xp = XpTracker::new();
-        assert!(!xp.should_save()); // epoch 0
-        for i in 1..=10 {
-            xp.tick_epoch();
-            if i % 5 == 0 {
-                assert!(xp.should_save(), "should save at epoch {i}");
-            } else {
-                assert!(!xp.should_save(), "should not save at epoch {i}");
-            }
-        }
-    }
-
-    #[test]
-    fn test_xp_epoch_counter() {
-        let mut xp = XpTracker::new();
-        assert_eq!(xp.epoch_counter, 0);
-        xp.tick_epoch();
-        assert_eq!(xp.epoch_counter, 1);
-        xp.tick_epoch();
-        assert_eq!(xp.epoch_counter, 2);
     }
 
     #[test]

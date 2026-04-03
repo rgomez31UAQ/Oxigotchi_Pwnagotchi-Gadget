@@ -692,8 +692,8 @@ Warning: Collect All bypasses RAM buffering and writes everything directly to SD
 <div style="font-size:13px;color:#00d4aa;font-weight:bold;margin:12px 0 6px">Display</div>
 <div style="margin-bottom:8px">
 <div style="font-size:12px;color:#888;margin-bottom:4px">Full refresh every: <span id="setting-refresh-val">10</span> partials</div>
-<input type="range" id="setting-refresh" class="ch-slider" min="3" max="100" step="1" value="10" oninput="document.getElementById('setting-refresh-val').textContent=this.value">
-<div style="display:flex;justify-content:space-between;font-size:10px;color:#555"><span>3 (less ghosting)</span><span>100 (less flicker)</span></div>
+<input type="range" id="setting-refresh" class="ch-slider" min="10" max="500" step="1" value="10" oninput="document.getElementById('setting-refresh-val').textContent=this.value">
+<div style="display:flex;justify-content:space-between;font-size:10px;color:#555"><span>10 (less ghosting)</span><span>500 (less flicker)</span></div>
 </div>
 
 <div style="margin-top:12px">

@@ -2408,7 +2408,7 @@ async fn settings_handler(
         }
     }
     if let Some(interval) = body.display_refresh_interval {
-        s.display_refresh_interval = interval.clamp(3, 100);
+        s.display_refresh_interval = interval.clamp(10, 500);
     }
     if let Some(rssi) = body.min_rssi {
         s.min_rssi = rssi.clamp(-100, -30);

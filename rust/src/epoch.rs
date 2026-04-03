@@ -45,8 +45,6 @@ pub enum EpochPhase {
     Capture,
     /// Updating display.
     Display,
-    /// Sleeping before next epoch.
-    Sleep,
 }
 
 /// The main epoch loop controller.
@@ -54,18 +52,16 @@ pub struct EpochLoop {
     pub metrics: EpochMetrics,
     pub personality: Personality,
     pub phase: EpochPhase,
-    pub epoch_duration: Duration,
     start_time: Instant,
 }
 
 impl EpochLoop {
-    /// Create a new epoch loop with the given duration per epoch.
-    pub fn new(epoch_duration: Duration) -> Self {
+    /// Create a new epoch loop.
+    pub fn new() -> Self {
         Self {
             metrics: EpochMetrics::default(),
             personality: Personality::new(),
             phase: EpochPhase::Scan,
-            epoch_duration,
             start_time: Instant::now(),
         }
     }
@@ -76,8 +72,7 @@ impl EpochLoop {
             EpochPhase::Scan => EpochPhase::Attack,
             EpochPhase::Attack => EpochPhase::Capture,
             EpochPhase::Capture => EpochPhase::Display,
-            EpochPhase::Display => EpochPhase::Sleep,
-            EpochPhase::Sleep => {
+            EpochPhase::Display => {
                 self.finish_epoch();
                 EpochPhase::Scan
             }
@@ -135,7 +130,6 @@ impl EpochLoop {
             }
             EpochPhase::Capture => format!("Capturing... {} handshakes", self.metrics.handshakes),
             EpochPhase::Display => self.personality.status_msg(),
-            EpochPhase::Sleep => "Sleeping...".to_string(),
         }
     }
 
@@ -160,20 +154,19 @@ mod tests {
 
     #[test]
     fn test_epoch_phase_cycle() {
-        let mut el = EpochLoop::new(Duration::from_secs(1));
+        let mut el = EpochLoop::new();
         assert_eq!(el.phase, EpochPhase::Scan);
         assert_eq!(el.next_phase(), EpochPhase::Attack);
         assert_eq!(el.next_phase(), EpochPhase::Capture);
         assert_eq!(el.next_phase(), EpochPhase::Display);
-        assert_eq!(el.next_phase(), EpochPhase::Sleep);
-        // Sleep -> Scan starts a new epoch
+        // Display -> Scan completes the epoch
         assert_eq!(el.next_phase(), EpochPhase::Scan);
         assert_eq!(el.metrics.epoch, 1);
     }
 
     #[test]
     fn test_record_handshake() {
-        let mut el = EpochLoop::new(Duration::from_secs(1));
+        let mut el = EpochLoop::new();
         let result = EpochResult {
             aps_seen: 5,
             handshakes_captured: 2,
@@ -190,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_blind_epochs_increment() {
-        let mut el = EpochLoop::new(Duration::from_secs(1));
+        let mut el = EpochLoop::new();
         let blind = EpochResult::default();
         el.record_result(&blind);
         assert_eq!(el.metrics.blind_epochs, 1);
@@ -208,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_personality_updates_on_epoch() {
-        let mut el = EpochLoop::new(Duration::from_secs(1));
+        let mut el = EpochLoop::new();
 
         // Blind epochs no longer affect mood directly (mood_tick() handles decay via wall-clock)
         // Verify blind_epochs counter increments correctly
@@ -230,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_status_message_per_phase() {
-        let mut el = EpochLoop::new(Duration::from_secs(1));
+        let mut el = EpochLoop::new();
         el.metrics.channel = 11;
 
         // Each phase should produce a different status
@@ -248,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_finish_epoch_resets_per_epoch_counters() {
-        let mut el = EpochLoop::new(Duration::from_secs(1));
+        let mut el = EpochLoop::new();
         el.record_result(&EpochResult {
             aps_seen: 5,
             deauths_sent: 3,
@@ -257,8 +250,8 @@ mod tests {
         });
         assert_eq!(el.metrics.aps_this_epoch, 5);
 
-        // Cycle through to Sleep -> Scan (triggers finish_epoch)
-        for _ in 0..5 {
+        // Cycle through to Display -> Scan (triggers finish_epoch)
+        for _ in 0..4 {
             el.next_phase();
         }
         assert_eq!(el.metrics.aps_this_epoch, 0);
@@ -270,7 +263,7 @@ mod tests {
 
     #[test]
     fn test_uptime_str_format() {
-        let el = EpochLoop::new(Duration::from_secs(1));
+        let el = EpochLoop::new();
         let s = el.uptime_str();
         // Should be HH:MM:SS format
         assert_eq!(s.len(), 8);
@@ -280,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_current_face() {
-        let mut el = EpochLoop::new(Duration::from_secs(1));
+        let mut el = EpochLoop::new();
         // Default mood (1.0) -> Excited
         assert_eq!(el.current_face(), Face::Excited);
 
