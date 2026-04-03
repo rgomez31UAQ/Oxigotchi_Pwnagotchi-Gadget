@@ -101,7 +101,7 @@ impl EpochLoop {
             }
         } else {
             self.metrics.blind_epochs += 1;
-            self.personality.on_blind_epoch();
+            // mood_tick() handles mood decay (called every 30s by wall-clock timer in Task 6)
         }
 
         if result.aps_seen > 0 {
@@ -209,15 +209,16 @@ mod tests {
     #[test]
     fn test_personality_updates_on_epoch() {
         let mut el = EpochLoop::new(Duration::from_secs(1));
-        let initial_mood = el.personality.mood.value();
 
-        // Multiple blind epochs should decrease mood
+        // Blind epochs no longer affect mood directly (mood_tick() handles decay via wall-clock)
+        // Verify blind_epochs counter increments correctly
         for _ in 0..5 {
             el.record_result(&EpochResult::default());
         }
-        assert!(el.personality.mood.value() < initial_mood);
+        assert_eq!(el.metrics.blind_epochs, 5);
 
-        // Handshakes should increase mood
+        // Handshakes should increase mood (start below max so delta is visible)
+        el.personality.mood = crate::personality::Mood::new(0.5);
         let mood_before = el.personality.mood.value();
         el.record_result(&EpochResult {
             handshakes_captured: 3,

@@ -271,30 +271,16 @@ impl Default for Mood {
 
 /// Mood adjustment constants.
 pub mod mood_deltas {
-    /// Mood increase on handshake capture.
-    pub const HANDSHAKE: f32 = 0.1;
-    /// Mood increase on new AP seen.
-    pub const NEW_AP: f32 = 0.02;
-    /// Mood increase on level up.
-    pub const LEVEL_UP: f32 = 0.2;
-    /// Mood decrease on blind epoch (no handshakes).
-    pub const BLIND_EPOCH: f32 = -0.01;
-    /// Mood decrease on crash (fw/ao).
-    pub const CRASH: f32 = -0.05;
-    /// Mood decrease per idle epoch (long stretch with nothing).
-    pub const IDLE_DECAY: f32 = -0.005;
-    /// Mood increase in busy RF environment (>100 frames/epoch).
-    pub const RF_BUSY: f32 = 0.03;
-    /// Mood decrease in quiet RF environment (0 frames).
-    pub const RF_QUIET: f32 = -0.005;
-    /// Mood increase during deauth storm (>10/sec).
-    pub const RF_DEAUTH_STORM: f32 = 0.05;
-    /// Mood increase during probe flood (>20/sec).
-    pub const RF_PROBE_FLOOD: f32 = 0.02;
-    /// Mood boost when bull tells a joke (slows decay during idle).
-    pub const JOKE: f32 = 0.02;
-    /// Small mood boost when smart-skipping an AP we already pwned.
-    pub const SMART_SKIP: f32 = 0.01;
+    // Event boosts (applied immediately)
+    pub const HANDSHAKE: f32 = 0.05;       // +5% per captured handshake
+    pub const NEW_AP: f32 = 0.005;          // +0.5% per new AP
+    pub const LEVEL_UP: f32 = 0.08;         // +8% on level up
+    pub const CRASH: f32 = -0.03;           // -3% on AO/firmware crash
+    pub const RF_BUSY: f32 = 0.01;          // +1% on busy RF
+    pub const RF_DEAUTH_STORM: f32 = 0.02;  // +2% on deauth storm
+    pub const RF_PROBE_FLOOD: f32 = 0.01;   // +1% on probe flood
+    pub const SMART_SKIP: f32 = 0.005;      // +0.5% on smart skip
+    pub const JOKE: f32 = 0.01;             // +1% when joke self-triggers
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +437,8 @@ pub struct Personality {
     status_display_epochs: u32,
     /// The currently displayed status text.
     pub(crate) current_status: String,
+    /// Set true when mood_tick()'s joke self-healing fires (for callers to query).
+    pub joke_triggered_by_mood: bool,
 }
 
 impl Personality {
@@ -487,6 +475,7 @@ impl Personality {
             joke_face_lock: None,
             status_display_epochs: 1,
             current_status: boot_status,
+            joke_triggered_by_mood: false,
         }
     }
 
@@ -570,23 +559,36 @@ impl Personality {
         leveled
     }
 
-    /// Called at the end of a blind epoch (no handshakes).
-    pub fn on_blind_epoch(&mut self) {
-        self.blind_epochs += 1;
-        self.context.blind_epochs = self.blind_epochs;
+    /// Tick the mood system (called every 30s by wall-clock timer).
+    /// Mean-reverting random walk centered at 50%.
+    pub fn mood_tick(&mut self) {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
 
-        // Graduated penalty: mild first, then heavier
-        let penalty = match self.blind_epochs {
-            1..=3 => mood_deltas::BLIND_EPOCH,
-            4..=10 => mood_deltas::BLIND_EPOCH * 2.5, // -0.05
-            _ => mood_deltas::BLIND_EPOCH * 4.0,      // -0.08
+        const DRIFT_RATE: f32 = 0.002; // 0.2% per tick toward 50%
+
+        let mood = self.mood.value();
+        let drift = if mood < 0.5 {
+            DRIFT_RATE
+        } else if mood > 0.5 {
+            -DRIFT_RATE
+        } else {
+            0.0
         };
-        self.mood.adjust(penalty);
-    }
 
-    /// Called on each idle epoch when nothing is happening (no APs, no handshakes).
-    pub fn on_idle_epoch(&mut self) {
-        self.mood.adjust(mood_deltas::IDLE_DECAY);
+        // Random noise: +-0.5% per tick
+        let noise: f32 = rng.gen_range(-0.005..0.005);
+
+        // Joke self-healing: scales with sadness, suppressed when happy
+        // At mood=0: 35% chance. At mood=1: 0% chance.
+        let joke_chance = (0.35 * (1.0 - mood * mood)).max(0.0);
+        if rng.r#gen::<f32>() < joke_chance {
+            let joke_boost: f32 = rng.gen_range(0.005..0.015);
+            self.mood.adjust(joke_boost);
+            self.joke_triggered_by_mood = true;
+        }
+
+        self.mood.adjust(drift + noise);
     }
 
     /// Called when a crash occurs (firmware or AO).
@@ -790,8 +792,6 @@ impl Personality {
 
         if rf.total_frames > rf::BUSY_THRESHOLD {
             self.mood.adjust(mood_deltas::RF_BUSY);
-        } else if rf.total_frames == 0 {
-            self.mood.adjust(mood_deltas::RF_QUIET);
         }
 
         if rf.deauth_rate > rf::DEAUTH_STORM_RATE {
@@ -1335,42 +1335,28 @@ mod tests {
     fn test_mood_handshake_delta() {
         let mut mood = Mood::new(0.5);
         mood.adjust(mood_deltas::HANDSHAKE);
-        assert!((mood.value() - 0.6).abs() < 0.001);
+        assert!((mood.value() - 0.55).abs() < 0.001);
     }
 
     #[test]
     fn test_mood_new_ap_delta() {
         let mut mood = Mood::new(0.5);
         mood.adjust(mood_deltas::NEW_AP);
-        assert!((mood.value() - 0.52).abs() < 0.001);
+        assert!((mood.value() - 0.505).abs() < 0.001);
     }
 
     #[test]
     fn test_mood_level_up_delta() {
         let mut mood = Mood::new(0.5);
         mood.adjust(mood_deltas::LEVEL_UP);
-        assert!((mood.value() - 0.7).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_mood_blind_epoch_delta() {
-        let mut mood = Mood::new(0.5);
-        mood.adjust(mood_deltas::BLIND_EPOCH);
-        assert!((mood.value() - 0.49).abs() < 0.001);
+        assert!((mood.value() - 0.58).abs() < 0.001);
     }
 
     #[test]
     fn test_mood_crash_delta() {
         let mut mood = Mood::new(0.5);
         mood.adjust(mood_deltas::CRASH);
-        assert!((mood.value() - 0.45).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_mood_idle_decay_delta() {
-        let mut mood = Mood::new(0.5);
-        mood.adjust(mood_deltas::IDLE_DECAY);
-        assert!((mood.value() - 0.495).abs() < 0.001);
+        assert!((mood.value() - 0.47).abs() < 0.001);
     }
 
     // ====================================================================
@@ -1428,43 +1414,8 @@ mod tests {
         assert!(leveled);
         assert_eq!(p.xp.level, 47);
         // Mood should have handshake boost + level up boost
-        // 0.5 + 0.1 (handshake) + 0.2 (level up) = 0.8
-        assert!((p.mood.value() - 0.8).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_personality_blind_epochs() {
-        let mut p = Personality::new();
-        p.mood = Mood::new(0.5); // start mid-range
-        p.on_blind_epoch();
-        assert_eq!(p.blind_epochs, 1);
-        assert!(p.mood.value() < 0.5);
-    }
-
-    #[test]
-    fn test_personality_blind_epoch_graduated_penalty() {
-        let mut p = Personality::new();
-        p.mood = Mood::new(0.5); // start mid-range for predictable math
-        // First 3 epochs: mild penalty (-0.02 each)
-        for _ in 0..3 {
-            p.on_blind_epoch();
-        }
-        let after_3 = p.mood.value();
-        // 0.5 - 3*0.01 = 0.47
-        assert!((after_3 - 0.47).abs() < 0.01);
-
-        // Epochs 4-10: moderate penalty (-0.05 each)
-        p.on_blind_epoch(); // epoch 4
-        let after_4 = p.mood.value();
-        assert!(after_4 < after_3 - 0.015); // penalty > 0.01 (graduated to 2.5x)
-    }
-
-    #[test]
-    fn test_personality_idle_decay() {
-        let mut p = Personality::new();
-        let initial = p.mood.value();
-        p.on_idle_epoch();
-        assert!((p.mood.value() - (initial + mood_deltas::IDLE_DECAY)).abs() < 0.001);
+        // 0.5 + 0.05 (handshake) + 0.08 (level up) = 0.63
+        assert!((p.mood.value() - 0.63).abs() < 0.001);
     }
 
     #[test]
@@ -1491,16 +1442,6 @@ mod tests {
         p.on_aps_seen(5);
         assert_eq!(p.total_aps_seen, 5);
         assert!(p.mood.value() > 0.5);
-    }
-
-    #[test]
-    fn test_personality_many_blind_epochs_floors_mood() {
-        let mut p = Personality::new();
-        for _ in 0..200 {
-            p.on_blind_epoch();
-        }
-        assert_eq!(p.mood.value(), 0.0);
-        assert_eq!(p.current_face(), Face::Demotivated);
     }
 
     #[test]
@@ -2086,12 +2027,12 @@ mod tests {
 
         p.reset_epoch_context();
 
-        // Blind epochs: need enough to push mood below 0.5.
-        // With halved decay rates starting from 1.0, need ~30 epochs to get below 0.5.
-        for _ in 0..30 {
-            p.on_blind_epoch();
+        // Run mood_tick many times from a high starting mood to drive it below 0.5.
+        p.mood = Mood::new(1.0);
+        for _ in 0..500 {
+            p.mood_tick();
         }
-        assert!(p.mood.value() < 0.5);
+        assert!(p.mood.value() < 0.9, "mood should drift down from 1.0 after many ticks");
 
         // Crash
         p.on_crash();
@@ -2271,16 +2212,18 @@ mod tests {
             ..Default::default()
         };
         p.apply_rf_environment(&rf);
+        // RF_BUSY = 0.01
         assert!((p.mood.value() - (initial + mood_deltas::RF_BUSY)).abs() < 0.001);
     }
 
     #[test]
-    fn test_rf_quiet_mood() {
+    fn test_rf_quiet_no_mood_change() {
+        // Quiet RF no longer penalizes mood — mood_tick handles decay instead
         let mut p = Personality::new();
         let initial = p.mood.value();
         let rf = crate::qpu::rf::RfEnvironment::default();
         p.apply_rf_environment(&rf);
-        assert!((p.mood.value() - (initial + mood_deltas::RF_QUIET)).abs() < 0.001);
+        assert!((p.mood.value() - initial).abs() < 0.001, "quiet RF should not change mood");
     }
 
     #[test]
@@ -2639,5 +2582,51 @@ mod tests {
         assert!(leveled);
         assert!(xp.level >= 40, "level too low: {}", xp.level);
         assert!(xp.level <= 50, "level too high: {}", xp.level);
+    }
+
+    // ====================================================================
+    // mood_tick tests
+    // ====================================================================
+
+    #[test]
+    fn test_mood_tick_recovers_from_zero() {
+        let mut p = Personality::new();
+        p.mood = Mood::new(0.0);
+        for _ in 0..100 {
+            p.mood_tick();
+        }
+        assert!(p.mood.value() > 0.15, "mood should recover from 0, got {}", p.mood.value());
+    }
+
+    #[test]
+    fn test_mood_tick_decays_from_max() {
+        let mut p = Personality::new();
+        p.mood = Mood::new(1.0);
+        for _ in 0..100 {
+            p.mood_tick();
+        }
+        assert!(p.mood.value() < 0.90, "mood should drift from 1.0, got {}", p.mood.value());
+    }
+
+    #[test]
+    fn test_mood_tick_stabilizes_near_center() {
+        let mut p = Personality::new();
+        p.mood = Mood::new(0.5);
+        for _ in 0..200 {
+            p.mood_tick();
+        }
+        assert!(p.mood.value() > 0.3, "mood too low at center: {}", p.mood.value());
+        assert!(p.mood.value() < 0.8, "mood too high at center: {}", p.mood.value());
+    }
+
+    #[test]
+    fn test_mood_event_boost_persists() {
+        let mut p = Personality::new();
+        p.mood = Mood::new(0.3);
+        p.mood.adjust(0.05);
+        for _ in 0..10 {
+            p.mood_tick();
+        }
+        assert!(p.mood.value() > 0.3, "mood crashed after boost: {}", p.mood.value());
     }
 }
