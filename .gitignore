@@ -53,3 +53,13 @@ docs/superpowers/
 
 # Private debug scripts (contain hardcoded MACs/paths)
 tools/bt_tether.py
+
+# Firmware RE tools (contain firmware internals, patch techniques, timing exploits)
+plugin/frame_padding.py
+tools/test_sdio_ramrw.py
+
+# Release notes (may contain private changelogs)
+release-notes-*.md
+
+# Mangled path directory (created by path conversion bug)
+C:msys64homegelumoxigotchidocssuperpowersplans/
