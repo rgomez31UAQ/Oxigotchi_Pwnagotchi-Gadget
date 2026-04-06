@@ -54,10 +54,15 @@ docs/superpowers/
 
 # Private debug scripts (contain hardcoded MACs/paths)
 tools/bt_tether.py
+tools/do_cross_compile.sh
 
 # Firmware RE tools (contain firmware internals, patch techniques, timing exploits)
 plugin/frame_padding.py
 tools/test_sdio_ramrw.py
+tools/stress_test.sh
+tools/stress_test_r2.sh
+tools/pi_client.py
+tools/deploy_pwnoxide.py
 
 # Release notes (may contain private changelogs)
 release-notes-*.md
