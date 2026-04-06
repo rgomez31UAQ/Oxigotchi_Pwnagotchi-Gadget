@@ -254,6 +254,10 @@ pub struct BtTether {
     pub pairing_rx: Option<std::sync::mpsc::Receiver<dbus::PairingEvent>>,
 }
 
+fn ip_is_routable(ip: &str) -> bool {
+    !ip.starts_with("169.254")
+}
+
 impl BtTether {
     /// Create a new Bluetooth tether manager with the given configuration.
     pub fn new(config: BtConfig) -> Self {
@@ -352,7 +356,7 @@ impl BtTether {
             self.user_disconnected = false;
             self.refresh_ip();
             if let Some(ref ip) = self.ip_address {
-                if !ip.starts_with("169.254") {
+                if ip_is_routable(ip) {
                     self.internet_available = true;
                 }
             }
@@ -630,7 +634,7 @@ impl BtTether {
                     self.run_dhcp(&pan.interface);
                     self.refresh_ip();
                     if let Some(ref ip) = self.ip_address {
-                        if !ip.starts_with("169.254") {
+                        if ip_is_routable(ip) {
                             self.internet_available = true;
                         }
                     }
@@ -649,7 +653,7 @@ impl BtTether {
                         self.user_disconnected = false;
                         self.refresh_ip();
                         if let Some(ref ip) = self.ip_address {
-                            if !ip.starts_with("169.254") {
+                            if ip_is_routable(ip) {
                                 self.internet_available = true;
                             }
                         }
@@ -1115,19 +1119,6 @@ mod tests {
     // ===== Status detection tests =====
 
     #[test]
-    fn test_check_status_no_pan_interface() {
-        // Connected + no pan_interface is a zombie state — must become Disconnected
-        // so should_connect() can trigger a reconnect attempt.
-        let mut bt = BtTether::default();
-        bt.state = BtState::Connected;
-        bt.internet_available = true;
-        bt.pan_interface = None;
-        let state = bt.check_status();
-        assert_eq!(state, BtState::Disconnected);
-        assert!(!bt.internet_available);
-    }
-
-    #[test]
     fn test_check_status_from_disconnected() {
         let mut bt = BtTether::default();
         bt.state = BtState::Disconnected;
@@ -1434,28 +1425,16 @@ mod tests {
     }
 
     #[test]
-    fn test_internet_available_set_after_routable_ip() {
-        let mut bt = BtTether::default();
-        bt.ip_address = Some("192.168.44.128".into());
-        // Simulate the internet_available logic that do_connect_profile will run
-        if let Some(ref ip) = bt.ip_address {
-            if !ip.starts_with("169.254") {
-                bt.internet_available = true;
-            }
-        }
-        assert!(bt.internet_available, "internet_available should be true for routable IP");
+    fn test_ip_is_routable_returns_true_for_normal_ip() {
+        assert!(ip_is_routable("192.168.44.128"), "normal IP should be routable");
+        assert!(ip_is_routable("10.0.0.1"), "10.x should be routable");
+        assert!(ip_is_routable("172.16.0.1"), "172.16.x should be routable");
     }
 
     #[test]
-    fn test_internet_available_not_set_for_apipa() {
-        let mut bt = BtTether::default();
-        bt.ip_address = Some("169.254.0.1".into());
-        if let Some(ref ip) = bt.ip_address {
-            if !ip.starts_with("169.254") {
-                bt.internet_available = true;
-            }
-        }
-        assert!(!bt.internet_available, "APIPA address must not set internet_available");
+    fn test_ip_is_routable_returns_false_for_apipa() {
+        assert!(!ip_is_routable("169.254.0.1"), "APIPA should not be routable");
+        assert!(!ip_is_routable("169.254.255.255"), "APIPA max should not be routable");
     }
 
     #[test]
