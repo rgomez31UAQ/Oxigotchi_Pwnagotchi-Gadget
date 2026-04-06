@@ -43,6 +43,7 @@ pi_config.toml
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Git worktrees
 .worktrees/
